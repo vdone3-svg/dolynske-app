@@ -235,7 +235,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
   <main class="pane" id="pane-day">
     <header class="day">
       <div class="dayline">
-        <div><h1 id="day-title"></h1><div class="note">бригадир · <span class="pill open" id="day-status">День відкритий</span></div></div>
+        <div><h1 id="day-title"></h1><div class="note">бригадир · <span class="pill open" id="day-status">День відкритий</span> <span class="note" id="draft-note" role="status"></span></div></div>
         <div class="datenav"><button class="btn ghost" id="prev-day" aria-label="Попередній день">←</button><input type="date" id="date" style="width:auto"><button class="btn ghost" id="next-day" aria-label="Наступний день">→</button></div>
       </div>
       <div class="kpis" id="kpis"></div>
@@ -1190,13 +1190,61 @@ function buildDayDoc(){
   return {kind:'day', date:DAY, saved_at:new Date().toISOString(), by: ROLE==='o' ? 'власник' : 'бригадир', ui, rows, fuel:{date:DAY, cells}};
 }
 function openDay(){
-  const doc = DOCS[dayPath(DAY)] || PENDING[dayPath(DAY)];
-  if(doc && doc.ui){ DS = JSON.parse(JSON.stringify(doc.ui)); DS.editing = false; DS.zav = DS.zav || []; const inp = doc.ui.inputs || {}; ['zav-dp','zav-bz','dip1','dip2','dip3','dipb'].forEach(id => $('#'+id).value = inp[id] ?? ''); }
+  flushDraft();
+  const doc = DOCS[dayPath(DAY)] || (PENDING[dayPath(DAY)] || {}).doc;
+  if(doc && doc.ui){ DS = JSON.parse(JSON.stringify(doc.ui)); DS.editing = false; DS.zav = DS.zav || []; const inp = doc.ui.inputs || {}; DRAFT_INPUTS.forEach(id => $('#'+id).value = inp[id] ?? ''); }
   else newDay();
+  DIRTY = false; DRAFT_TS = 0; draftNote('');
+  if(applyDraft(readDraft(LS.get(draftKey(DAY))), doc, 'з цього пристрою')){ DRAFT_DAY = DAY; DRAFT_TIMER = setTimeout(() => pushDraft(DRAFT_DAY), 3000); }   // могло не встигнути в сховище
+  loadRemoteDraft(DAY, doc);
 }
+// ---------- ЧЕРНЕТКА ДНЯ: усе введене зберігається одразу, ще до закриття дня
+// на пристрої — миттєво; у сховищі (drafts/) — через 15 с після останньої зміни, щоб продовжити з іншого пристрою
+const DRAFT_INPUTS = ['zav-dp','zav-bz','dip1','dip2','dip3','dipb'];
+let DIRTY = false, DRAFT_TS = 0, DRAFT_TIMER = null, DRAFT_DAY = null;
+const draftKey = d => 'dl_draft_'+d, draftPath = d => 'drafts/'+d.slice(0,4)+'/'+d+'.json';
+const hhmm = ts => new Date(ts).toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'});
+function draftNote(t){ const e = $('#draft-note'); if(e) e.textContent = t ? '· '+t : ''; }
+function readDraft(t){ try{ return t ? JSON.parse(t) : null; }catch(e){ return null; } }
+function applyDraft(o, doc, where){
+  if(!o || o.cleared || !o.ds || o.day!==DAY) return false;
+  if(doc && !(o.ds.editing && o.ts > Date.parse(doc.saved_at || 0))) return false;   // закритий день: лише незавершене виправлення, новіше за закриття
+  if(o.ts <= DRAFT_TS) return false;
+  DS = o.ds; DS.zav = DS.zav || []; DRAFT_INPUTS.forEach(id => $('#'+id).value = (o.inputs || {})[id] ?? '');
+  DRAFT_TS = o.ts; draftNote('відновлено чернетку від '+hhmm(o.ts)+' ('+where+')'); return true;
+}
+async function loadRemoteDraft(day, doc){
+  if(!TOKEN) return;
+  let o = null; try{ o = await getJSON(draftPath(day)); }catch(e){ return; }
+  if(day!==DAY || DIRTY) return;                                   // користувач уже щось змінив — не перетираємо
+  if(o && applyDraft(o, doc, 'з іншого пристрою'+(o.by ? ', '+o.by : ''))){ LS.set(draftKey(day), JSON.stringify(o)); renderDay(); toast('Підтягнуто чернетку дня від '+hhmm(o.ts)+' — можна продовжувати.'); }
+}
+function markDirty(){
+  if(!DS || !DAY) return; DIRTY = true;
+  const inputs = {}; DRAFT_INPUTS.forEach(id => inputs[id] = $('#'+id).value);
+  const o = {kind:'draft', day:DAY, ts:Date.now(), by: ROLE==='o' ? 'власник' : 'бригадир', ds:DS, inputs};
+  LS.set(draftKey(DAY), JSON.stringify(o)); DRAFT_TS = o.ts;
+  draftNote('чернетка збережена на пристрої '+hhmm(o.ts));
+  clearTimeout(DRAFT_TIMER); DRAFT_DAY = DAY; DRAFT_TIMER = setTimeout(() => pushDraft(DRAFT_DAY), 15000);
+}
+async function pushDraft(day){
+  DRAFT_TIMER = null; const o = readDraft(LS.get(draftKey(day))); if(!o || !TOKEN) return;
+  try{ const rem = await getJSON(draftPath(day)); if(rem && !rem.cleared && rem.ts >= o.ts) return;   // у сховищі вже новіше (інший пристрій)
+    await putJSON(draftPath(day), o, 'Чернетка '+day); if(day===DAY && o.ts===DRAFT_TS) draftNote('чернетка збережена '+hhmm(o.ts)+' · на пристрої і в сховищі'); }
+  catch(e){ if(day===DAY) draftNote('чернетка на пристрої '+hhmm(o.ts)+' · сховище недоступне, повторю'); DRAFT_DAY = day; DRAFT_TIMER = setTimeout(() => pushDraft(day), 60000); }
+}
+function flushDraft(){ if(DRAFT_TIMER){ clearTimeout(DRAFT_TIMER); pushDraft(DRAFT_DAY); } }
+function clearDraft(day){ LS.del(draftKey(day)); if(DRAFT_TIMER && DRAFT_DAY===day){ clearTimeout(DRAFT_TIMER); DRAFT_TIMER = null; }
+  if(TOKEN) putJSON(draftPath(day), {kind:'draft', day, ts:Date.now(), cleared:true}, 'Чернетка '+day+' закрита').catch(() => {}); }
+{ const NOT = '#date, #prev-day, #next-day, #btn-close, #dlg, #dlg *';
+  const pane = $('#pane-day');
+  pane.addEventListener('change', ev => { if(!ev.target.closest(NOT)) markDirty(); });
+  pane.addEventListener('click', ev => { const b = ev.target.closest('button'); if(b && !b.closest(NOT) && b.id!=='btn-reopen') markDirty(); });
+  document.addEventListener('visibilitychange', () => { if(document.visibilityState==='hidden') flushDraft(); });
+  window.addEventListener('pagehide', flushDraft); }
 $('#btn-close').addEventListener('click', () => { $('#dlg-body').replaceChildren(...checks().map(([lvl, t, s]) => el('div', {class:'check'}, el('span', {class:'ic '+lvl}, lvl==='ok' ? '✓' : '!'), el('div', {}, t, s ? el('div', {class:'note'}, s) : '')))); $('#dlg').showModal(); });
 $('#dlg-back').addEventListener('click', () => $('#dlg').close());
-$('#dlg-ok').addEventListener('click', async () => { $('#dlg').close(); const doc = buildDayDoc(); const ok = await saveDoc(dayPath(DAY), doc, 'День '+DAY+' ('+doc.by+')'); openDay(); renderDay();
+$('#dlg-ok').addEventListener('click', async () => { $('#dlg').close(); const doc = buildDayDoc(); const ok = await saveDoc(dayPath(DAY), doc, 'День '+DAY+' ('+doc.by+')'); clearDraft(DAY); openDay(); renderDay();
   toast(ok ? 'День закрито й збережено. Він уже у звітах, пальному, складі й журналі.' : 'Немає зв\'язку: день збережено на цьому пристрої, відправлю, щойно з\'явиться інтернет.'); });
 $('#btn-reopen').addEventListener('click', () => { DS.editing = true; renderDay(); toast('Режим виправлення: змініть і натисніть «Зберегти виправлення»'); });
 $('#all-yesterday').addEventListener('click', () => { let k = 0; DS.rows.forEach(r => { if(!r.st && !r.sub && yesterday(r)) k++; }); renderDay(); toast('Скопійовано з останнього дня: '+k+' людей. Допишіть гектари й заправку.'); });
