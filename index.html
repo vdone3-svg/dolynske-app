@@ -166,7 +166,7 @@ select{min-height:36px;background:var(--field)}
 .xtra label.note{display:block}
 .xtra .ttl{grid-column:1/-1;font:600 12px var(--body);color:var(--accent)}
 .xtra .mix{grid-column:1/-1}
-.xtra .xl{grid-column:1/-1;display:grid;gap:6px;align-items:end;grid-template-columns:minmax(150px,1.5fr) minmax(90px,.8fr) minmax(90px,.8fr) minmax(130px,1.2fr) 36px}
+.xtra .xl{grid-column:1/-1;display:grid;gap:6px;align-items:end;grid-template-columns:minmax(150px,1.5fr) minmax(90px,.8fr) minmax(90px,.8fr) minmax(130px,1.2fr) 76px}
 @media (max-width: 640px){.xtra .xl{grid-template-columns:1fr 1fr}}
 @media (max-width: 980px){.xtra{margin:0}}
 .hsum{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin:10px 0}
@@ -431,7 +431,7 @@ function parseFuel(raw){
 function compute(raw){
   const M = {};
   const crops = {}; rowsOf(raw,'Д_Культури').forEach(r => { if(str(r['Культура'])) crops[str(r['Культура'])] = {base:num(r['Базова вологість'])||0, unit:str(r['Одиниця насіння'])}; });
-  const ops = {}; rowsOf(raw,'Д_Операції').forEach(r => { ops[str(r['Операція'])] = {g:str(r['Група']), u:str(r['Одиниця'])}; });
+  const ops = {}; rowsOf(raw,'Д_Операції').forEach(r => { ops[str(r['Операція'])] = {g:str(r['Група']), u:str(r['Одиниця']), fld:str(r['Польова'])==='так'}; });
   const mats = {}; rowsOf(raw,'Д_Матеріали').forEach(r => { mats[str(r['Матеріал'])] = {cat:str(r['Категорія']), u:str(r['Одиниця'])}; });
   const mach = {}; rowsOf(raw,'Д_Техніка').forEach(r => { mach[str(r['Техніка'])] = {fuel:str(r['Паливо']), t:str(r['Тип'])}; });
   const fieldsDir = new Set(rowsOf(raw,'Д_Поля').map(r => str(r['Поле (робоча назва)'])));
@@ -934,7 +934,12 @@ function initRef(){
    dl('dl-own', REF.own), dl('dl-buyers', REF.buyers), dl('dl-mats', REF.mats.map(m => m.n))].forEach(d => { d.className = 'dl'; document.body.append(d); });
 }
 function cropLabel(f){ const fl = FIELD[f]; if(!fl) return ''; const m = +DAY.slice(5,7), y = +DAY.slice(0,4); if(m >= 8 && fl.cNext) return 'урожай '+(y+1)+': '+fl.cNext; return fl.c26 || (fl.cNext ? 'урожай '+(y+1)+': '+fl.cNext : 'культура не задана'); }
-function applyHabit(r){ const o = OP[r.op]; if(o){ if(!r.u) r.u = o.u; const h = REF.hab[r.p]; if(!r.m && h && h.m && (FIELDOPS.has(o.g) || o.g==='Транспорт' || o.g==='Тік і склад')) r.m = h.m; } if(r.op && !r.st) r.st = 'працює'; }
+// яка робота: польова (поле + техніка), з технікою без поля, ручна (ні поля, ні техніки)
+const MANUAL = /ручн|чергування|комірник|обліковець/i;
+function opMode(op){ if(!op) return 'none'; const o = OP[op]; if(!o) return 'any'; if(o.fld || FIELDOPS.has(o.g)) return 'field'; return MANUAL.test(op) ? 'manual' : 'mach'; }
+function applyHabit(r){ const o = OP[r.op], md = opMode(r.op);
+  if(md!=='field' && md!=='any') r.f = ''; if(md==='manual'){ r.m = ''; r.fuel = ''; r.oil = ''; r.oilq = ''; }
+  if(o){ r.u = o.u || r.u; const h = REF.hab[r.p]; if(!r.m && h && h.m && md!=='manual' && (FIELDOPS.has(o.g) || o.g==='Транспорт' || o.g==='Тік і склад')) r.m = h.m; } if(r.op && !r.st) r.st = 'працює'; }
 function yesterday(r){ const h = REF.hab[r.p]; if(!h || !h.recs.length) return false; const rec = h.recs[0]; Object.assign(r, {st:'працює', op:rec.op, f:rec.f, m:rec.m, u:rec.u, q:''}); return h.last; }
 function inp(r, key, attrs, label, cls=''){
   const i = el('input', {...attrs, value: r[key] ?? '', 'aria-label': label+' — '+r.p, on:{change: ev => { r[key] = ev.target.value; if(key==='op') applyHabit(r); renderDay(); }}});
@@ -943,7 +948,7 @@ function inp(r, key, attrs, label, cls=''){
 }
 function rowFlags(r){ const f = [], fuel = +r.fuel||0, q = +r.q||0;
   if(fuel > 0 && (!r.op || !q)) f.push(['bad','заправка без роботи']);
-  if(r.u==='га' && r.op && !r.f) f.push(['warn','не вказано поле']);
+  if(opMode(r.op)==='field' && r.op && !r.f) f.push(['warn','не вказано поле']);
   if(r.f && FIELD[r.f] && r.u==='га' && q > FIELD[r.f].ha*1.02) f.push(['warn','більше площі поля ('+FIELD[r.f].ha+' га)']);
   if(fuel && q && r.u==='га' && REF.lha[r.m]){ const l = fuel/q, n = REF.lha[r.m]; if(Math.abs(l-n)/n > .3) f.push(['warn', nf(l)+' л/га при звичних ~'+n]); }
   return f; }
@@ -977,46 +982,39 @@ function rowExtra(r){
   const head = {sow:'Посів', fert:'Внесення добрив', zzr:'Обприскування', harv:'Збирання'}[k];
   parts.push(el('div', {class:'ttl'}, head+(r.f ? ' · поле '+r.f : ' · оберіть поле')+(crop ? ' · '+crop+' (урожай '+y+')' : '')));
   if(cc.length > 1) parts.push(el('div', {}, el('label', {class:'note'}, 'Культура (поле поділене)'), el('select', {on:{change: ev => { r.hc = ev.target.value; renderDay(); }}}, el('option', {value:''}, '— оберіть —'), cc.map(c => el('option', c===r.hc ? {value:c, selected:''} : {value:c}, c)))));
-  const del = (arr, i) => el('button', {class:'btn small', type:'button', title:'Прибрати', 'aria-label':'Прибрати рядок', style:'min-height:34px', onclick:() => { arr.splice(i, 1); renderDay(); }}, '×');
-  const add = (txt, fn) => el('div', {style:'grid-column:1/-1'}, el('button', {class:'btn small', type:'button', onclick:() => { fn(); renderDay(); }}, txt));
-  const ferts = () => (r.ferts||[]).map((f, i) => { const u = (MAT[f.m]||{}).u || 'кг';
-    return el('div', {class:'xl'}, matSel(f, 'm', i ? 'Ще добриво' : 'Добриво', REF.mats.filter(m => m.cat==='Добриво')), numIn(f, 'q', 'Всього, '+u), el('div'),
-      el('div', {class:'calc'}, el('b', {}, per(f.q, u) || 'норма порахується')), del(r.ferts, i)); });
+  // кнопки праворуч від рядка: «+» на останньому (до 6 позицій), «×» якщо позицій більше однієї
+  const MAXN = 6;
+  const btns = (arr, i, blank) => el('div', {style:'display:flex;gap:4px'},
+    arr.length > 1 ? el('button', {class:'btn small', type:'button', title:'Прибрати', 'aria-label':'Прибрати', style:'min-height:34px;min-width:34px', onclick:() => { arr.splice(i, 1); renderDay(); }}, '×') : '',
+    i===arr.length-1 && arr.length < MAXN ? el('button', {class:'btn small', type:'button', title:'Додати ще', 'aria-label':'Додати ще', style:'min-height:34px;min-width:34px;font-weight:700', onclick:() => { arr.push(blank()); renderDay(); }}, '+') : '');
+  const fertLines = (opt) => { if(!r.ferts || !r.ferts.length) r.ferts = [{m:'', q:''}];
+    return r.ferts.map((f, i) => { const u = (MAT[f.m]||{}).u || 'кг';
+      return el('div', {class:'xl'}, matSel(f, 'm', 'Добриво'+(r.ferts.length > 1 ? ' '+(i+1) : ''), REF.mats.filter(m => m.cat==='Добриво'), opt ? '— без добрива —' : '— оберіть —'),
+        numIn(f, 'q', 'Всього, '+u), el('div'), el('div', {class:'calc'}, f.m ? el('b', {}, per(f.q, u) || 'норма порахується') : ''), btns(r.ferts, i, () => ({m:'', q:''}))); }); };
   if(k==='sow'){
     const seeds = REF.mats.filter(m => m.cat==='Насіння' && (!crop || !m.crop || m.crop===crop || (cc.length > 1 && !r.hc)));
     if(!r.seeds || !r.seeds.length) r.seeds = [{m:'', q:'', ha:''}];
     const one = r.seeds.length===1;
     r.seeds.forEach((sd, i) => { const su = (MAT[sd.m]||{}).u || 'п.о.', lha = +sd.ha || (one ? ha : 0), pha = lha && +sd.q ? +sd.q/lha : 0, sk = SEEDK[(MAT[sd.m]||{}).crop];
-      parts.push(el('div', {class:'xl'}, matSel(sd, 'm', i ? 'Ще гібрид / сорт' : 'Гібрид / сорт', seeds), numIn(sd, 'q', 'Насіння, '+su),
+      parts.push(el('div', {class:'xl'}, matSel(sd, 'm', 'Гібрид / сорт'+(one ? '' : ' '+(i+1)), seeds), numIn(sd, 'q', 'Насіння, '+su),
         numIn(sd, 'ha', one ? 'Площа, га (якщо не вся)' : 'Посіяно ним, га', {placeholder: one ? String(ha||'') : ''}),
         el('div', {class:'calc'}, pha ? el('b', {}, nf(pha, 2)+' '+su+'/га') : (one ? 'норма порахується' : 'вкажіть га гібриду'), pha && sk && su==='п.о.' ? ' ≈ '+nf(pha*sk, 0)+' тис./га' : ''),
-        one ? el('div') : del(r.seeds, i))); });
+        btns(r.seeds, i, () => ({m:'', q:'', ha:''})))); });
     if(!one){ const sum = d3.sum(r.seeds, sd => +sd.ha||0);
       parts.push(el('div', {class:'calc', style:'grid-column:1/-1'+(ha && Math.abs(sum-ha) > .05 ? ';color:var(--warn)' : '')}, 'Розбивка по гібридах: '+nf(sum, 1)+' га з '+nf(ha, 1)+' га в рядку')); }
-    parts.push(add('+ ще гібрид / сорт', () => r.seeds.push({m:'', q:'', ha:''})));
-    parts.push(...ferts());
-    parts.push(add('+ добриво при посіві', () => (r.ferts = r.ferts||[]).push({m:'', q:''})));
+    parts.push(...fertLines(true));
   }
-  if(k==='fert'){
-    if(!r.ferts || !r.ferts.length) r.ferts = [{m:'', q:''}];
-    parts.push(...ferts());
-    parts.push(add('+ ще добриво', () => r.ferts.push({m:'', q:''})));
-  }
+  if(k==='fert') parts.push(...fertLines(false));
   if(k==='zzr'){
-    parts.push(el('div', {}, el('label', {class:'note'}, 'Шаблон суміші (заповнить препарати)'), el('select', {on:{change: ev => { const t = REF.templates.find(t => t.n===ev.target.value);
-        r.items = t ? t.items.map(x => [...x]) : []; r.tpl = ev.target.value; renderDay(); }}},
-      el('option', {value:''}, '— без шаблону —'), REF.templates.map(t => el('option', t.n===r.tpl ? {value:t.n, selected:''} : {value:t.n}, t.n)))));
     if(!r.items || !r.items.length) r.items = [['', '']];
     const zl = REF.mats.filter(m => m.cat==='ЗЗР');
     r.items.forEach((x, i) => { const mm = MAT[x[0]]||{}, u = mm.u||'', n = +x[1]||0, off = mm.norm && n && Math.abs(n-mm.norm)/mm.norm > .3;
-      const o = {m:x[0], n:x[1]};
       parts.push(el('div', {class:'xl'},
-        el('div', {}, el('label', {class:'note'}, i ? 'Ще препарат' : 'Препарат'), el('select', {on:{change: ev => { x[0] = ev.target.value; if(!+x[1] && MAT[x[0]] && MAT[x[0]].norm) x[1] = MAT[x[0]].norm; renderDay(); }}},
+        el('div', {}, el('label', {class:'note'}, 'Препарат'+(r.items.length > 1 ? ' '+(i+1) : '')), el('select', {on:{change: ev => { x[0] = ev.target.value; if(!+x[1] && MAT[x[0]] && MAT[x[0]].norm) x[1] = MAT[x[0]].norm; renderDay(); }}},
           el('option', {value:''}, '— оберіть —'), zl.map(m => el('option', m.n===x[0] ? {value:m.n, selected:''} : {value:m.n}, m.n)))),
         el('div', {}, el('label', {class:'note'}, 'Норма, '+(u||'од.')+'/га'), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:x[1] ?? '', class: off ? 'off' : '', title: off ? 'звична норма '+mm.norm : '', on:{change: ev => { x[1] = ev.target.value; renderDay(); }}})),
-        el('div'), el('div', {class:'calc'}, n && ha ? el('b', {}, nf(ha*n, 2)+' '+u) : 'всього порахується', off ? el('span', {class:'off'}, ' · звичайно '+mm.norm) : ''),
-        r.items.length > 1 ? del(r.items, i) : el('div'))); });
-    parts.push(add('+ ще препарат у суміш', () => r.items.push(['', ''])));
+        el('div'), el('div', {class:'calc'}, n && ha ? el('b', {}, nf(ha*n, 2)+' '+u) : (x[0] ? 'всього порахується' : ''), off ? el('span', {class:'off'}, ' · звичайно '+mm.norm) : ''),
+        btns(r.items, i, () => ['', '']))); });
   }
   if(k==='harv') parts.push(el('div', {class:'calc', style:'grid-column:1/-1'}, ha ? 'Скошено '+nf(ha)+' га — підуть в історію поля. Вагу пишіть у «Зерно → На склад після ЗАВ».' : 'Вкажіть скошені гектари в «Обсяг».'));
   return el('div', {class:'xtra'}, parts);
@@ -1035,20 +1033,21 @@ function renderZav(){
 function renderRows(){
   const box = $('#rows'); box.replaceChildren(); const lock = isClosed(DAY) && !DS.editing;
   DS.rows.forEach(r => {
-    const off = r.st && r.st!=='працює', flags = r.st ? rowFlags(r) : [], h = REF.hab[r.p], crop = cropLabel(r.f);
+    const off = r.st && r.st!=='працює', flags = r.st ? rowFlags(r) : [], h = REF.hab[r.p], crop = cropLabel(r.f), md = opMode(r.op);
+    const na = (label, t, cls='') => el('div', {class:'cell na '+cls}, el('label', {}, label), el('span', {class:'note', style:'display:block;padding:9px 4px;min-height:38px'}, t || '—'));
     const sel = (key, opts, label) => el('div', {class:'cell'+(key==='st'?' stat':'')}, el('label', {}, label), el('select', {'aria-label':label+' — '+r.p, on:{change: ev => { r[key] = ev.target.value; renderDay(); }}}, opts.map(([v,t]) => el('option', v===r[key] ? {value:v, selected:''} : {value:v}, t))));
     const row = el('div', {class:'prow'+(r.sub?' sub':'')+(off?' off':'')+((r.showOil||r.oil||r.oilq)?' withoil':'')+(flags.length ? ' flag'+(flags.some(x => x[0]==='bad')?' bad':'') : '')},
       r.newp ? el('div', {class:'cell who'}, el('input', {list:'dl-people', placeholder:'прізвище', value:r.p, 'aria-label':'Новий працівник', on:{change: ev => { r.p = ev.target.value; }}}))
              : el('div', {class:'cell who'}, r.sub ? '↳ '+r.p : r.p, el('small', {}, flags.length ? flags.map(x => x[1]).join(' · ') : (h && h.m ? 'зазвичай: '+h.m : ''))),
       sel('st', [['','—'], ...STAT.map(s => [s,s])], 'Статус'),
       inp(r, 'op', {list:'dl-ops', placeholder:'робота'}, 'Робота', 'wide'),
-      inp(r, 'f', {list:'dl-fields', placeholder:'поле'}, 'Поле'+(crop ? ' · '+crop : '')),
-      inp(r, 'm', {list:'dl-mach'}, 'Техніка'),
+      md==='field' || md==='any' ? inp(r, 'f', {list:'dl-fields', placeholder:'поле'}, 'Поле'+(crop ? ' · '+crop : '')) : na('Поле', md==='none' ? '' : 'не польова'),
+      md!=='manual' && md!=='none' ? inp(r, 'm', {list:'dl-mach'}, 'Техніка') : na('Техніка', md==='manual' ? 'без техніки' : ''),
       inp(r, 'q', {type:'number', min:'0', inputmode:'decimal'}, 'Обсяг'),
       sel('u', [['','—'],['га','га'],['год','год'],['т','т'],['шт','шт']], 'Од.'),
-      inp(r, 'fuel', {type:'number', min:'0', inputmode:'decimal', placeholder: r.m && MACH[r.m] ? MACH[r.m].fuel : ''}, r.m && MACH[r.m] && MACH[r.m].fuel==='Бензин' ? 'Бензин, л' : 'ДП, л'),
-      inp(r, 'oil', {list:'dl-oils', placeholder:'марка'}, 'Масло', 'oilc'),
-      inp(r, 'oilq', {type:'number', min:'0', inputmode:'decimal'}, 'Масло, л', 'oilc'),
+      md!=='manual' ? inp(r, 'fuel', {type:'number', min:'0', inputmode:'decimal', placeholder: r.m && MACH[r.m] ? MACH[r.m].fuel : ''}, r.m && MACH[r.m] && MACH[r.m].fuel==='Бензин' ? 'Бензин, л' : 'ДП, л') : na('ДП, л', ''),
+      md!=='manual' ? inp(r, 'oil', {list:'dl-oils', placeholder:'марка'}, 'Масло', 'oilc') : na('Масло', '', 'oilc'),
+      md!=='manual' ? inp(r, 'oilq', {type:'number', min:'0', inputmode:'decimal'}, 'Масло, л', 'oilc') : na('Масло, л', '', 'oilc'),
       el('div', {class:'acts'},
         el('button', {class:'btn small mobile-only', on:{click: () => { r.showOil = !r.showOil; renderDay(); }}}, r.showOil ? '− масло' : '+ масло'),
         el('button', {class:'btn small', title:'Скопіювати роботу з останнього дня', on:{click: () => { const d = yesterday(r); toast(d ? r.p+': як '+d.split('-').reverse().join('.') : 'Немає попередніх записів'); renderDay(); }}}, '⟲ вчора'),
