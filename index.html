@@ -163,8 +163,11 @@ select{min-height:36px;background:var(--field)}
 .mix span{border:1px solid var(--line);border-radius:6px;padding:3px 8px;background:var(--field)}.mix span.off{border-color:var(--warn)}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
 .xtra{grid-column:1/-1;display:grid;gap:6px;align-items:end;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:2px 0 4px 138px;padding:8px 10px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent-soft) 35%,transparent);border-radius:0 8px 8px 0}
+.xtra label.note{display:block}
 .xtra .ttl{grid-column:1/-1;font:600 12px var(--body);color:var(--accent)}
 .xtra .mix{grid-column:1/-1}
+.xtra .xl{grid-column:1/-1;display:grid;gap:6px;align-items:end;grid-template-columns:minmax(150px,1.5fr) minmax(90px,.8fr) minmax(90px,.8fr) minmax(130px,1.2fr) 36px}
+@media (max-width: 640px){.xtra .xl{grid-template-columns:1fr 1fr}}
 @media (max-width: 980px){.xtra{margin:0}}
 .hsum{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin:10px 0}
 .hsum .kpi{padding:10px;border:1px solid var(--line);border-radius:10px}.hsum .kpi b{display:block;font:600 18px var(--display);margin-top:2px}
@@ -955,43 +958,65 @@ function rowKind(r){ const o = OP[r.op]; if(!o) return '';
 function seasonFor(op){ const m = +DAY.slice(5,7), y = +DAY.slice(0,4); return (OP[op]||{}).g==='Збирання' ? y-(m<=3) : y+(m>=8); }
 const harvSeason = () => { const m = +DAY.slice(5,7), y = +DAY.slice(0,4); return y-(m<=3); };
 const cropsFor = (f, y) => [...new Set(REF.prl.filter(x => x.y===y && x.f===f).map(x => x.c))];
-function rowCrop(r){ const cc = cropsFor(r.f, seasonFor(r.op)); if(cc.length===1) return cc[0]; if(r.hc) return r.hc; if(r.hyb && MAT[r.hyb] && MAT[r.hyb].crop) return MAT[r.hyb].crop; return ''; }
+function normRow(r){   // старі записи: один гібрид / одне добриво → списки
+  if(r.hyb || r.sq){ r.seeds = [{m:r.hyb||'', q:r.sq||'', ha:''}]; delete r.hyb; delete r.sq; }
+  if(r.fm || r.fq){ r.ferts = [{m:r.fm||'', q:r.fq||''}]; delete r.fm; delete r.fq; }
+  return r; }
+const seedsOk = r => (normRow(r).seeds||[]).filter(sd => sd.m && +sd.q);
+function rowCrop(r){ const cc = cropsFor(r.f, seasonFor(r.op)); if(cc.length===1) return cc[0]; if(r.hc) return r.hc; const sd = seedsOk(r).find(sd => MAT[sd.m] && MAT[sd.m].crop); if(sd) return MAT[sd.m].crop; return ''; }
 function numIn(obj, key, label, attrs={}){ return el('div', {}, el('label', {class:'note'}, label), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:obj[key] ?? '', ...attrs, on:{change: ev => { obj[key] = ev.target.value; renderDay(); }}})); }
 function matSel(obj, key, label, list, ph='— оберіть —'){ return el('div', {}, el('label', {class:'note'}, label), el('select', {on:{change: ev => { obj[key] = ev.target.value; renderDay(); }}},
   el('option', {value:''}, ph), list.map(m => el('option', m.n===obj[key] ? {value:m.n, selected:''} : {value:m.n}, m.n)))); }
 function rowExtra(r){
-  const k = rowKind(r); if(!k || r.st!=='працює') return null;
+  const k = rowKind(r); if(!k || r.st!=='працює') return null; normRow(r);
+  if(k==='sow' && !seedsOk(r).length && !(r.ferts||[]).some(f => f.m)){ const main = DS.rows.find(o => o!==r && o.f===r.f && o.m && o.m===r.m && seedsOk(o).length);
+    if(main) return el('div', {class:'xtra'}, el('div', {class:'ttl'}, 'Посів · поле '+r.f+' — насіння й добрива вже записані в рядку «'+main.p+'» (та сама техніка)')); }
   const ha = +r.q||0, y = seasonFor(r.op), cc = r.f ? cropsFor(r.f, y) : [], crop = rowCrop(r);
   const per = (q, u) => ha && +q ? nf(+q/ha, 2)+' '+u+'/га' : '';
   const parts = [];
   const head = {sow:'Посів', fert:'Внесення добрив', zzr:'Обприскування', harv:'Збирання'}[k];
   parts.push(el('div', {class:'ttl'}, head+(r.f ? ' · поле '+r.f : ' · оберіть поле')+(crop ? ' · '+crop+' (урожай '+y+')' : '')));
   if(cc.length > 1) parts.push(el('div', {}, el('label', {class:'note'}, 'Культура (поле поділене)'), el('select', {on:{change: ev => { r.hc = ev.target.value; renderDay(); }}}, el('option', {value:''}, '— оберіть —'), cc.map(c => el('option', c===r.hc ? {value:c, selected:''} : {value:c}, c)))));
+  const del = (arr, i) => el('button', {class:'btn small', type:'button', title:'Прибрати', 'aria-label':'Прибрати рядок', style:'min-height:34px', onclick:() => { arr.splice(i, 1); renderDay(); }}, '×');
+  const add = (txt, fn) => el('div', {style:'grid-column:1/-1'}, el('button', {class:'btn small', type:'button', onclick:() => { fn(); renderDay(); }}, txt));
+  const ferts = () => (r.ferts||[]).map((f, i) => { const u = (MAT[f.m]||{}).u || 'кг';
+    return el('div', {class:'xl'}, matSel(f, 'm', i ? 'Ще добриво' : 'Добриво', REF.mats.filter(m => m.cat==='Добриво')), numIn(f, 'q', 'Всього, '+u), el('div'),
+      el('div', {class:'calc'}, el('b', {}, per(f.q, u) || 'норма порахується')), del(r.ferts, i)); });
   if(k==='sow'){
     const seeds = REF.mats.filter(m => m.cat==='Насіння' && (!crop || !m.crop || m.crop===crop || (cc.length > 1 && !r.hc)));
-    const su = (MAT[r.hyb]||{}).u || 'п.о.';
-    parts.push(matSel(r, 'hyb', 'Гібрид / сорт', seeds));
-    parts.push(numIn(r, 'sq', 'Насіння всього, '+su));
-    const pha = ha && +r.sq ? +r.sq/ha : 0, sk = SEEDK[(MAT[r.hyb]||{}).crop];
-    parts.push(el('div', {class:'calc'}, pha ? el('b', {}, nf(pha, 2)+' '+su+'/га') : 'норма порахується', pha && sk && su==='п.о.' ? ' ≈ '+nf(pha*sk, 0)+' тис. насінин/га' : ''));
-    parts.push(matSel(r, 'fm', 'Добриво при посіві', REF.mats.filter(m => m.cat==='Добриво'), '— без добрива —'));
-    if(r.fm){ parts.push(numIn(r, 'fq', 'Добриво всього, '+((MAT[r.fm]||{}).u||'кг'))); parts.push(el('div', {class:'calc'}, el('b', {}, per(r.fq, (MAT[r.fm]||{}).u||'кг')))); }
+    if(!r.seeds || !r.seeds.length) r.seeds = [{m:'', q:'', ha:''}];
+    const one = r.seeds.length===1;
+    r.seeds.forEach((sd, i) => { const su = (MAT[sd.m]||{}).u || 'п.о.', lha = +sd.ha || (one ? ha : 0), pha = lha && +sd.q ? +sd.q/lha : 0, sk = SEEDK[(MAT[sd.m]||{}).crop];
+      parts.push(el('div', {class:'xl'}, matSel(sd, 'm', i ? 'Ще гібрид / сорт' : 'Гібрид / сорт', seeds), numIn(sd, 'q', 'Насіння, '+su),
+        numIn(sd, 'ha', one ? 'Площа, га (якщо не вся)' : 'Посіяно ним, га', {placeholder: one ? String(ha||'') : ''}),
+        el('div', {class:'calc'}, pha ? el('b', {}, nf(pha, 2)+' '+su+'/га') : (one ? 'норма порахується' : 'вкажіть га гібриду'), pha && sk && su==='п.о.' ? ' ≈ '+nf(pha*sk, 0)+' тис./га' : ''),
+        one ? el('div') : del(r.seeds, i))); });
+    if(!one){ const sum = d3.sum(r.seeds, sd => +sd.ha||0);
+      parts.push(el('div', {class:'calc', style:'grid-column:1/-1'+(ha && Math.abs(sum-ha) > .05 ? ';color:var(--warn)' : '')}, 'Розбивка по гібридах: '+nf(sum, 1)+' га з '+nf(ha, 1)+' га в рядку')); }
+    parts.push(add('+ ще гібрид / сорт', () => r.seeds.push({m:'', q:'', ha:''})));
+    parts.push(...ferts());
+    parts.push(add('+ добриво при посіві', () => (r.ferts = r.ferts||[]).push({m:'', q:''})));
   }
   if(k==='fert'){
-    parts.push(matSel(r, 'fm', 'Добриво', REF.mats.filter(m => m.cat==='Добриво')));
-    parts.push(numIn(r, 'fq', 'Всього, '+((MAT[r.fm]||{}).u||'кг')));
-    parts.push(el('div', {class:'calc'}, el('b', {}, per(r.fq, (MAT[r.fm]||{}).u||'кг') || 'норма порахується')));
+    if(!r.ferts || !r.ferts.length) r.ferts = [{m:'', q:''}];
+    parts.push(...ferts());
+    parts.push(add('+ ще добриво', () => r.ferts.push({m:'', q:''})));
   }
   if(k==='zzr'){
-    parts.push(el('div', {}, el('label', {class:'note'}, 'Шаблон суміші або препарат'), el('select', {on:{change: ev => { const v = ev.target.value; const t = REF.templates.find(t => t.n===v);
-        r.items = t ? t.items.map(x => [...x]) : (MAT[v] ? [[v, MAT[v].norm||0]] : []); r.tpl = v; renderDay(); }}},
-      el('option', {value:''}, '— оберіть —'), el('optgroup', {label:'Шаблони сумішей'}, REF.templates.map(t => el('option', t.n===r.tpl ? {value:t.n, selected:''} : {value:t.n}, t.n))),
-      el('optgroup', {label:'ЗЗР'}, REF.mats.filter(m => m.cat==='ЗЗР').map(m => el('option', m.n===r.tpl ? {value:m.n, selected:''} : {value:m.n}, m.n))))));
-    const it = (r.items||[]).map(x => { const [m, n] = x; const mm = MAT[m]||{}; const off = mm.norm && Math.abs(n-mm.norm)/mm.norm > .3;
-      return el('span', {class: off ? 'off' : '', title: off ? 'звична норма '+mm.norm : ''}, m+': ',
-        el('input', {type:'number', step:'any', value:n, style:'width:70px;min-height:26px;padding:2px 4px', 'aria-label':'Норма '+m, on:{change: ev => { x[1] = +ev.target.value; renderDay(); }}}),
-        ' '+(mm.u||'')+'/га → ', el('b', {}, nf(ha*n, 2)+' '+(mm.u||''))); });
-    parts.push(el('div', {class:'mix'}, it.length ? it : el('span', {}, 'Кількості порахуються з гектарів у рядку')));
+    parts.push(el('div', {}, el('label', {class:'note'}, 'Шаблон суміші (заповнить препарати)'), el('select', {on:{change: ev => { const t = REF.templates.find(t => t.n===ev.target.value);
+        r.items = t ? t.items.map(x => [...x]) : []; r.tpl = ev.target.value; renderDay(); }}},
+      el('option', {value:''}, '— без шаблону —'), REF.templates.map(t => el('option', t.n===r.tpl ? {value:t.n, selected:''} : {value:t.n}, t.n)))));
+    if(!r.items || !r.items.length) r.items = [['', '']];
+    const zl = REF.mats.filter(m => m.cat==='ЗЗР');
+    r.items.forEach((x, i) => { const mm = MAT[x[0]]||{}, u = mm.u||'', n = +x[1]||0, off = mm.norm && n && Math.abs(n-mm.norm)/mm.norm > .3;
+      const o = {m:x[0], n:x[1]};
+      parts.push(el('div', {class:'xl'},
+        el('div', {}, el('label', {class:'note'}, i ? 'Ще препарат' : 'Препарат'), el('select', {on:{change: ev => { x[0] = ev.target.value; if(!+x[1] && MAT[x[0]] && MAT[x[0]].norm) x[1] = MAT[x[0]].norm; renderDay(); }}},
+          el('option', {value:''}, '— оберіть —'), zl.map(m => el('option', m.n===x[0] ? {value:m.n, selected:''} : {value:m.n}, m.n)))),
+        el('div', {}, el('label', {class:'note'}, 'Норма, '+(u||'од.')+'/га'), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:x[1] ?? '', class: off ? 'off' : '', title: off ? 'звична норма '+mm.norm : '', on:{change: ev => { x[1] = ev.target.value; renderDay(); }}})),
+        el('div'), el('div', {class:'calc'}, n && ha ? el('b', {}, nf(ha*n, 2)+' '+u) : 'всього порахується', off ? el('span', {class:'off'}, ' · звичайно '+mm.norm) : ''),
+        r.items.length > 1 ? del(r.items, i) : el('div'))); });
+    parts.push(add('+ ще препарат у суміш', () => r.items.push(['', ''])));
   }
   if(k==='harv') parts.push(el('div', {class:'calc', style:'grid-column:1/-1'}, ha ? 'Скошено '+nf(ha)+' га — підуть в історію поля. Вагу пишіть у «Зерно → На склад після ЗАВ».' : 'Вкажіть скошені гектари в «Обсяг».'));
   return el('div', {class:'xtra'}, parts);
@@ -1106,11 +1131,15 @@ function checks(){
   const nq = DS.rows.filter(r => r.st==='працює' && r.op && !(+r.q));
   out.push(nq.length ? ['warn', 'Не вказано обсяг: '+nq.map(r => r.p).join(', '), 'Без обсягу не порахується виробіток і пальне на гектар.'] : ['ok', 'Усі роботи мають обсяг', '']);
   const nf_ = DS.appl.filter(a => a.items.length && !a.f); if(nf_.length) out.push(['bad', 'Внесення без поля: '+nf_.length, 'Вкажіть поле.']);
-  const sowDone = r => r.hyb && +r.sq, sowBad = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='sow' && (+r.q) && !sowDone(r) && !DS.rows.some(o => o!==r && o.f===r.f && o.m===r.m && sowDone(o)));
+  const sowDone = r => seedsOk(r).length > 0, sowBad = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='sow' && (+r.q) && !sowDone(r) && !DS.rows.some(o => o!==r && o.f===r.f && o.m===r.m && sowDone(o)));
   if(sowBad.length) out.push(['warn', 'Посів без гібриду або кількості насіння: '+sowBad.map(r => r.p+' ('+(r.f||'?')+')').join(', '), 'Без цього в історії поля не буде гібриду й норми висіву.']);
-  const sowMis = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='sow' && r.hyb && MAT[r.hyb] && MAT[r.hyb].crop && r.f && cropsFor(r.f, seasonFor(r.op)).length===1 && cropsFor(r.f, seasonFor(r.op))[0]!==MAT[r.hyb].crop);
-  if(sowMis.length) out.push(['warn', 'Гібрид не тієї культури: '+sowMis.map(r => r.hyb+' ('+MAT[r.hyb].crop+') на полі '+r.f+' — за сівозміною '+cropsFor(r.f, seasonFor(r.op))[0]).join('; '), 'Перевірте поле або сівозміну.']);
-  const zzrBad = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='zzr' && !(r.items||[]).length);
+  const sowMis = [];
+  DS.rows.filter(r => r.st==='працює' && rowKind(r)==='sow' && r.f && cropsFor(r.f, seasonFor(r.op)).length===1).forEach(r => { const fc = cropsFor(r.f, seasonFor(r.op))[0];
+    seedsOk(r).forEach(sd => { if(MAT[sd.m] && MAT[sd.m].crop && MAT[sd.m].crop!==fc) sowMis.push(sd.m+' ('+MAT[sd.m].crop+') на полі '+r.f+' — за сівозміною '+fc); }); });
+  if(sowMis.length) out.push(['warn', 'Гібрид не тієї культури: '+sowMis.join('; '), 'Перевірте поле або сівозміну.']);
+  const sowSplit = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='sow' && seedsOk(r).length > 1 && Math.abs(d3.sum(seedsOk(r), sd => +sd.ha||0) - (+r.q||0)) > .05);
+  if(sowSplit.length) out.push(['warn', 'Сума га по гібридах не дорівнює га в рядку: '+sowSplit.map(r => r.p+' ('+nf(d3.sum(seedsOk(r), sd => +sd.ha||0), 1)+' з '+nf(+r.q, 1)+')').join(', '), 'Норма висіву по гібриду рахується на його гектари.']);
+  const zzrBad = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='zzr' && !(r.items||[]).some(x => x[0] && +x[1]));
   if(zzrBad.length) out.push(['warn', 'Обприскування без препаратів: '+zzrBad.map(r => r.p).join(', '), 'Оберіть шаблон суміші в рядку.']);
   const splitBad = DS.rows.filter(r => r.st==='працює' && r.f && OP[r.op] && FIELDOPS.has(OP[r.op].g) && cropsFor(r.f, seasonFor(r.op)).length > 1 && !rowCrop(r));
   if(splitBad.length) out.push(['warn', 'Поле поділене — не вказано культуру: '+splitBad.map(r => r.p+' ('+r.f+')').join(', '), '']);
@@ -1135,11 +1164,12 @@ function buildDayDoc(){
   DS.rows.filter(r => r.st==='працює' && r.op).forEach(r => rows['Роботи'].push({'Дата':n, 'Поле':r.f||null, 'Культура (лише якщо поле поділене)':splitC(r), 'Операція':r.op, 'Техніка':r.m||null, 'Працівник':r.p, 'Обсяг':+r.q||null, 'Од.':r.u||null, 'Джерело':'додаток'}));
   DS.rows.filter(r => r.st==='працює' && r.op && r.f).forEach(r => { const k = rowKind(r), ha = +r.q||0;
     const base = {'Дата':n, 'Поле':r.f, 'Культура (лише якщо поле поділене)':splitC(r), 'Оброблено, га':ha, 'Джерело':'додаток'}, who = r.p+(r.m ? ' · '+r.m : '');
-    if(k==='sow'){ const op = r.fm && +r.fq ? 'Посів з добривами' : 'Посів';
-      if(r.hyb && +r.sq) rows['Внесення'].push({...base, 'Операція':op, 'Матеріал':r.hyb, 'Кількість всього':+r.sq, 'Примітка':who});
-      if(r.fm && +r.fq) rows['Внесення'].push({...base, 'Операція':op, 'Матеріал':r.fm, 'Кількість всього':+r.fq, 'Примітка':who}); }
-    if(k==='fert' && r.fm && +r.fq) rows['Внесення'].push({...base, 'Операція':'Внесення добрив', 'Матеріал':r.fm, 'Кількість всього':+r.fq, 'Примітка':who});
-    if(k==='zzr') (r.items||[]).forEach(([m, q]) => { if(+q) rows['Внесення'].push({...base, 'Операція':'Обприскування (ЗЗР)', 'Матеріал':m, 'Кількість всього':+(ha*q).toFixed(3), 'Примітка':(r.tpl ? r.tpl+' · ' : '')+who}); });
+    normRow(r); const fl = (r.ferts||[]).filter(f => f.m && +f.q), sl = seedsOk(r);
+    if(k==='sow'){ const op = fl.length ? 'Посів з добривами' : 'Посів';
+      sl.forEach(sd => { const sha = sl.length===1 ? (+sd.ha||ha) : (+sd.ha||0); rows['Внесення'].push({...base, 'Оброблено, га':sha, 'Культура (лише якщо поле поділене)':base['Культура (лише якщо поле поділене)'] ? ((MAT[sd.m]||{}).crop || base['Культура (лише якщо поле поділене)']) : null, 'Операція':op, 'Матеріал':sd.m, 'Кількість всього':+sd.q, 'Примітка':who}); });
+      fl.forEach(f => rows['Внесення'].push({...base, 'Операція':op, 'Матеріал':f.m, 'Кількість всього':+f.q, 'Примітка':who})); }
+    if(k==='fert') fl.forEach(f => rows['Внесення'].push({...base, 'Операція':'Внесення добрив', 'Матеріал':f.m, 'Кількість всього':+f.q, 'Примітка':who}));
+    if(k==='zzr') (r.items||[]).forEach(([m, q]) => { if(m && +q) rows['Внесення'].push({...base, 'Операція':'Обприскування (ЗЗР)', 'Матеріал':m, 'Кількість всього':+(ha*q).toFixed(3), 'Примітка':(r.tpl ? r.tpl+' · ' : '')+who}); });
     if(k==='harv' && ha) rows['Урожай'].push({'Дата':n, 'Поле':r.f, 'Культура':rowCrop(r)||null, 'Скошено за день, га':ha, 'Джерело':'додаток', 'Примітка':'комбайн '+(r.m||'')});
   });
   DS.zav.forEach(z => { if(+z.kg) rows['Урожай'].push({'Дата':n, 'Поле':z.f==='*' ? null : (z.f||null), 'Культура':z.c||null, 'Вага на склад, кг':+z.kg, 'Вологість, %':+z.w||null, 'Відходи після очищення, кг':+z.ws||null, 'Джерело':'додаток', 'Примітка':z.f==='*' ? 'змішане (кілька полів)' : 'після ЗАВ'}); });
