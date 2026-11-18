@@ -42,6 +42,11 @@ h1{font:600 clamp(20px,3vw,28px)/1.15 var(--display);margin:0;letter-spacing:-.0
 h2{font:500 17px/1.2 var(--display);margin:0;text-wrap:balance}
 .sub{color:var(--muted);font-size:13px;margin-top:4px}
 .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.cb-list{position:fixed;z-index:1000;overflow-y:auto;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px}
+.cb-opt{padding:8px 10px;border-radius:7px;font:500 14px/1.3 var(--body);white-space:normal;overflow-wrap:anywhere;cursor:pointer}
+.cb-opt small{display:block;color:var(--muted);font-size:12px}
+.cb-opt:hover,.cb-opt.act{background:var(--accent-soft)}.cb-opt.cur{font-weight:700;border-left:3px solid var(--accent)}
+.cb-empty{padding:8px 10px;color:var(--muted);font-size:13px}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .gpane{display:grid;gap:8px}.gpane[hidden]{display:none}.gcnt:empty{display:none}.gcnt{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:9px;background:color-mix(in srgb,currentColor 18%,transparent);font-size:11px;text-align:center}
 
@@ -1109,7 +1114,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '18.11 18:05';
+const APP_VER = '18.11 18:30';
 const TABS = [['day','День'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1623,16 +1628,43 @@ $('#all-yesterday').addEventListener('click', () => { let k = 0; DS.rows.forEach
 $('#add-person').addEventListener('click', () => { DS.rows.push({...blankRow(''), newp:true}); renderDay(); });
 $('#add-appl').addEventListener('click', () => { DS.appl.push({f:'', t:'', items:[], ha:''}); renderDay(); });
 $('#add-own').addEventListener('click', () => { DS.own.push({p:'', l:''}); renderDay(); });
-/* Поля з підказками: при кліку показуємо ВЕСЬ список, без стирання поточного значення */
-document.addEventListener('focusin', ev => { const i = ev.target; if(!(i instanceof HTMLInputElement) || !i.list || i.dataset.prev !== undefined) return;
+/* Власний випадаючий список замість <datalist>: ширший за поле, довгі назви в 2 рядки, фільтр при наборі, без стирання значення */
+const CB = {i:null, box:null, items:[], act:-1};
+function cbOpts(i){ const dl = document.getElementById(i.dataset.dl); if(!dl) return []; const q = i.value.trim().toLowerCase();
+  const all = [...dl.options].map(o => ({v:o.value, t:(o.label && o.label!==o.value) ? o.label : ''})).filter((o,k,a) => o.v && a.findIndex(x => x.v===o.v)===k);
+  return q ? all.filter(o => (o.v+' '+o.t).toLowerCase().includes(q)) : all; }
+function cbPlace(){ const i = CB.i, b = CB.box; if(!i || !b) return; const r = i.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = window.innerHeight;
+  const w = Math.min(Math.max(r.width, 300), vw - 16); b.style.width = w+'px'; b.style.left = Math.max(8, Math.min(r.left, vw - w - 8))+'px';
+  const below = vh - r.bottom - 8, above = r.top - 8;
+  if(below >= 200 || below >= above){ b.style.top = (r.bottom + 2)+'px'; b.style.bottom = ''; b.style.maxHeight = Math.min(340, below)+'px'; }
+  else { b.style.top = ''; b.style.bottom = (vh - r.top + 2)+'px'; b.style.maxHeight = Math.min(340, above)+'px'; } }
+function cbRender(){ const b = CB.box; if(!b) return; CB.items = cbOpts(CB.i); CB.act = Math.min(CB.act, CB.items.length - 1); b.replaceChildren();
+  const cur = CB.i.dataset.prev || '';
+  if(!CB.items.length) b.append(el('div', {class:'cb-empty'}, 'Немає збігів — буде записано як введено'));
+  CB.items.forEach((o, k) => b.append(el('div', {class:'cb-opt'+(k===CB.act ? ' act' : '')+(o.v===cur ? ' cur' : ''), role:'option',
+    on:{mousedown: ev => { ev.preventDefault(); cbPick(o.v); }}}, o.v, o.t ? el('small', {}, o.t) : null)));
+  const a = b.querySelector('.act'); if(a) a.scrollIntoView({block:'nearest'}); cbPlace(); }
+function cbPick(v){ const i = CB.i; if(!i) return; i.value = v; i.dataset.typed = '1'; cbClose(); i.dispatchEvent(new Event('input', {bubbles:true})); i.dispatchEvent(new Event('change', {bubbles:true})); }
+function cbClose(){ if(CB.box) CB.box.remove(); CB.box = null; CB.items = []; CB.act = -1; }
+document.addEventListener('focusin', ev => { const i = ev.target; if(!(i instanceof HTMLInputElement)) return;
+  if(i.hasAttribute('list')){ i.dataset.dl = i.getAttribute('list'); i.removeAttribute('list'); i.setAttribute('autocomplete', 'off'); }
+  if(!i.dataset.dl || i.dataset.prev !== undefined) return;
   i.dataset.prev = i.value; i.dataset.ph = i.placeholder || ''; if(i.value){ i.placeholder = i.value; i.value = ''; } i.dataset.typed = '';
-  try { i.showPicker && i.showPicker(); } catch(e){} });
-document.addEventListener('input', ev => { const i = ev.target; if(i instanceof HTMLInputElement && i.dataset.prev !== undefined) i.dataset.typed = '1'; });
+  cbClose(); CB.i = i; CB.box = el('div', {class:'cb-list', role:'listbox'}); document.body.append(CB.box); cbRender(); });
+document.addEventListener('input', ev => { const i = ev.target; if(i instanceof HTMLInputElement && i.dataset.prev !== undefined){ i.dataset.typed = '1'; if(CB.i===i && CB.box){ CB.act = -1; cbRender(); } } });
+document.addEventListener('keydown', ev => { if(!CB.box || ev.target!==CB.i) return; const n = CB.items.length;
+  if(ev.key==='ArrowDown'){ ev.preventDefault(); CB.act = n ? (CB.act + 1) % n : -1; cbRender(); }
+  else if(ev.key==='ArrowUp'){ ev.preventDefault(); CB.act = n ? (CB.act - 1 + n) % n : -1; cbRender(); }
+  else if(ev.key==='Enter' && CB.act >= 0){ ev.preventDefault(); cbPick(CB.items[CB.act].v); }
+  else if(ev.key==='Escape'){ cbClose(); } });
 document.addEventListener('focusout', ev => { const i = ev.target; if(!(i instanceof HTMLInputElement) || i.dataset.prev === undefined) return;
+  if(CB.i===i){ cbClose(); CB.i = null; }
   const prev = i.dataset.prev, typed = i.dataset.typed; i.placeholder = i.dataset.ph; delete i.dataset.prev; delete i.dataset.ph; delete i.dataset.typed;
-  if(i.value === '' && !typed) i.value = prev;                       // нічого не обрали — повертаємо як було
+  if(i.value === '' && !typed) i.value = prev;                        // нічого не обрали — повертаємо як було
   else if(i.value === '' && typed && prev) i.dispatchEvent(new Event('change', {bubbles:true})); // свідомо стерли
 });
+window.addEventListener('scroll', ev => { if(CB.box && ev.target!==CB.box) cbPlace(); }, true);
+window.addEventListener('resize', () => cbPlace());
 let GTAB = 'zav';
 function renderGrainTabs(){
   const n = {zav: (DS.zav||[]).length, ship: (DS.ship||[]).length, gm: (DS.gm||[]).length};
