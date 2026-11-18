@@ -174,6 +174,19 @@ select{min-height:36px;background:var(--field)}
 .xtra .xl{grid-column:1/-1;display:grid;gap:6px;align-items:end;grid-template-columns:minmax(150px,1.5fr) minmax(90px,.8fr) minmax(90px,.8fr) minmax(130px,1.2fr) 76px}
 @media (max-width: 640px){.xtra .xl,.xtra .xl.z6{grid-template-columns:1fr 1fr}}
 @media (max-width: 980px){.xtra{margin:0}}
+.ar-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));margin-top:10px}
+.ar-grid > .card{display:block;overflow-x:auto}.ar-grid h3{margin:0 0 8px;font:600 14px var(--display)}
+.ar-kpis{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:10px}
+.ar-kpis .kpi b{display:block;font:600 20px var(--display);color:var(--ink);margin-top:2px}
+.ar-kpis .kpi .dl{font-size:11px}.up{color:var(--good)}.dn{color:var(--bad)}
+.cmp{font-size:11px;white-space:nowrap}.cmp.ok{color:var(--muted)}.cmp.bad{color:var(--bad);font-weight:600}
+.recon{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:10px 12px;margin-top:10px}
+.recon.bad{border-left-color:var(--bad)}.recon.ok{border-left-color:var(--good)}
+.pbar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:4px 0 2px}.pbar i{display:block;height:100%}
+.wx{display:grid;gap:6px;grid-template-columns:repeat(7,minmax(70px,1fr))}.wx > div{border:1px solid var(--line);border-radius:8px;padding:6px;font-size:12px;text-align:center}
+.wx > .stop{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 8%,transparent)}.wx > .late{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 9%,transparent)}
+@media (max-width:520px){.ar-grid{grid-template-columns:1fr}}
+@media (max-width:640px){.wx{grid-template-columns:repeat(4,1fr)}}
 .hsum{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin:10px 0}
 .hsum .kpi{padding:10px;border:1px solid var(--line);border-radius:10px}.hsum .kpi b{display:block;font:600 18px var(--display);margin-top:2px}
 .hhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line)}
@@ -294,6 +307,16 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
       <div class="toolbar"><label for="crop-filter" class="note">Культура</label><select id="crop-filter"><option value="">усі</option></select><span class="note">Натисніть рядок, щоб відкрити картку поля.</span></div>
       <div class="tablewrap"><table id="field-table"></table></div></section>
     <section class="card fieldcard" id="field-card"></section>
+  </main>
+
+  <!-- АГРОЗВІТ: один дашборд власника + звірка з агрозвітом бухгалтера -->
+  <main class="pane" id="pane-agro">
+    <section class="card">
+      <div class="toolbar"><h2 style="margin:0">Агрозвіт</h2>
+        <button class="btn ghost" id="ar-prev" aria-label="Попередній день">←</button><input type="date" id="ar-date" style="width:auto"><button class="btn ghost" id="ar-next" aria-label="Наступний день">→</button>
+        <span class="note" id="ar-src"></span></div>
+      <div id="ar-body"></div>
+    </section>
   </main>
 
   <!-- ІСТОРІЯ ПОЛЯ -->
@@ -704,6 +727,186 @@ function renderFieldCard(){
   });
 }
 
+
+// ================= АГРОЗВІТ: наші дані (бригадир + історія) + звірка з агрозвітом бухгалтера =================
+// Агрозвіт (vdone3-svg.github.io/agro-report) не змінюється: ми лише читаємо дані, вбудовані в його сторінку.
+const AR = {day:null, ext:null, bench:null, err:'', at:0, wx:null, wxErr:''};
+const TOL = {ha:[1, .02], l:[20, .05], kg:[500, .01]};          // допуск розбіжності: абсолютний і відносний
+const nname = s => String(s||'').toLowerCase().replace(/і/g, 'и').replace(/[^a-zа-яиїєґ0-9]/g, '');
+// прізвище + ініціал: «Прунян.В», «Прунян В.», «Зінько» → один працівник, якщо ініціали не суперечать
+const pkey = s => { const t = String(s||'').trim().split(/[\s.]+/).filter(Boolean); return {sur: nname(t[0]||''), ini: nname((t[1]||'').charAt(0))}; };
+const samePerson = (a, b) => { const x = pkey(a), y = pkey(b); return x.sur && x.sur===y.sur && (!x.ini || !y.ini || x.ini===y.ini); };
+const CROPK = {'Соняшник':'sunflower', 'Кукурудза':'corn', 'Пшениця':'wheat'};
+// сторінка агрозвіту містить уже перетворені дані (build_html.py) — зводимо до одного вигляду
+function normExt(D){
+  if(D.worktime) return D;                                       // сирий data.json
+  const H = D.harvest || {}, st = H.stock || {};
+  return {data_date:D.data_date, generated_at:D.generated_at, lha:D.lha || [],
+    worktime:{records:(D.all_work_records||[]).map(r => ({date:r.date, name:r.name, work_type:r.work_type, field:r.field, machine:r.machine, qty_ha:+r.ha||0, qty_hrs:+r.hrs||0}))},
+    fuel:{monthly:D.fuel_monthly_raw || {}, petrol_machines:D.petrol_machines || [], balance:D.balance ? {date:D.balance.date, display_dp:D.balance.theor_dp ?? D.balance.display_dp, display_ben:D.balance.theor_ben ?? D.balance.display_ben ?? null} : null},
+    harvest:{records:(H.records||[]).map(r => ({date:r.date, field:r.field, ha:+r.ha||0, sunflower_kg:+r.sun_kg||0, corn_kg:+r.corn_kg||0, wheat_kg:+r.wht_kg||0, crop_type:r.crop_type})),
+      by_month:Object.fromEntries(Object.entries(H.monthly||{}).map(([k, v]) => [k, {sunflower_kg:+v.sun||0, corn_kg:+v.corn||0, wheat_kg:+v.wht||0}])),
+      stock:{wheat_kg:st.wht_kg, sunflower_kg:st.sun_kg, corn_kg:st.corn_kg, waste_sun_kg:st.waste_sun_kg}}};
+}
+async function loadAgro(force){
+  if(AR.ext && !force && Date.now()-AR.at < 10*60e3) return;
+  try{ const t = await (await fetch('/agro-report/?t='+Date.now(), {cache:'no-store'})).text();
+    const m = t.match(/const DATA = (\{.*\});\s*$/m); if(!m) throw new Error('у сторінці агрозвіту не знайдено даних');
+    AR.ext = normExt(JSON.parse(m[1])); AR.at = Date.now(); AR.err = '';
+    const b = [...t.matchAll(/name:"([^"]+)",\s*us:[\d.]+,\s*obl:([\d.]+),\s*ua:([\d.]+)/g)].map(x => ({c:x[1], obl:+x[2], ua:+x[3]})); if(b.length) AR.bench = b;
+  }catch(e){ AR.err = e.message || 'немає зв\'язку'; }
+}
+async function loadWx(){
+  if(AR.wx || AR.wxErr) return;
+  try{ const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=48.6&longitude=32.8&daily=precipitation_sum,temperature_2m_max,precipitation_probability_max,cloud_cover_mean&timezone=Europe%2FKyiv&forecast_days=7');
+    const j = await r.json(); const d = j.daily; AR.wx = d.time.map((t, i) => ({t, mm:d.precipitation_sum[i], tx:d.temperature_2m_max[i], pr:d.precipitation_probability_max[i], cl:d.cloud_cover_mean[i]})); }
+  catch(e){ AR.wxErr = 'прогноз недоступний'; }
+}
+function cmpEl(our, ext, kind, digits=0){                       // «агрозвіт: X ✓» або «агрозвіт: X ⚠ Δ…»
+  if(ext==null || !AR.ext) return '';
+  const [a, r] = TOL[kind], d = our - ext, bad = Math.abs(d) > Math.max(a, r*Math.max(Math.abs(our), Math.abs(ext)));
+  if(bad) AR._bad++;
+  const f = v => kind==='kg' ? nf(v/1000, 2)+' т' : nf(v, digits)+(kind==='l' ? ' л' : ' га');
+  return el('div', {class:'cmp '+(bad ? 'bad' : 'ok'), title:'Агрозвіт (файли бухгалтера)'}, 'агрозвіт: '+f(ext)+(bad ? ' ⚠ Δ '+(d > 0 ? '+' : '')+f(d) : ' ✓'));
+}
+// --- метрики дня з нашої системи
+function ourDay(n){
+  const W = MODEL.works.filter(w => w.d.n===n), field = W.filter(w => w.u==='га' && FIELDOPS.has(w.g));
+  const ha = d3.sum(d3.rollups(field, v => d3.max(v, w => w.q), w => w.op+'|'+w.f+'|'+(w.m||w.p)), x => x[1]);
+  const F = MODEL.fuel.filter(f => f.d.n===n), H = MODEL.harv.filter(h => h.d.n===n), S = MODEL.ship.filter(x => x.d.n===n);
+  return {W, ha, raw:d3.sum(W.filter(w => w.u==='га'), w => w.q), people:new Set(W.map(w => w.p)).size, dp:d3.sum(F.filter(f => f.ft==='ДП'), f => f.l), bz:d3.sum(F.filter(f => f.ft==='Бензин'), f => f.l),
+    cut:d3.sum(H, h => h.ha), kg:d3.sum(H, h => h.kg), ship:d3.sum(S, x => x.n)};
+}
+function extDay(iso){
+  const X = AR.ext; if(!X) return null;
+  const R = ((X.worktime||{}).records||[]).filter(r => r.date===iso), pet = new Set((X.fuel||{}).petrol_machines||[]);
+  let dp = 0, bz = 0; Object.entries((X.fuel||{}).monthly||{}).forEach(([m, ds]) => { const v = +ds[iso]||0; if(pet.has(m)) bz += v; else dp += v; });
+  const H = ((X.harvest||{}).records||[]).filter(r => r.date===iso);
+  return {R, ha:d3.sum(R, r => +r.qty_ha||0), raw:d3.sum(R, r => +r.qty_ha||0), anonHa:d3.sum(R.filter(r => !String(r.name||'').trim()), r => +r.qty_ha||0), people:new Set(R.map(r => pkey(r.name).sur).filter(Boolean)).size, dp, bz,
+    cut:d3.sum(H, h => +h.ha||0), kg:d3.sum(H, h => (+h.sunflower_kg||0)+(+h.corn_kg||0)+(+h.wheat_kg||0))};
+}
+function arDays(){ return [...new Set([...MODEL.works, ...MODEL.fuel, ...MODEL.harv].map(x => x.d.n))].sort((a, b) => a-b); }
+function renderAgro(){
+  const days = arDays(), today = toSerial(new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10));
+  if(AR.day==null) AR.day = d3.max(days.filter(d => d <= today)) || today;
+  $('#ar-date').value = isoOf(AR.day);
+  const body = $('#ar-body'); body.replaceChildren(el('p', {class:'note'}, 'Завантажую агрозвіт для звірки…'));
+  Promise.all([loadAgro(), loadWx()]).then(() => { if(TAB==='agro') drawAgro(); });
+  if(AR.ext || AR.err) drawAgro();
+}
+function drawAgro(){
+  const n = AR.day, iso = isoOf(n), d = dt(n), y = d.y - (d.m<=3), X = AR.ext, body = $('#ar-body'); AR._bad = 0;
+  $('#ar-src').textContent = X ? 'звірка: агрозвіт бухгалтера, дані на '+X.data_date.split('-').reverse().join('.') : (AR.err ? 'агрозвіт недоступний ('+AR.err+') — показую лише наші дані' : '');
+  const days = arDays(), prevN = d3.max(days.filter(x => x < n));
+  const o = ourDay(n), p = prevN ? ourDay(prevN) : null, e = extDay(iso);
+  const kpi = (lab, v, pv, fmt, cmp) => el('div', {class:'kpi'}, lab, el('b', {}, fmt(v)),
+    pv!=null ? el('div', {class:'dl '+(v > pv ? 'up' : v < pv ? 'dn' : '')}, (v===pv ? '= ' : v > pv ? '▲ ' : '▼ ')+fmt(Math.abs(v-pv))+' до '+ddmm(dt(prevN))) : '', cmp || '');
+  const t = x => nf(x/1000, 1)+' т', l = x => nf(x, 0)+' л', h = x => nf(x, 1)+' га';
+  const secDay = el('div', {}, el('div', {class:'ar-kpis'},
+    kpi('Польові роботи', o.ha, p && p.ha, h, e && el('div', {}, el('div', {class:'note'}, 'за записами '+nf(o.raw, 1)+' га'), cmpEl(o.raw, e.raw, 'ha', 1), e.anonHa ? el('div', {class:'note'}, 'з них у файлі без прізвища: '+nf(e.anonHa, 1)+' га') : '')),
+    kpi('Людей у роботі', o.people, p && p.people, x => String(x), e ? el('div', {class:'cmp ok'}, 'агрозвіт: '+e.people) : ''),
+    kpi('ДП за день', o.dp, p && p.dp, l, e && cmpEl(o.dp, e.dp, 'l')),
+    kpi('Бензин', o.bz, p && p.bz, l, e && cmpEl(o.bz, e.bz, 'l')),
+    kpi('Скошено', o.cut, p && p.cut, h, e && cmpEl(o.cut, e.cut, 'ha', 1)),
+    kpi('На склад (тік)', o.kg, p && p.kg, t, e && cmpEl(o.kg, e.kg, 'kg')),
+    kpi('Відвантажено', o.ship, p && p.ship, t)));
+  // --- план по культурах (сезон = урожай року y)
+  const plan = d3.rollups(REF.prl.filter(r => r.y===y), v => d3.sum(v, r => r.ha), r => r.c);
+  const H = MODEL.harv.filter(x => x.y===y && x.d.n <= n);
+  const EH = X ? ((X.harvest||{}).records||[]).filter(r => r.date <= iso && +r.date.slice(0,4)===y) : [];
+  const secPlan = el('div', {class:'card'}, el('h3', {}, '📋 Виконання плану збирання · урожай '+y),
+    plan.length ? plan.sort((a, b) => b[1]-a[1]).map(([c, pha]) => { const done = d3.sum(H.filter(x => x.c===c), x => x.ha), pct = pha ? Math.min(100, done/pha*100) : 0;
+      const eh = X ? d3.sum(EH.filter(r => r.crop_type===CROPK[c]), r => +r.ha||0) : null;
+      return el('div', {style:'margin:8px 0'}, el('div', {style:'display:flex;justify-content:space-between;gap:8px'}, el('b', {style:'color:'+cropColor(c)}, c), el('span', {}, nf(done, 1)+' / '+nf(pha, 0)+' га ('+nf(pct, 0)+'%)')),
+        el('div', {class:'pbar'}, el('i', {style:'width:'+pct+'%;background:'+cropColor(c)})),
+        el('div', {style:'display:flex;justify-content:space-between'}, el('span', {class:'note'}, 'залишилось '+nf(Math.max(0, pha-done), 1)+' га'), cmpEl(done, eh, 'ha', 1))); }) : el('p', {class:'note'}, 'Сівозміна на '+y+' не заповнена.'));
+  // --- паливо
+  const pmm = MODEL.stock.filter(s => s.cat==='ПММ' && s.inv);
+  const eb = X && X.fuel && X.fuel.balance;
+  const mon = d.y*100+d.m, FM = MODEL.fuel.filter(f => f.ft==='ДП' && f.mon===mon && f.d.n <= n);
+  const byM = d3.rollups(FM, v => d3.sum(v, f => f.l), f => f.m).sort((a, b) => b[1]-a[1]);
+  const extM = m => { if(!X) return null; const mm = (X.fuel||{}).monthly||{}, key = Object.keys(mm).find(k => nname(k)===nname(m)); const ds = key ? mm[key] : null; if(!ds) return 0; return d3.sum(Object.entries(ds).filter(([k]) => k.slice(0,7)===iso.slice(0,7) && k <= iso), x => x[1]); };
+  const mx = d3.max(byM, x => x[1]) || 1;
+  const secFuel = el('div', {class:'card'}, el('h3', {}, '⛽ Паливо'),
+    el('div', {class:'ar-kpis', style:'margin-top:0'}, pmm.map(s => el('div', {class:'kpi'}, 'Залишок '+s.m, el('b', {}, nf(s.bal, 0)+' л'),
+      eb ? cmpEl(s.bal, /бенз/i.test(s.m) ? eb.display_ben : eb.display_dp, 'l') : '', eb && eb.date ? el('div', {class:'note'}, 'агрозвіт на '+eb.date.split('-').reverse().join('.')) : ''))),
+    el('div', {class:'note', style:'margin:10px 0 4px'}, 'Витрата ДП по техніці — '+MON[d.m-1]+' '+d.y+' до '+ddmm(d)),
+    byM.length ? byM.map(([m, v]) => el('div', {style:'display:grid;grid-template-columns:130px 1fr auto;gap:8px;align-items:center;margin:3px 0'},
+      el('span', {}, m), el('div', {class:'pbar', style:'margin:0'}, el('i', {style:'width:'+(v/mx*100)+'%;background:var(--accent)'})),
+      el('div', {style:'text-align:right'}, el('b', {}, nf(v, 0)+' л'), cmpEl(v, extM(m), 'l')))) : el('p', {class:'note'}, 'За місяць заправок немає.'));
+  // --- л/га по техніці й видах робіт (сезон)
+  const WS = MODEL.works.filter(w => w.y===y && w.u==='га' && w.fuel > 0 && w.d.n <= n);
+  const lh = d3.rollups(WS, v => ({ha:d3.sum(v, w => w.q), l:d3.sum(v, w => w.fuel), ops:d3.rollups(v, vv => ({ha:d3.sum(vv, w => w.q), l:d3.sum(vv, w => w.fuel)}), w => w.op)}), w => w.m).filter(x => x[0]).sort((a, b) => b[1].l-a[1].l);
+  const extL = m => X && (X.lha||[]).find(x => x.machine===m);
+  const secLha = el('div', {class:'card', style:'grid-column:1/-1'}, el('h3', {}, '📊 Витрата л/га · сезон '+y),
+    lh.length ? el('table', {}, el('thead', {}, el('tr', {}, ['Техніка / робота','га','л','л/га','агрозвіт л/га'].map((x, i) => el('th', {class:i ? '' : 'l'}, x)))),
+      el('tbody', {}, lh.flatMap(([m, v]) => { const ex = extL(m); return [el('tr', {style:'font-weight:600'}, el('td', {class:'l'}, m), el('td', {}, nf(v.ha, 0)), el('td', {}, nf(v.l, 0)), el('td', {}, nf(v.l/v.ha, 1)),
+          el('td', {}, ex ? el('span', {class:'cmp '+(Math.abs(ex.avg_lha - v.l/v.ha) > Math.max(1, .1*ex.avg_lha) ? 'bad' : 'ok')}, nf(ex.avg_lha, 1)) : '—')),
+        el('tr', {}, el('td', {class:'l note', colspan:'5', style:'padding:0 6px 8px 14px;border-top:0'}, v.ops.sort((a, b) => b[1].ha-a[1].ha).map(([op, x]) => op+' '+nf(x.l/x.ha, 1)+' л/га ('+nf(x.ha, 0)+' га)').join(' · ')))]; }))) : el('p', {class:'note'}, 'Немає робіт з розподіленим пальним.'),
+    el('div', {class:'note', style:'margin-top:6px'}, 'Агрозвіт рахує л/га інакше (лише дні, де є і заправка, і гектари), тому ця колонка — для орієнтиру, у лічильник розбіжностей не йде.'));
+  // --- роботи дня + звірка по людях
+  const ext = e ? e.R : [];
+  const ppl = [...new Set(o.W.map(w => w.p))];
+  ext.forEach(r => { if(r.name && !ppl.some(x => samePerson(x, r.name)) && !ppl.includes(r.name)) ppl.push(r.name); });
+  const anon = ext.filter(r => !String(r.name||'').trim());
+  const byP = ppl.map(k => { const ow = o.W.filter(w => w.p===k), er = ext.filter(r => r.name && (samePerson(k, r.name) || r.name===k));
+    return {k, name:k, our:ow, ext:er, oha:d3.sum(ow.filter(w => w.u==='га'), w => w.q), ohr:d3.sum(ow.filter(w => w.u==='год'), w => w.q), eha:d3.sum(er, r => +r.qty_ha||0), ehr:d3.sum(er, r => +r.qty_hrs||0)}; }).sort((a, b) => (a.name||'').localeCompare(b.name||''));
+  const secWork = el('div', {class:'card', style:'grid-column:1/-1'}, el('h3', {}, '👷 Виконані роботи — '+ddmm(d)+' · '+nf(o.ha, 1)+' га'),
+    o.W.length || ext.length ? el('div', {class:'tbl-wrap', style:'overflow:auto'}, el('table', {}, el('thead', {}, el('tr', {}, ['Працівник','Робота','Поле','Техніка','Обсяг','Культура', X ? 'Агрозвіт' : ''].filter(Boolean).map((x, i) => el('th', {class:i < 4 || i===5 ? 'l' : ''}, x)))),
+      el('tbody', {}, byP.flatMap(P => { const rows = P.our.length ? P.our : [null];
+        const match = !X || (Math.abs(P.oha-P.eha) <= Math.max(TOL.ha[0], TOL.ha[1]*Math.max(P.oha, P.eha)) && Math.abs(P.ohr-P.ehr) <= .5);
+        if(X && !match) AR._bad++;
+        return rows.map((w, i) => el('tr', {}, el('td', {class:'l'}, i ? '' : P.name), el('td', {class:'l'}, w ? w.op : el('span', {class:'note'}, '— немає в нашій системі')), el('td', {class:'l'}, w ? w.f : ''), el('td', {class:'l'}, w ? w.m : ''),
+          el('td', {}, w ? nf(w.q, 1)+' '+w.u : ''), el('td', {class:'l'}, w ? (w.c && w.c!=='немає' ? w.c : '') : ''),
+          X ? el('td', {}, i ? '' : el('span', {class:'cmp '+(match ? 'ok' : 'bad')}, (P.ext.length ? [P.eha ? nf(P.eha, 1)+' га' : '', P.ehr ? nf(P.ehr, 1)+' год' : ''].filter(Boolean).join(' · ') : 'немає запису')+(match ? ' ✓' : ' ⚠'))) : '')); }),
+        X && anon.length ? anon.map((r, i) => el('tr', {class:'note'}, el('td', {class:'l'}, i ? '' : 'без прізвища у файлі'), el('td', {class:'l'}, r.work_type), el('td', {class:'l'}, r.field||''), el('td', {class:'l'}, r.machine||''),
+          el('td'), el('td'), el('td', {}, el('span', {class:'cmp ok'}, [r.qty_ha ? nf(r.qty_ha, 1)+' га' : '', r.qty_hrs ? nf(r.qty_hrs, 1)+' год' : ''].filter(Boolean).join(' · '))))) : '')))
+      : el('p', {class:'note'}, 'За цей день робіт немає.'));
+  // --- урожайність по полях
+  const HF = d3.rollups(MODEL.harv.filter(x => x.y===y && x.d.n <= n && x.f), v => ({cut:d3.sum(v, x => x.ha), t:d3.sum(v, x => x.kg)/1000}), x => x.f+'|'+x.c);
+  const FS = HF.map(([k, v]) => { const [f, c] = k.split('|'), pf = MODEL.fields.find(z => z.y===y && z.f===f && z.c===c); return {f, c, ha: pf ? pf.ha : (FIELD[f]||{}).ha, cut:v.cut, t:v.t, ycut: v.cut ? v.t*10/v.cut : null}; }).filter(f => f.cut || f.t);
+  const extF = f => X ? d3.sum(EH.filter(r => String(r.field).trim().toLowerCase()===String(f).toLowerCase()), r => (+r.sunflower_kg||0)+(+r.corn_kg||0)+(+r.wheat_kg||0)) : null;
+  const secHarv = el('div', {class:'card'}, el('h3', {}, '🌾 Урожайність по полях · наростаючим підсумком'),
+    FS.length ? el('table', {}, el('thead', {}, el('tr', {}, ['Поле','Культура','Площа','Зібрано га','т','ц/га', X ? 'агрозвіт т' : ''].filter(Boolean).map((x, i) => el('th', {class:i < 2 ? 'l' : ''}, x)))),
+      el('tbody', {}, FS.sort((a, b) => (b.ycut||0)-(a.ycut||0)).map(f => el('tr', {}, el('td', {class:'l'}, f.f), el('td', {class:'l'}, el('span', {class:'cropdot', style:'background:'+cropColor(f.c)}), f.c),
+        el('td', {}, nf(f.ha, 0)), el('td', {}, nf(f.cut, 1)), el('td', {}, nf(f.t, 1)), el('td', {}, el('b', {}, nf(f.ycut, 1))), X ? el('td', {}, cmpEl(f.t*1000, extF(f.f), 'kg')) : '')))) : el('p', {class:'note'}, 'Збирання за сезон ще немає.'));
+  // --- динаміка по місяцях + тік
+  const HM = d3.rollups(MODEL.harv.filter(x => x.y===y && x.d.n <= n), v => d3.rollup(v, vv => d3.sum(vv, x => x.kg), x => x.c), x => x.d.y*100+x.d.m).sort((a, b) => a[0]-b[0]);
+  const cr = Object.keys(CROPK);
+  const bm = {}; if(X) ((X.harvest||{}).records||[]).filter(r => r.date <= iso).forEach(r => { const k = r.date.slice(0,7), b = bm[k] = bm[k] || {sunflower_kg:0, corn_kg:0, wheat_kg:0}; b.sunflower_kg += r.sunflower_kg; b.corn_kg += r.corn_kg; b.wheat_kg += r.wheat_kg; });
+  const secMon = el('div', {class:'card'}, el('h3', {}, '📈 Збирання по місяцях і тік'),
+    HM.length ? el('table', {}, el('thead', {}, el('tr', {}, ['Місяць', ...cr].map((x, i) => el('th', {class:i ? '' : 'l'}, x)))),
+      el('tbody', {}, HM.map(([k, m]) => { const key = Math.floor(k/100)+'-'+String(k%100).padStart(2,'0');
+        return el('tr', {}, el('td', {class:'l'}, MON[k%100-1]+' '+Math.floor(k/100)), ...cr.map(c => el('td', {}, (m.get(c) ? nf(m.get(c)/1000, 1)+' т' : '—'), bm[key] ? cmpEl(m.get(c)||0, +bm[key][CROPK[c]+'_kg']||0, 'kg') : ''))); }))) : el('p', {class:'note'}, 'Немає збирання.'),
+    el('div', {class:'note', style:'margin:10px 0 4px'}, '📦 Залишок на току зараз'),
+    el('div', {class:'ar-kpis', style:'margin-top:0'}, MODEL.grain.filter(g => Math.abs(g.bal) > 1).map(g => { const ek = X && X.harvest && X.harvest.stock ? ({'Пшениця':'wheat_kg','Соняшник':'sunflower_kg','Кукурудза':'corn_kg','Відходи соняшника':'waste_sun_kg'})[g.p] : null;
+      return el('div', {class:'kpi'}, g.p, el('b', {}, nf(g.bal/1000, 1)+' т'), ek ? cmpEl(g.bal, +X.harvest.stock[ek]||0, 'kg') : ''); })));
+  // --- бенчмарк
+  const bench = AR.bench || [{c:'Соняшник', obl:17.1, ua:22.0}, {c:'Кукурудза', obl:39.9, ua:58.8}, {c:'Пшениця', obl:45.1, ua:49.5}];
+  const us = c => { const v = MODEL.fields.filter(f => f.y===y && f.c===c); const ha = d3.sum(v, f => f.cut), tt = d3.sum(v, f => f.t); return ha ? tt*10/ha : null; };
+  const badge = (u, r) => { if(u==null || !r) return ''; const dd = (u-r)/r*100; return el('span', {class:'cmp '+(dd >= 0 ? 'ok' : 'bad'), style:'margin-left:4px'}, (dd > 0 ? '+' : '')+nf(dd, 0)+'%'); };
+  const secBench = el('div', {class:'card'}, el('h3', {}, '🏁 Бенчмарк урожайності '+y+' · ц/га'),
+    el('table', {}, el('thead', {}, el('tr', {}, ['Культура','Ми','Кіровоградська обл.','Україна'].map((x, i) => el('th', {class:i ? '' : 'l'}, x)))),
+      el('tbody', {}, bench.map(b => { const u = us(b.c); return el('tr', {}, el('td', {class:'l'}, b.c), el('td', {}, el('b', {}, nf(u, 1))), el('td', {}, nf(b.obl, 1), badge(u, b.obl)), el('td', {}, nf(b.ua, 1), badge(u, b.ua))); }))),
+    el('div', {class:'note', style:'margin-top:6px'}, 'Область і Україна — з агрозвіту (Latifundist, UkrAgroConsult). «Ми» — з наших даних збирання.'));
+  // --- погода (Open-Meteo) з алгоритмом простою агрозвіту
+  const wxDay = w => { const rain = w.mm >= .5, stop = rain ? (w.tx > 12 ? 1 : w.tx >= 8 ? 1.5 : 2) : 0, late = !rain && w.cl > 90;
+    return {stop, late, txt: stop ? 'простій '+nf(stop, 1)+' дн' : late ? 'вихід з 11:00' : 'робочий'}; };
+  const secWx = el('div', {class:'card', style:'grid-column:1/-1'}, el('h3', {}, '🌦 Погода на 7 днів · Долинське'),
+    AR.wx ? el('div', {class:'wx'}, AR.wx.map(w => { const r = wxDay(w), dd = new Date(w.t+'T12:00:00');
+      return el('div', {class: r.stop ? 'stop' : r.late ? 'late' : ''}, el('b', {}, dd.toLocaleDateString('uk-UA', {weekday:'short', day:'numeric'})), el('div', {}, nf(w.tx, 0)+'°'), el('div', {class:'note'}, nf(w.mm, 1)+' мм · '+(w.pr ?? '—')+'%'), el('div', {style:'font-weight:600;margin-top:2px'}, r.txt)); }))
+      : el('p', {class:'note'}, AR.wxErr || 'Завантажую прогноз…'),
+    el('div', {class:'note', style:'margin-top:6px'}, 'Правило простою як в агрозвіті: дощ ≥0,5 мм → 1 день (>12°), 1,5 (8–12°), 2 (<8°); хмарність >90% → вихід з 11:00. Прогноз — Open-Meteo.'));
+  const bad = AR._bad;
+  const recon = X ? el('div', {class:'recon '+(bad ? 'bad' : 'ok')}, el('b', {}, bad ? '⚠ Розбіжностей з агрозвітом: '+bad : '✓ Дані бригадира й агрозвіту сходяться'),
+      el('div', {class:'note'}, 'Агрозвіт — файли бухгалтера (OneDrive), дані на '+X.data_date.split('-').reverse().join('.')+'. Допуск: гектари ±1 га або 2%, пальне ±20 л або 5%, зерно ±0,5 т або 1%.'+(iso > X.data_date ? ' Обраний день новіший за агрозвіт — для звірки дочекайтесь файлів бухгалтера.' : '')))
+    : el('div', {class:'recon'}, el('b', {}, 'Звірка недоступна'), el('div', {class:'note'}, AR.err || ''));
+  body.replaceChildren(recon, secDay, el('div', {class:'ar-grid'}, secPlan, secFuel, secWork, secHarv, secMon, secLha, secBench, secWx));
+  // лічильник розбіжностей рахується під час побудови — оновлюємо банер
+  recon.firstChild.textContent = X ? (AR._bad ? '⚠ Розбіжностей з агрозвітом: '+AR._bad : '✓ Дані бригадира й агрозвіту сходяться') : 'Звірка недоступна';
+  recon.className = 'recon '+(X ? (AR._bad ? 'bad' : 'ok') : '');
+}
+
 // ---------- ІСТОРІЯ ПОЛЯ: усе, що робилося на полі, з щоденних записів
 const HGROUPS = [['', 'Усі'], ['Обробіток ґрунту','Обробіток'], ['Посів','Посів'], ['Внесення добрив','Добрива'], ['Захист рослин','ЗЗР'], ['Догляд','Догляд'], ['Збирання','Збирання'], ['Інше','Інше']];
 const HCOL = {'Обробіток ґрунту':'#8c6d46', 'Посів':'#2f8f5b', 'Внесення добрив':'#3b6fb6', 'Захист рослин':'#c2410c', 'Догляд':'#7c5cc4', 'Збирання':'#c89211', 'Інше':'#8a8a8a'};
@@ -897,18 +1100,18 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '18.11 17:10';
-const TABS = [['day','День'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
+const APP_VER = '18.11 17:40';
+const TABS = [['day','День'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
 
 // ---------- вкладки
 function renderTabs(){
   const nav = $('#tabs'); nav.replaceChildren();
-  TABS.filter(([id]) => id!=='settings' || ROLE==='o').forEach(([id, t]) => nav.append(el('a', {href:'#'+id, 'aria-current': id===TAB ? 'page' : 'false'}, t)));
+  TABS.filter(([id]) => (id!=='settings' && id!=='agro') || ROLE==='o').forEach(([id, t]) => nav.append(el('a', {href:'#'+id, 'aria-current': id===TAB ? 'page' : 'false'}, t)));
 }
 function showTab(id){
-  if(!TABS.some(t => t[0]===id) || (id==='settings' && ROLE!=='o')) id = 'day';
+  if(!TABS.some(t => t[0]===id) || ((id==='settings' || id==='agro') && ROLE!=='o')) id = 'day';
   TAB = id; document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id==='pane-'+id));
   renderTabs(); renderAll();
 }
@@ -916,7 +1119,7 @@ window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
-    fields:() => { renderFields(); renderFieldCard(); }, history:renderHistory, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
+    fields:() => { renderFields(); renderFieldCard(); }, history:renderHistory, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
     fuel:renderFuelTable, tech:renderTech, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:renderJournal, settings:renderSettings})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
@@ -1419,6 +1622,9 @@ const shiftDay = k => { const d = new Date(DAY+'T12:00:00Z'); d.setUTCDate(d.get
 $('#prev-day').addEventListener('click', () => shiftDay(-1)); $('#next-day').addEventListener('click', () => shiftDay(1));
 $('#date').addEventListener('change', ev => { if(ev.target.value){ DAY = ev.target.value; openDay(); renderDay(); } });
 
+$('#ar-date').addEventListener('change', ev => { if(ev.target.value){ AR.day = toSerial(ev.target.value); drawAgro(); } });
+$('#ar-prev').addEventListener('click', () => { const ds = arDays().filter(x => x < AR.day); if(ds.length){ AR.day = d3.max(ds); renderAgro(); } });
+$('#ar-next').addEventListener('click', () => { const ds = arDays().filter(x => x > AR.day); if(ds.length){ AR.day = d3.min(ds); renderAgro(); } });
 // ---------- ШАБЛОНИ
 function renderTpl(){ const t = $('#tpl-table'); t.replaceChildren(el('thead', {}, el('tr', {}, el('th', {class:'l'}, 'Шаблон'), el('th', {class:'l'}, 'Склад, норма на га'))),
   el('tbody', {}, REF.templates.map(x => el('tr', {}, el('td', {class:'l'}, x.n), el('td', {class:'l'}, x.items.map(([m, n]) => m+' '+n+' '+((MAT[m]||{}).u||'')).join(' + ')))))); }
