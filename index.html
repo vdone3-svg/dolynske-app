@@ -235,7 +235,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
   <main class="pane" id="pane-day">
     <header class="day">
       <div class="dayline">
-        <div><h1 id="day-title"></h1><div class="note">бригадир · <span class="pill open" id="day-status">День відкритий</span> <span class="note" id="draft-note" role="status"></span></div></div>
+        <div><h1 id="day-title"></h1><div class="note">бригадир · <span class="pill open" id="day-status">День відкритий</span> <span class="note" id="draft-note" role="status"></span></div><div class="note" id="draft-others"></div></div>
         <div class="datenav"><button class="btn ghost" id="prev-day" aria-label="Попередній день">←</button><input type="date" id="date" style="width:auto"><button class="btn ghost" id="next-day" aria-label="Наступний день">→</button></div>
       </div>
       <div class="kpis" id="kpis"></div>
@@ -889,6 +889,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
+const APP_VER = '18.11 15:30';
 const TABS = [['day','День'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1196,6 +1197,16 @@ function openDay(){
   DIRTY = false; DRAFT_TS = 0; draftNote('');
   if(applyDraft(readDraft(LS.get(draftKey(DAY))), doc, 'з цього пристрою')){ DRAFT_DAY = DAY; DRAFT_TIMER = setTimeout(() => pushDraft(DRAFT_DAY), 3000); }   // могло не встигнути в сховище
   loadRemoteDraft(DAY, doc);
+  LS.set('dl_day', JSON.stringify({d:DAY, t:Date.now()}));   // після оновлення сторінки відкриється той самий день
+  renderOtherDrafts();
+}
+// незакриті чернетки інших днів на цьому пристрої — щоб не загубити роботу, якщо дата відрізняється від сьогоднішньої
+function renderOtherDrafts(){
+  const box = $('#draft-others'); if(!box) return; const days = [];
+  try{ for(let i = 0; i < localStorage.length; i++){ const k = localStorage.key(i); if(!k || !k.startsWith('dl_draft_')) continue;
+    const o = readDraft(localStorage.getItem(k)); if(o && !o.cleared && o.day && o.day!==DAY && !isClosed(o.day)) days.push(o.day); } }catch(e){}
+  days.sort();
+  box.replaceChildren(...(days.length ? ['Незакриті чернетки: ', ...days.map(d => el('button', {class:'btn small', type:'button', style:'margin:2px', onclick:() => { DAY = d; openDay(); renderDay(); }}, d.split('-').reverse().join('.')))] : []));
 }
 // ---------- ЧЕРНЕТКА ДНЯ: усе введене зберігається одразу, ще до закриття дня
 // на пристрої — миттєво; у сховищі (drafts/) — через 15 с після останньої зміни, щоб продовжити з іншого пристрою
@@ -1240,7 +1251,9 @@ function clearDraft(day){ LS.del(draftKey(day)); if(DRAFT_TIMER && DRAFT_DAY===d
   pane.addEventListener('change', ev => { if(!ev.target.closest(NOT)) markDirty(); });
   pane.addEventListener('click', ev => { const b = ev.target.closest('button'); if(b && !b.closest(NOT) && b.id!=='btn-reopen') markDirty(); });
   document.addEventListener('visibilitychange', () => { if(document.visibilityState==='hidden') flushDraft(); });
-  window.addEventListener('pagehide', flushDraft); }
+  window.addEventListener('pagehide', flushDraft);
+  // F5 / закриття, поки курсор ще в полі: «change» не встиг спрацювати — примусово завершуємо введення й зберігаємо
+  window.addEventListener('beforeunload', () => { const a = document.activeElement; if(a && a.closest && a.closest('#pane-day') && a.blur) a.blur(); if(DIRTY) markDirty(); }); }
 $('#btn-close').addEventListener('click', () => { $('#dlg-body').replaceChildren(...checks().map(([lvl, t, s]) => el('div', {class:'check'}, el('span', {class:'ic '+lvl}, lvl==='ok' ? '✓' : '!'), el('div', {}, t, s ? el('div', {class:'note'}, s) : '')))); $('#dlg').showModal(); });
 $('#dlg-back').addEventListener('click', () => $('#dlg').close());
 $('#dlg-ok').addEventListener('click', async () => { $('#dlg').close(); const doc = buildDayDoc(); const ok = await saveDoc(dayPath(DAY), doc, 'День '+DAY+' ('+doc.by+')'); clearDraft(DAY); openDay(); renderDay();
@@ -1524,8 +1537,9 @@ async function start(){
   try{ await loadAll(); }
   catch(e){ syncState(e.message, 'bad'); if(e.auth){ LS.del('dl_token'); showLogin(e.message); } return; }
   const today = new Date(); DAY = new Date(today.getTime() - today.getTimezoneOffset()*6e4).toISOString().slice(0,10);
+  const lastDay = readDraft(LS.get('dl_day')); if(lastDay && lastDay.d && Date.now() - lastDay.t < 12*3600e3) DAY = lastDay.d;
   YEAR = MODEL.years.includes(new Date().getFullYear()) ? new Date().getFullYear() : d3.max(MODEL.years);
-  $('#src-line').textContent = 'ТОВ «Долинське» · дані з приватного сховища';
+  $('#src-line').textContent = 'ТОВ «Долинське» · дані з приватного сховища · версія '+APP_VER;
   openDay(); showTab(location.hash.slice(1) || 'day');
 }
 if(TOKEN) start(); else showLogin();
