@@ -1109,7 +1109,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '18.11 17:52';
+const APP_VER = '18.11 18:05';
 const TABS = [['day','День'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1623,6 +1623,16 @@ $('#all-yesterday').addEventListener('click', () => { let k = 0; DS.rows.forEach
 $('#add-person').addEventListener('click', () => { DS.rows.push({...blankRow(''), newp:true}); renderDay(); });
 $('#add-appl').addEventListener('click', () => { DS.appl.push({f:'', t:'', items:[], ha:''}); renderDay(); });
 $('#add-own').addEventListener('click', () => { DS.own.push({p:'', l:''}); renderDay(); });
+/* Поля з підказками: при кліку показуємо ВЕСЬ список, без стирання поточного значення */
+document.addEventListener('focusin', ev => { const i = ev.target; if(!(i instanceof HTMLInputElement) || !i.list || i.dataset.prev !== undefined) return;
+  i.dataset.prev = i.value; i.dataset.ph = i.placeholder || ''; if(i.value){ i.placeholder = i.value; i.value = ''; } i.dataset.typed = '';
+  try { i.showPicker && i.showPicker(); } catch(e){} });
+document.addEventListener('input', ev => { const i = ev.target; if(i instanceof HTMLInputElement && i.dataset.prev !== undefined) i.dataset.typed = '1'; });
+document.addEventListener('focusout', ev => { const i = ev.target; if(!(i instanceof HTMLInputElement) || i.dataset.prev === undefined) return;
+  const prev = i.dataset.prev, typed = i.dataset.typed; i.placeholder = i.dataset.ph; delete i.dataset.prev; delete i.dataset.ph; delete i.dataset.typed;
+  if(i.value === '' && !typed) i.value = prev;                       // нічого не обрали — повертаємо як було
+  else if(i.value === '' && typed && prev) i.dispatchEvent(new Event('change', {bubbles:true})); // свідомо стерли
+});
 let GTAB = 'zav';
 function renderGrainTabs(){
   const n = {zav: (DS.zav||[]).length, ship: (DS.ship||[]).length, gm: (DS.gm||[]).length};
