@@ -166,6 +166,7 @@ select{min-height:36px;background:var(--field)}
 .xtra label.note{display:block}
 .xtra .ttl{grid-column:1/-1;font:600 12px var(--body);color:var(--accent)}
 .xtra .mix{grid-column:1/-1}
+.xtra.pass{border-left-color:var(--warn);background:color-mix(in srgb,var(--warn) 9%,transparent)}.xtra.pass.ok{border-left-color:var(--good);background:color-mix(in srgb,var(--good) 8%,transparent)}.xtra.passinfo{border-left-color:var(--line);background:transparent;padding:4px 10px}
 .xtra .xl{grid-column:1/-1;display:grid;gap:6px;align-items:end;grid-template-columns:minmax(150px,1.5fr) minmax(90px,.8fr) minmax(90px,.8fr) minmax(130px,1.2fr) 76px}
 @media (max-width: 640px){.xtra .xl{grid-template-columns:1fr 1fr}}
 @media (max-width: 980px){.xtra{margin:0}}
@@ -889,7 +890,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '18.11 15:30';
+const APP_VER = '18.11 15:45';
 const TABS = [['day','День'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -953,6 +954,41 @@ function rowFlags(r){ const f = [], fuel = +r.fuel||0, q = +r.q||0;
   if(r.f && FIELD[r.f] && r.u==='га' && q > FIELD[r.f].ha*1.02) f.push(['warn','більше площі поля ('+FIELD[r.f].ha+' га)']);
   if(fuel && q && r.u==='га' && REF.lha[r.m]){ const l = fuel/q, n = REF.lha[r.m]; if(Math.abs(l-n)/n > .3) f.push(['warn', nf(l)+' л/га при звичних ~'+n]); }
   return f; }
+// ---- повторні проходи: скільки га цієї операції вже зроблено на полі за сезон
+const opKey = op => { const o = OP[op] || {}; if(o.g==='Посів') return 'Посів'; if(/^Пряме комбайнування/.test(op)) return 'Пряме комбайнування'; return op; };
+const mkey = r => r.m || r.p;
+function passInfo(r){
+  if(!r.f || !FIELD[r.f] || r.u!=='га' || opMode(r.op)!=='field' || !(+r.q) || r.st!=='працює') return null;
+  const area = FIELD[r.f].ha, n = toSerial(DAY), y = seasonFor(r.op), k = opKey(r.op);
+  const ws = MODEL.works.filter(w => w.f===r.f && w.y===y && w.u==='га' && opKey(w.op)===k && w.d.n!==n);
+  const done = d3.sum(d3.rollups(ws, v => d3.max(v, w => w.q), w => w.d.n+'|'+(w.m||w.p)), x => x[1]);
+  const same = DS.rows.filter(o => o.st==='працює' && o.f===r.f && opKey(o.op)===k && o.u==='га');
+  const cur = d3.sum(d3.rollups(same, v => d3.max(v, o => +o.q||0), mkey), x => x[1]);
+  const lead = same.find(o => mkey(o)===mkey(r));                // підтвердження — один раз на машину (водій + помічник)
+  const days = [...new Set(ws.map(w => w.d.n))].sort((a, b) => a-b).map(x => ddmm(dt(x)));
+  if(done <= 0) return null;                                    // перший прохід: перевищення за день ловить окрема перевірка
+  const tol = area*.02, full = Math.floor((done + tol)/area), rem = Math.max(0, done - full*area);
+  let type, passNo;
+  if(rem <= tol){ type = 'repeat'; passNo = full + 1; }          // попередні проходи закриті — починають новий
+  else if(rem + cur > area + tol){ type = 'over'; passNo = full + 2; }   // поточний прохід переповнено
+  else { type = 'cont'; passNo = full + 1; }                     // продовжують поточний прохід
+  return {type, passNo, full, rem, done, cur, total: rem + cur, area, days, lead, isLead: lead===r, ok: !!(lead && lead.rep)};
+}
+function passLine(r){
+  const p = passInfo(r); if(!p || !p.isLead) return null;
+  const op = r.op.charAt(0).toLowerCase()+r.op.slice(1), dd = p.days.length > 3 ? p.days.slice(0,2).join(', ')+' … '+p.days[p.days.length-1] : p.days.join(', ');
+  const pn = p.full + 1, cur = (p.full ? pn+'-й прохід: ' : '');
+  if(p.type==='cont') return el('div', {class:'xtra passinfo'}, el('div', {class:'ttl', style:'color:var(--muted)'}, 'Поле '+r.f+' · '+op+' · '+cur+'уже '+nf(p.rem, 1)+' га ('+dd+') + сьогодні '+nf(p.cur, 1)+' = '+nf(p.total, 1)+' з '+nf(p.area, 1)+' га'));
+  const msg = p.type==='repeat'
+    ? 'Поле '+r.f+' ('+nf(p.area, 1)+' га): '+op+' вже зроблено повністю'+(p.full > 1 ? ' '+p.full+' рази' : '')+' — '+nf(p.done, 1)+' га ('+dd+'). Це '+p.passNo+'-й прохід?'
+    : 'Поле '+r.f+' ('+nf(p.area, 1)+' га): '+op+' — '+cur+'уже '+nf(p.rem, 1)+' га ('+dd+') + сьогодні '+nf(p.cur, 1)+' = '+nf(p.total, 1)+' га, більше площі на '+nf(p.total-p.area, 1)+' га. Помилка в гектарах чи почали '+p.passNo+'-й прохід?';
+  return el('div', {class:'xtra pass'+(p.ok ? ' ok' : '')},
+    el('div', {class:'ttl', style:'color:'+(p.ok ? 'var(--good)' : 'var(--warn)')}, p.ok ? '✓ Підтверджено: '+p.passNo+'-й прохід · '+op+' · поле '+r.f+' (до цього '+nf(p.done, 1)+' га)' : '⚠ '+msg),
+    p.ok ? el('div', {}, el('button', {class:'btn small', type:'button', onclick:() => { r.rep = false; renderDay(); }}, 'Скасувати підтвердження'))
+         : el('div', {style:'grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap'},
+             el('button', {class:'btn small primary', type:'button', onclick:() => { r.rep = true; renderDay(); }}, (p.type==='repeat' ? 'Так, це ' : 'Так, почали ')+p.passNo+'-й прохід'),
+             el('span', {class:'note', style:'align-self:center'}, 'Якщо ні — виправте поле або гектари в рядку')));
+}
 // ---- контекстні поля рядка: що саме робили на полі
 const SEEDK = {'Соняшник':150, 'Кукурудза':80};   // тис. насінин в одній посівній одиниці
 function rowKind(r){ const o = OP[r.op]; if(!o) return '';
@@ -1055,6 +1091,7 @@ function renderRows(){
         el('button', {class:'btn small', title:'Ще одна робота цієї людини', on:{click: () => { DS.rows.splice(DS.rows.indexOf(r)+1, 0, {...blankRow(r.p, true), st:'працює'}); renderDay(); }}}, '+')));
     if(lock) row.style.pointerEvents = 'none';
     box.append(row);
+    const pl = passLine(r); if(pl){ if(lock) pl.style.pointerEvents = 'none'; box.append(pl); }
     const x = rowExtra(r); if(x){ if(lock) x.style.pointerEvents = 'none'; box.append(x); }
   });
 }
@@ -1144,6 +1181,8 @@ function checks(){
   const splitBad = DS.rows.filter(r => r.st==='працює' && r.f && OP[r.op] && FIELDOPS.has(OP[r.op].g) && cropsFor(r.f, seasonFor(r.op)).length > 1 && !rowCrop(r));
   if(splitBad.length) out.push(['warn', 'Поле поділене — не вказано культуру: '+splitBad.map(r => r.p+' ('+r.f+')').join(', '), '']);
   const zb = DS.zav.filter(z => +z.kg && (!z.c || !z.f)); if(zb.length) out.push(['bad', 'Зерно на склад без поля або культури: '+zb.length, 'Оберіть поле (або «кілька полів») і культуру.']);
+  const passBad = DS.rows.map(r => [r, passInfo(r)]).filter(([r, p]) => p && p.isLead && (p.type==='repeat' || p.type==='over') && !p.ok);
+  if(passBad.length) out.push(['warn', 'Повторна обробка не підтверджена: '+passBad.map(([r, p]) => 'поле '+r.f+' — '+r.op.charAt(0).toLowerCase()+r.op.slice(1)+' ('+(p.type==='repeat' ? 'уже '+nf(p.done, 1)+' га при площі '+nf(p.area, 1) : 'прохід '+(p.full+1)+': '+nf(p.total, 1)+' з '+nf(p.area, 1)+' га')+')').join('; '), 'Підтвердіть «це N-й прохід» у рядку або виправте гектари.']);
   const ppl = [...new Set(DS.rows.map(r => r.p))].filter(p => p && !DS.rows.some(r => r.p===p && r.st));
   out.push(ppl.length ? ['warn', 'Без запису: '+ppl.join(', '), 'Позначте роботу або «вихідний / лікарняний / відпустка / не було».'] : ['ok', 'Кожна людина має запис', '']);
   const byM = {}; DS.rows.filter(r => r.u==='га' && r.f && r.op).forEach(r => { const k = r.f+'|'+r.op+'|'+(r.m||r.p); byM[k] = Math.max(byM[k]||0, +r.q||0); });
@@ -1161,7 +1200,7 @@ function buildDayDoc(){
   const n = toSerial(DAY), tpl = RAW.__fuel[RAW.__fuel.length-1];
   const rows = {'Роботи':[], 'Внесення':[], 'Урожай':[], 'Відвантаження':[], 'Рух зерна':[]}, cells = [];
   const splitC = r => r.f && cropsFor(r.f, seasonFor(r.op)).length > 1 ? (rowCrop(r) || null) : null;
-  DS.rows.filter(r => r.st==='працює' && r.op).forEach(r => rows['Роботи'].push({'Дата':n, 'Поле':r.f||null, 'Культура (лише якщо поле поділене)':splitC(r), 'Операція':r.op, 'Техніка':r.m||null, 'Працівник':r.p, 'Обсяг':+r.q||null, 'Од.':r.u||null, 'Джерело':'додаток'}));
+  DS.rows.filter(r => r.st==='працює' && r.op).forEach(r => rows['Роботи'].push({'Дата':n, 'Поле':r.f||null, 'Культура (лише якщо поле поділене)':splitC(r), 'Операція':r.op, 'Техніка':r.m||null, 'Працівник':r.p, 'Обсяг':+r.q||null, 'Од.':r.u||null, 'Джерело':'додаток', 'Опис / примітка':(() => { const p = passInfo(r); return p && p.ok ? p.passNo+'-й прохід' : null; })()}));
   DS.rows.filter(r => r.st==='працює' && r.op && r.f).forEach(r => { const k = rowKind(r), ha = +r.q||0;
     const base = {'Дата':n, 'Поле':r.f, 'Культура (лише якщо поле поділене)':splitC(r), 'Оброблено, га':ha, 'Джерело':'додаток'}, who = r.p+(r.m ? ' · '+r.m : '');
     normRow(r); const fl = (r.ferts||[]).filter(f => f.m && +f.q), sl = seedsOk(r);
