@@ -897,7 +897,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '18.11 16:50';
+const APP_VER = '18.11 17:10';
 const TABS = [['day','День'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -940,7 +940,7 @@ function initRef(){
   MACH = Object.fromEntries(REF.mach.map(m => [m.n, m])); MAT = Object.fromEntries(REF.mats.map(m => [m.n, m]));
   document.querySelectorAll('datalist.dl').forEach(x => x.remove());
   [dl('dl-ops', REF.ops.map(o => o.n)), dl('dl-fields', REF.fields.map(f => f.n)), dl('dl-mach', REF.mach.map(m => m.n)), dl('dl-oils', REF.oils), dl('dl-people', REF.people),
-   dl('dl-own', REF.own), dl('dl-buyers', REF.buyers), dl('dl-mats', REF.mats.map(m => m.n))].forEach(d => { d.className = 'dl'; document.body.append(d); });
+   dl('dl-own', REF.own), dl('dl-buyers', REF.buyers), dl('dl-trucks', Object.values(REF.trucks).map(k => k.t)), dl('dl-drivers', REF.drivers), dl('dl-owners', REF.owners), dl('dl-mats', REF.mats.map(m => m.n))].forEach(d => { d.className = 'dl'; document.body.append(d); });
 }
 function cropLabel(f){ const fl = FIELD[f]; if(!fl) return ''; const m = +DAY.slice(5,7), y = +DAY.slice(0,4); if(m >= 8 && fl.cNext) return 'урожай '+(y+1)+': '+fl.cNext; return fl.c26 || (fl.cNext ? 'урожай '+(y+1)+': '+fl.cNext : 'культура не задана'); }
 // яка робота: польова (поле + техніка), з технікою без поля, ручна (ні поля, ні техніки)
@@ -1215,9 +1215,13 @@ function renderSide(){
   const sh = $('#ship-list'); sh.replaceChildren();
   DS.ship.forEach(s => { const net = (+s.br||0) - (+s.ta||0);
     sh.append(el('div', {class:'line'},
-      el('div', {}, el('label', {class:'note'}, 'Продукт'), el('select', {on:{change: ev => { s.p = ev.target.value; }}}, opts(REF.grain, s.p))),
-      el('div', {}, el('label', {class:'note'}, 'Покупець'), el('input', {list:'dl-buyers', value:s.b, on:{change: ev => { s.b = ev.target.value; }}})),
-      el('div', {}, el('label', {class:'note'}, '№ авто'), el('input', {value:s.n, on:{change: ev => { s.n = ev.target.value; }}})),
+      el('div', {}, el('label', {class:'note'}, 'Культура'), el('select', {on:{change: ev => { s.p = ev.target.value; }}}, opts(REF.grain, s.p))),
+      el('div', {}, el('label', {class:'note'}, 'Отримувач'), el('input', {list:'dl-buyers', value:s.b, on:{change: ev => { s.b = ev.target.value; }}})),
+      el('div', {}, el('label', {class:'note'}, 'Марка й № авто'), el('input', {list:'dl-trucks', value:s.t||'', placeholder:'МАН ВА9963ЕО', on:{change: ev => { s.t = ev.target.value.trim(); const k = REF.trucks[s.t.toUpperCase()];
+          if(k){ if(!s.n) s.n = k.n; if(!s.dr) s.dr = k.dr; if(!s.ow) s.ow = k.ow; if(!s.b) s.b = k.b; } renderDay(); }}})),
+      el('div', {}, el('label', {class:'note'}, '№ причепа'), el('input', {value:s.n, on:{change: ev => { s.n = ev.target.value; }}})),
+      el('div', {}, el('label', {class:'note'}, 'Водій (ПІБ)'), el('input', {list:'dl-drivers', value:s.dr||'', on:{change: ev => { s.dr = ev.target.value; }}})),
+      el('div', {}, el('label', {class:'note'}, 'Власник авто'), el('input', {list:'dl-owners', value:s.ow||'', on:{change: ev => { s.ow = ev.target.value; }}})),
       el('div', {}, el('label', {class:'note'}, 'Брутто, кг'), el('input', {type:'number', inputmode:'numeric', value:s.br, on:{change: ev => { s.br = ev.target.value; renderDay(); }}})),
       el('div', {}, el('label', {class:'note'}, 'Тара, кг'), el('input', {type:'number', inputmode:'numeric', value:s.ta, on:{change: ev => { s.ta = ev.target.value; renderDay(); }}})),
       el('div', {class:'calc'}, 'Нетто: ', el('b', {}, s.br && s.ta ? nf(net, fmt0)+' кг' : '—')))); });
@@ -1325,7 +1329,7 @@ function buildDayDoc(){
   if(+$('#zav-dp').value) cells.push(['Завоз', 'Завоз ДП', +$('#zav-dp').value]);
   if(+$('#zav-bz').value) cells.push(['Завоз', 'Завоз бензин', +$('#zav-bz').value]);
   [['Щуп ДП1','#dip1'],['Щуп ДП2','#dip2'],['Щуп ДП3 велика','#dip3'],['Щуп Бензин','#dipb']].forEach(([h, id]) => { const v = $(id).value; if(v!=='') cells.push(['Щуп', h, +v]); });
-  DS.ship.forEach(s => { if(s.br && s.ta) rows['Відвантаження'].push({'Дата':n, 'Продукт':s.p, 'Покупець':s.b, '№ авто / причепа':s.n, 'Брутто, кг':+s.br, 'Тара, кг':+s.ta}); });
+  DS.ship.forEach(s => { if(s.br && s.ta) rows['Відвантаження'].push({'Дата':n, 'Продукт':s.p, 'Покупець':s.b, 'Марка авто':s.t||null, '№ авто / причепа':s.n||null, 'Водій':s.dr||null, 'Власник авто':s.ow||null, 'Брутто, кг':+s.br, 'Тара, кг':+s.ta}); });
   DS.gm.forEach(g => { if(+g.kg) rows['Рух зерна'].push({'Дата':n, 'Продукт':g.p, 'Тип руху':g.t, 'Кількість, кг':+g.kg, 'Кому / коментар':g.c}); });
   const inputs = Object.fromEntries(['zav-dp','zav-bz','dip1','dip2','dip3','dipb'].map(id => [id, $('#'+id).value]));
   const ui = JSON.parse(JSON.stringify({...DS, editing:false})); ui.inputs = inputs;
@@ -1407,7 +1411,7 @@ $('#all-yesterday').addEventListener('click', () => { let k = 0; DS.rows.forEach
 $('#add-person').addEventListener('click', () => { DS.rows.push({...blankRow(''), newp:true}); renderDay(); });
 $('#add-appl').addEventListener('click', () => { DS.appl.push({f:'', t:'', items:[], ha:''}); renderDay(); });
 $('#add-own').addEventListener('click', () => { DS.own.push({p:'', l:''}); renderDay(); });
-$('#add-ship').addEventListener('click', () => { DS.ship.push({p:'Кукурудза', b:'', n:'', br:'', ta:''}); renderDay(); });
+$('#add-ship').addEventListener('click', () => { const last = DS.ship[DS.ship.length-1]; DS.ship.push({p:last ? last.p : 'Кукурудза', b:last ? last.b : '', t:'', n:'', dr:'', ow:'', br:'', ta:''}); renderDay(); });
 $('#add-zav').addEventListener('click', () => { DS.zav.push({f:'', c:'', kg:'', w:'', ws:''}); renderDay(); });
 $('#add-gm').addEventListener('click', () => { DS.gm.push({p:'Пшениця', t:'Видача під ЗП', kg:'', c:''}); renderDay(); });
 ['dip1','dip2','dip3','dipb'].forEach(id => $('#'+id).addEventListener('input', renderDips));
@@ -1594,8 +1598,10 @@ function applyDoc(raw, doc){
   let row = fs.r.find(x => x[0]===n); if(!row){ row = new Array(fs.h.length).fill(null); row[0] = n; fs.r.push(row); }
   f.cells.forEach(([grp, h, v]) => { const i = fuelColOf(fs, h, grp); if(i < 0) return; row[i] = grp==='Щуп' ? v : (row[i]||0) + v; });
 }
+const EXTRA_COLS = {'Відвантаження':['Власник авто']};   // нові колонки, яких немає в базовому знімку
 function rebuild(){
   RAW = JSON.parse(JSON.stringify(BASE));
+  Object.entries(EXTRA_COLS).forEach(([sh, cols]) => { const t = RAW[sh]; if(!t) return; cols.forEach(c => { if(!t.h.includes(c)){ t.h.push(c); t.r.forEach(r => r.push(null)); } }); });
   const all = {...DOCS}; Object.entries(PENDING).forEach(([p, x]) => { if(!all[p]) all[p] = x.doc; });
   const keys = Object.keys(all).sort();
   keys.filter(k => k!=='ref/templates.json' && !k.startsWith('ref/')).forEach(k => applyDoc(RAW, all[k]));
@@ -1627,7 +1633,10 @@ function deriveRef(raw, templates){
   const lha = {}; if(MODEL){ const yr = d3.max(MODEL.fuel, f => f.d.y); for(const m of mach){ const l = d3.sum(MODEL.fuel.filter(f => f.m===m.n && f.d.y===yr), f => f.l); const ha = d3.sum(MODEL.works.filter(w => w.m===m.n && w.d.y===yr && w.u==='га'), w => w.q); if(ha >= 50 && l) lha[m.n] = +(l/ha).toFixed(1); } }
   const prl = pr.map(r => ({y:num(r['Рік урожаю']), f:str(r['Поле']), c:str(r['Культура']), ha:num(r['Площа під культурою, га'])||0})).filter(r => r.y && r.f && r.c);
   const crops = rowsOf(raw, 'Д_Культури').map(r => str(r['Культура'])).filter(Boolean);
-  return {people, hab, ops, fields, mach, mats, templates, prl, crops, oils: matsAll.filter(m => m.cat==='Масла').map(m => m.n), own, lha,
+  const shp = rowsOf(raw, 'Відвантаження'), trucks = {};
+  shp.forEach(r => { const t = str(r['Марка авто']); if(t) trucks[t.toUpperCase()] = {t, n:str(r['№ авто / причепа']), dr:str(r['Водій']), ow:str(r['Власник авто']), b:str(r['Покупець'])}; });   // останній запис по авто
+  const uniq = k => [...new Set(shp.map(r => str(r[k])).filter(Boolean))].sort();
+  return {people, hab, ops, fields, mach, mats, templates, prl, crops, trucks, drivers:uniq('Водій'), owners:uniq('Власник авто'), oils: matsAll.filter(m => m.cat==='Масла').map(m => m.n), own, lha,
     buyers: [...new Set(rowsOf(raw, 'Відвантаження').map(r => str(r['Покупець'])).filter(b => b && b!=='(не вказано)'))],
     grain: rowsOf(raw, 'Д_Зерно').map(r => str(r['Продукт на складі'])).filter(Boolean)};
 }
