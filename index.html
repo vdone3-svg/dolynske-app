@@ -186,7 +186,7 @@ dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface)
 dialog::backdrop{background:rgb(0 0 0 / .4)}
 .check{display:grid;grid-template-columns:auto 1fr;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line);font-size:14px}
 .check .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:12px;color:#fff}
-.ic.ok{background:var(--good)}.ic.warn{background:var(--warn)}.ic.bad{background:var(--bad)}
+.ic.ok{background:var(--good)}.ic.warn{background:var(--warn)}.ic.bad{background:var(--bad)}.ic.block{background:var(--bad)}
 .toast{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;z-index:9;max-width:90vw}
 table.dense th,table.dense td{padding:5px 6px;font-size:12px}
 table.dense th{position:sticky;top:0;background:var(--surface)}
@@ -553,9 +553,11 @@ function compute(raw){
     const inv = sk.filter(s => s.m===m && s.t==='Початковий залишок');
     const used = d3.sum(appl.filter(a => a.mat===m), a => a.q);
     const dip = fullDip[m];
-    if(!inv.length && !dip) return {m, cat:mm.cat, u:mm.u, inv:false, used};
+    const mv = sk.filter(s => s.m===m);
+    if(!inv.length && !dip && !mv.length) return {m, cat:mm.cat, u:mm.u, inv:false, used};
     const dInv = inv.length ? d3.max(inv, s => s.d.n) : 0;
-    const d0 = Math.max(dInv, dip ? dip.n : 0); const after = x => x.d.n >= d0;
+    // без інвентаризації облік стартує з першого приходу: витрати до нього не рахуються
+    const d0 = (inv.length || dip) ? Math.max(dInv, dip ? dip.n : 0) : d3.min(mv, s => s.d.n); const after = x => x.d.n >= d0;
     let bal = (dip && dip.n===d0) ? dip.v : d3.sum(inv.filter(s => s.d.n===d0), s => s.q);
     if(mm.cat==='ПММ') bal += d3.sum(FP.zav.filter(z => z.ft===m && after(z)), z => z.l);
     if(mm.cat==='Масла') bal -= d3.sum(FP.oil.filter(o => o.m===m && after(o)), o => o.q);
@@ -890,7 +892,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '18.11 15:45';
+const APP_VER = '18.11 16:00';
 const TABS = [['day','День'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -951,9 +953,34 @@ function inp(r, key, attrs, label, cls=''){
 function rowFlags(r){ const f = [], fuel = +r.fuel||0, q = +r.q||0;
   if(fuel > 0 && (!r.op || !q)) f.push(['bad','заправка без роботи']);
   if(opMode(r.op)==='field' && r.op && !r.f) f.push(['warn','не вказано поле']);
+  if(r.oil && +r.oilq && MODEL && stockShort().some(x => x.m===r.oil)) f.push(['bad', 'масла '+r.oil+' не вистачає на складі']);
   if(r.f && FIELD[r.f] && r.u==='га' && q > FIELD[r.f].ha*1.02) f.push(['warn','більше площі поля ('+FIELD[r.f].ha+' га)']);
   if(fuel && q && r.u==='га' && REF.lha[r.m]){ const l = fuel/q, n = REF.lha[r.m]; if(Math.abs(l-n)/n > .3) f.push(['warn', nf(l)+' л/га при звичних ~'+n]); }
   return f; }
+// ---- склад: не можна витратити більше, ніж є (добрива, ЗЗР, насіння, масла)
+const STOCKCAT = new Set(['Добриво','ЗЗР','Насіння','Масла']);
+function dayUseOf(ds){
+  const u = {}, add = (m, q) => { if(m && +q > 0 && MAT[m] && STOCKCAT.has(MAT[m].cat)) u[m] = (u[m]||0) + (+q); else if(m && +q > 0 && !MAT[m]) u[m] = (u[m]||0) + (+q); };
+  (ds.rows||[]).filter(r => r.st==='працює').forEach(r => { normRow(r); const k = rowKind(r), ha = +r.q||0;
+    if(k==='sow') (r.seeds||[]).forEach(sd => add(sd.m, sd.q));
+    if(k==='sow' || k==='fert') (r.ferts||[]).forEach(f => add(f.m, f.q));
+    if(k==='zzr') (r.items||[]).forEach(([m, n]) => add(m, ha*(+n||0)));
+    if(r.oil && +r.oilq) add(r.oil, r.oilq); });
+  (ds.appl||[]).forEach(a => (a.items||[]).forEach(([m, n]) => add(m, (+a.ha||0)*(+n||0))));
+  return u;
+}
+function stockAvail(m){                                         // залишок на складі з урахуванням того, що цей день уже був збережений
+  const st = MODEL.stock.find(x => x.m===m), base = st && st.inv ? st.bal : 0;
+  const doc = DOCS[dayPath(DAY)] || (PENDING[dayPath(DAY)] || {}).doc;
+  return base + (doc && doc.ui ? (dayUseOf(JSON.parse(JSON.stringify(doc.ui)))[m] || 0) : 0);
+}
+function stockShort(){ const u = dayUseOf(DS); return Object.entries(u).map(([m, q]) => ({m, q, av:stockAvail(m), u:(MAT[m]||{}).u || '', known:!!MAT[m], inv:!!(MODEL.stock.find(x => x.m===m) || {}).inv})).filter(x => x.q > x.av + 1e-6); }
+function stockTag(m){                                           // підпис біля позиції: скільки є на складі
+  if(!m) return ''; const mm = MAT[m]; if(!mm || !STOCKCAT.has(mm.cat)) return '';
+  const need = dayUseOf(DS)[m] || 0, av = stockAvail(m), u = mm.u || '';
+  if(need > av + 1e-6) return el('div', {style:'color:var(--bad);font-weight:600'}, '⛔ на складі '+nf(Math.max(av, 0), u==='кг' ? 0 : 2)+' '+u+', за день '+nf(need, u==='кг' ? 0 : 2));
+  return el('div', {class:'note'}, 'на складі '+nf(av, u==='кг' ? 0 : 2)+' '+u+' → лишиться '+nf(av-need, u==='кг' ? 0 : 2));
+}
 // ---- повторні проходи: скільки га цієї операції вже зроблено на полі за сезон
 const opKey = op => { const o = OP[op] || {}; if(o.g==='Посів') return 'Посів'; if(/^Пряме комбайнування/.test(op)) return 'Пряме комбайнування'; return op; };
 const mkey = r => r.m || r.p;
@@ -1027,7 +1054,7 @@ function rowExtra(r){
   const fertLines = (opt) => { if(!r.ferts || !r.ferts.length) r.ferts = [{m:'', q:''}];
     return r.ferts.map((f, i) => { const u = (MAT[f.m]||{}).u || 'кг';
       return el('div', {class:'xl'}, matSel(f, 'm', 'Добриво'+(r.ferts.length > 1 ? ' '+(i+1) : ''), REF.mats.filter(m => m.cat==='Добриво'), opt ? '— без добрива —' : '— оберіть —'),
-        numIn(f, 'q', 'Всього, '+u), el('div'), el('div', {class:'calc'}, f.m ? el('b', {}, per(f.q, u) || 'норма порахується') : ''), btns(r.ferts, i, () => ({m:'', q:''}))); }); };
+        numIn(f, 'q', 'Всього, '+u), el('div'), el('div', {class:'calc'}, f.m ? el('b', {}, per(f.q, u) || 'норма порахується') : '', stockTag(f.m)), btns(r.ferts, i, () => ({m:'', q:''}))); }); };
   if(k==='sow'){
     const seeds = REF.mats.filter(m => m.cat==='Насіння' && (!crop || !m.crop || m.crop===crop || (cc.length > 1 && !r.hc)));
     if(!r.seeds || !r.seeds.length) r.seeds = [{m:'', q:'', ha:''}];
@@ -1035,7 +1062,7 @@ function rowExtra(r){
     r.seeds.forEach((sd, i) => { const su = (MAT[sd.m]||{}).u || 'п.о.', lha = +sd.ha || (one ? ha : 0), pha = lha && +sd.q ? +sd.q/lha : 0, sk = SEEDK[(MAT[sd.m]||{}).crop];
       parts.push(el('div', {class:'xl'}, matSel(sd, 'm', 'Гібрид / сорт'+(one ? '' : ' '+(i+1)), seeds), numIn(sd, 'q', 'Насіння, '+su),
         numIn(sd, 'ha', one ? 'Площа, га (якщо не вся)' : 'Посіяно ним, га', {placeholder: one ? String(ha||'') : ''}),
-        el('div', {class:'calc'}, pha ? el('b', {}, nf(pha, 2)+' '+su+'/га') : (one ? 'норма порахується' : 'вкажіть га гібриду'), pha && sk && su==='п.о.' ? ' ≈ '+nf(pha*sk, 0)+' тис./га' : ''),
+        el('div', {class:'calc'}, pha ? el('b', {}, nf(pha, 2)+' '+su+'/га') : (one ? 'норма порахується' : 'вкажіть га гібриду'), pha && sk && su==='п.о.' ? ' ≈ '+nf(pha*sk, 0)+' тис./га' : '', stockTag(sd.m)),
         btns(r.seeds, i, () => ({m:'', q:'', ha:''})))); });
     if(!one){ const sum = d3.sum(r.seeds, sd => +sd.ha||0);
       parts.push(el('div', {class:'calc', style:'grid-column:1/-1'+(ha && Math.abs(sum-ha) > .05 ? ';color:var(--warn)' : '')}, 'Розбивка по гібридах: '+nf(sum, 1)+' га з '+nf(ha, 1)+' га в рядку')); }
@@ -1050,7 +1077,7 @@ function rowExtra(r){
         el('div', {}, el('label', {class:'note'}, 'Препарат'+(r.items.length > 1 ? ' '+(i+1) : '')), el('select', {on:{change: ev => { x[0] = ev.target.value; if(!+x[1] && MAT[x[0]] && MAT[x[0]].norm) x[1] = MAT[x[0]].norm; renderDay(); }}},
           el('option', {value:''}, '— оберіть —'), zl.map(m => el('option', m.n===x[0] ? {value:m.n, selected:''} : {value:m.n}, m.n)))),
         el('div', {}, el('label', {class:'note'}, 'Норма, '+(u||'од.')+'/га'), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:x[1] ?? '', class: off ? 'off' : '', title: off ? 'звична норма '+mm.norm : '', on:{change: ev => { x[1] = ev.target.value; renderDay(); }}})),
-        el('div'), el('div', {class:'calc'}, n && ha ? el('b', {}, nf(ha*n, 2)+' '+u) : (x[0] ? 'всього порахується' : ''), off ? el('span', {class:'off'}, ' · звичайно '+mm.norm) : ''),
+        el('div'), el('div', {class:'calc'}, n && ha ? el('b', {}, nf(ha*n, 2)+' '+u) : (x[0] ? 'всього порахується' : ''), off ? el('span', {class:'off'}, ' · звичайно '+mm.norm) : '', stockTag(x[0])),
         btns(r.items, i, () => ['', '']))); });
   }
   if(k==='harv') parts.push(el('div', {class:'calc', style:'grid-column:1/-1'}, ha ? 'Скошено '+nf(ha)+' га — підуть в історію поля. Вагу пишіть у «Зерно → На склад після ЗАВ».' : 'Вкажіть скошені гектари в «Обсяг».'));
@@ -1102,7 +1129,7 @@ function renderAppl(){
     const items = a.items.map((it, k) => { const [m, n] = it; const mm = MAT[m]||{}; const q = (+a.ha||0)*n; const off = mm.norm && Math.abs(n-mm.norm)/mm.norm > .3;
       return el('span', {class: off ? 'off' : '', title: off ? 'звична норма '+mm.norm : ''}, m+': ',
         el('input', {type:'number', step:'any', value:n, style:'width:70px;min-height:26px;padding:2px 4px', 'aria-label':'Норма '+m, on:{change: ev => { it[1] = +ev.target.value; renderDay(); }}}),
-        ' '+(mm.u||'')+'/га → ', el('b', {}, nf(q, 2)+' '+(mm.u||''))); });
+        ' '+(mm.u||'')+'/га → ', el('b', {}, nf(q, 2)+' '+(mm.u||'')), stockTag(m)); });
     box.append(el('div', {class:'line'},
       el('div', {}, el('label', {class:'note'}, 'Поле'+(fld ? ' · '+cropLabel(a.f)+' · '+fld.ha+' га' : '')), el('input', {list:'dl-fields', value:a.f, on:{change: ev => { a.f = ev.target.value; renderDay(); }}})),
       el('div', {}, el('label', {class:'note'}, 'Шаблон або препарат'), el('select', {on:{change: ev => { const v = ev.target.value; const t = REF.templates.find(t => t.n===v);
@@ -1181,6 +1208,9 @@ function checks(){
   const splitBad = DS.rows.filter(r => r.st==='працює' && r.f && OP[r.op] && FIELDOPS.has(OP[r.op].g) && cropsFor(r.f, seasonFor(r.op)).length > 1 && !rowCrop(r));
   if(splitBad.length) out.push(['warn', 'Поле поділене — не вказано культуру: '+splitBad.map(r => r.p+' ('+r.f+')').join(', '), '']);
   const zb = DS.zav.filter(z => +z.kg && (!z.c || !z.f)); if(zb.length) out.push(['bad', 'Зерно на склад без поля або культури: '+zb.length, 'Оберіть поле (або «кілька полів») і культуру.']);
+  const short = stockShort();
+  if(short.length) out.push(['block', 'Не вистачає на складі — день не закриється: '+short.map(x => x.m+' — потрібно '+nf(x.q, x.u==='кг' ? 0 : 2)+' '+x.u+', '+(!x.known ? 'немає в довіднику матеріалів' : !x.inv ? 'на складі не оприбутковано' : 'є '+nf(Math.max(x.av, 0), x.u==='кг' ? 0 : 2)+' '+x.u)).join('; '),
+    'Виправте кількість або спершу внесіть прихід на склад (вкладка «Склад» → «Прихід за накладною»).']);
   const passBad = DS.rows.map(r => [r, passInfo(r)]).filter(([r, p]) => p && p.isLead && (p.type==='repeat' || p.type==='over') && !p.ok);
   if(passBad.length) out.push(['warn', 'Повторна обробка не підтверджена: '+passBad.map(([r, p]) => 'поле '+r.f+' — '+r.op.charAt(0).toLowerCase()+r.op.slice(1)+' ('+(p.type==='repeat' ? 'уже '+nf(p.done, 1)+' га при площі '+nf(p.area, 1) : 'прохід '+(p.full+1)+': '+nf(p.total, 1)+' з '+nf(p.area, 1)+' га')+')').join('; '), 'Підтвердіть «це N-й прохід» у рядку або виправте гектари.']);
   const ppl = [...new Set(DS.rows.map(r => r.p))].filter(p => p && !DS.rows.some(r => r.p===p && r.st));
@@ -1293,9 +1323,11 @@ function clearDraft(day){ LS.del(draftKey(day)); if(DRAFT_TIMER && DRAFT_DAY===d
   window.addEventListener('pagehide', flushDraft);
   // F5 / закриття, поки курсор ще в полі: «change» не встиг спрацювати — примусово завершуємо введення й зберігаємо
   window.addEventListener('beforeunload', () => { const a = document.activeElement; if(a && a.closest && a.closest('#pane-day') && a.blur) a.blur(); if(DIRTY) markDirty(); }); }
-$('#btn-close').addEventListener('click', () => { $('#dlg-body').replaceChildren(...checks().map(([lvl, t, s]) => el('div', {class:'check'}, el('span', {class:'ic '+lvl}, lvl==='ok' ? '✓' : '!'), el('div', {}, t, s ? el('div', {class:'note'}, s) : '')))); $('#dlg').showModal(); });
+$('#btn-close').addEventListener('click', () => { const cs = checks(), blk = cs.some(c => c[0]==='block');
+  $('#dlg-body').replaceChildren(...cs.map(([lvl, t, s]) => el('div', {class:'check'}, el('span', {class:'ic '+lvl}, lvl==='ok' ? '✓' : lvl==='block' ? '⛔' : '!'), el('div', {}, t, s ? el('div', {class:'note'}, s) : ''))));
+  $('#dlg-ok').disabled = blk; $('#dlg-ok').title = blk ? 'Спершу усуньте перевитрату матеріалів' : ''; $('#dlg').showModal(); });
 $('#dlg-back').addEventListener('click', () => $('#dlg').close());
-$('#dlg-ok').addEventListener('click', async () => { $('#dlg').close(); const doc = buildDayDoc(); const ok = await saveDoc(dayPath(DAY), doc, 'День '+DAY+' ('+doc.by+')'); clearDraft(DAY); openDay(); renderDay();
+$('#dlg-ok').addEventListener('click', async () => { if(stockShort().length){ toast('Не вистачає матеріалів на складі — день не закрито'); return; } $('#dlg').close(); const doc = buildDayDoc(); const ok = await saveDoc(dayPath(DAY), doc, 'День '+DAY+' ('+doc.by+')'); clearDraft(DAY); openDay(); renderDay();
   toast(ok ? 'День закрито й збережено. Він уже у звітах, пальному, складі й журналі.' : 'Немає зв\'язку: день збережено на цьому пристрої, відправлю, щойно з\'явиться інтернет.'); });
 $('#btn-reopen').addEventListener('click', () => { DS.editing = true; renderDay(); toast('Режим виправлення: змініть і натисніть «Зберегти виправлення»'); });
 $('#all-yesterday').addEventListener('click', () => { let k = 0; DS.rows.forEach(r => { if(!r.st && !r.sub && yesterday(r)) k++; }); renderDay(); toast('Скопійовано з останнього дня: '+k+' людей. Допишіть гектари й заправку.'); });
