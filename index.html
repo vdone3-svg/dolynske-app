@@ -167,8 +167,12 @@ select{min-height:36px;background:var(--field)}
 .xtra .ttl{grid-column:1/-1;font:600 12px var(--body);color:var(--accent)}
 .xtra .mix{grid-column:1/-1}
 .xtra.pass{border-left-color:var(--warn);background:color-mix(in srgb,var(--warn) 9%,transparent)}.xtra.pass.ok{border-left-color:var(--good);background:color-mix(in srgb,var(--good) 8%,transparent)}.xtra.passinfo{border-left-color:var(--line);background:transparent;padding:4px 10px}
+.xtra .xl.z6{grid-template-columns:minmax(140px,1.4fr) minmax(80px,.7fr) minmax(80px,.7fr) minmax(80px,.7fr) minmax(150px,1.3fr) 76px}
+.shift{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:10px 12px;margin:0 0 10px}
+.shift .sl{display:grid;gap:6px;align-items:end;grid-template-columns:minmax(140px,1.3fr) repeat(3,minmax(80px,.7fr)) minmax(160px,1.4fr)}
+@media (max-width:640px){.shift .sl{grid-template-columns:1fr 1fr}}
 .xtra .xl{grid-column:1/-1;display:grid;gap:6px;align-items:end;grid-template-columns:minmax(150px,1.5fr) minmax(90px,.8fr) minmax(90px,.8fr) minmax(130px,1.2fr) 76px}
-@media (max-width: 640px){.xtra .xl{grid-template-columns:1fr 1fr}}
+@media (max-width: 640px){.xtra .xl,.xtra .xl.z6{grid-template-columns:1fr 1fr}}
 @media (max-width: 980px){.xtra{margin:0}}
 .hsum{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin:10px 0}
 .hsum .kpi{padding:10px;border:1px solid var(--line);border-radius:10px}.hsum .kpi b{display:block;font:600 18px var(--display);margin-top:2px}
@@ -245,6 +249,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
       <div class="sechead"><div><h2>Люди і техніка</h2><div class="note">Оберіть роботу — техніка й одиниця підставляться за звичкою. Заправку і масло пишіть у тому ж рядку.</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" id="all-yesterday">Усім «як учора»</button><button class="btn" id="add-person">+ Людина</button></div></div>
       <div class="grid-head"><span>Працівник</span><span>Статус</span><span>Робота</span><span>Поле</span><span>Техніка</span><span>Обсяг</span><span>Од.</span><span>ДП / бенз., л</span><span>Масло (марка)</span><span>Масло, л</span><span></span></div>
+      <div id="shifts"></div>
       <div class="rows" id="rows"></div>
     </section>
     <section class="card" id="appl">
@@ -892,7 +897,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '18.11 16:00';
+const APP_VER = '18.11 16:30';
 const TABS = [['day','День'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -964,7 +969,7 @@ function dayUseOf(ds){
   (ds.rows||[]).filter(r => r.st==='працює').forEach(r => { normRow(r); const k = rowKind(r), ha = +r.q||0;
     if(k==='sow') (r.seeds||[]).forEach(sd => add(sd.m, sd.q));
     if(k==='sow' || k==='fert') (r.ferts||[]).forEach(f => add(f.m, f.q));
-    if(k==='zzr') (r.items||[]).forEach(([m, n]) => add(m, ha*(+n||0)));
+    if(k==='zzr') (r.items||[]).forEach(([m, n, iss, ret]) => add(m, hasV(iss) && +iss > 0 ? (+iss) - (hasV(ret) ? +ret : 0) : ha*(+n||0)));
     if(r.oil && +r.oilq) add(r.oil, r.oilq); });
   (ds.appl||[]).forEach(a => (a.items||[]).forEach(([m, n]) => add(m, (+a.ha||0)*(+n||0))));
   return u;
@@ -972,7 +977,19 @@ function dayUseOf(ds){
 function stockAvail(m){                                         // залишок на складі з урахуванням того, що цей день уже був збережений
   const st = MODEL.stock.find(x => x.m===m), base = st && st.inv ? st.bal : 0;
   const doc = DOCS[dayPath(DAY)] || (PENDING[dayPath(DAY)] || {}).doc;
-  return base + (doc && doc.ui ? (dayUseOf(JSON.parse(JSON.stringify(doc.ui)))[m] || 0) : 0);
+  let back = 0; if(doc){ ((doc.rows||{})['Внесення']||[]).forEach(a => { if(a['Матеріал']===m) back += +a['Кількість всього']||0; });
+    ((doc.ui||{}).rows||[]).forEach(r => { if(r.st==='працює' && r.oil===m) back += +r.oilq||0; }); }
+  const away = d3.sum(openShifts().filter(sh => sh.date!==DAY), sh => d3.sum(sh.items.filter(x => x[0]===m), x => x[2]));   // каністри, що зараз у полі
+  return base + back - away;
+}
+const hasV = v => v!=='' && v!=null;
+// обприскування «видано → повернуто»: зміна відкрита, поки не внесли повернення й гектари
+function isOpenShift(r){ if(rowKind(r)!=='zzr' || r.st!=='працює') return false; const it = (r.items||[]).filter(x => x[0]);
+  return it.some(x => +x[2] > 0) && (it.some(x => +x[2] > 0 && !hasV(x[3])) || !(+r.q)); }
+function openShifts(){
+  const all = {...DOCS}; Object.entries(PENDING).forEach(([p, x]) => { if(!all[p]) all[p] = x.doc; });
+  const closed = new Set(Object.values(all).filter(d => d && d.kind==='event' && d.shiftClose).map(d => d.shiftClose));
+  return Object.values(all).filter(d => d && d.kind==='day' && d.shifts).flatMap(d => d.shifts).filter(sh => !closed.has(sh.id)).sort((a, b) => a.date < b.date ? -1 : 1);
 }
 function stockShort(){ const u = dayUseOf(DS); return Object.entries(u).map(([m, q]) => ({m, q, av:stockAvail(m), u:(MAT[m]||{}).u || '', known:!!MAT[m], inv:!!(MODEL.stock.find(x => x.m===m) || {}).inv})).filter(x => x.q > x.av + 1e-6); }
 function stockTag(m){                                           // підпис біля позиції: скільки є на складі
@@ -1036,6 +1053,16 @@ function rowCrop(r){ const cc = cropsFor(r.f, seasonFor(r.op)); if(cc.length===1
 function numIn(obj, key, label, attrs={}){ return el('div', {}, el('label', {class:'note'}, label), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:obj[key] ?? '', ...attrs, on:{change: ev => { obj[key] = ev.target.value; renderDay(); }}})); }
 function matSel(obj, key, label, list, ph='— оберіть —'){ return el('div', {}, el('label', {class:'note'}, label), el('select', {on:{change: ev => { obj[key] = ev.target.value; renderDay(); }}},
   el('option', {value:''}, ph), list.map(m => el('option', m.n===obj[key] ? {value:m.n, selected:''} : {value:m.n}, m.n)))); }
+function zzrCalc(x, ha, u, off, mm){
+  const n = +x[1]||0, iss = +x[2]||0, k = u==='кг' ? 2 : 2;
+  let main;
+  if(iss && hasV(x[3])){ const fact = iss - (+x[3]||0), fn = ha ? fact/ha : 0, dev = n && fn ? fn/n - 1 : null;
+    main = el('div', {}, el('b', {}, 'факт '+nf(fact, k)+' '+u), ha ? ' · '+nf(fn, 3)+' '+u+'/га' : '',
+      dev!=null ? el('span', {style:'color:'+(Math.abs(dev) > .1 ? 'var(--warn);font-weight:600' : 'var(--muted)')}, ' ('+(dev > 0 ? '+' : '')+nf(dev*100, 0)+'% до плану)') : ''); }
+  else if(iss) main = el('div', {}, el('b', {}, 'видано '+nf(iss, k)+' '+u), n && ha ? ' · за планом треба '+nf(n*ha, k) : '');
+  else main = n && ha ? el('div', {}, 'за планом ', el('b', {}, nf(ha*n, k)+' '+u), ' — вкажіть, скільки видано') : (x[0] ? 'вкажіть, скільки видано' : '');
+  return el('div', {class:'calc'}, main, off ? el('span', {class:'off'}, ' · звичайно '+mm.norm) : '', stockTag(x[0]));
+}
 function rowExtra(r){
   const k = rowKind(r); if(!k || r.st!=='працює') return null; normRow(r);
   if(k==='sow' && !seedsOk(r).length && !(r.ferts||[]).some(f => f.m)){ const main = DS.rows.find(o => o!==r && o.f===r.f && o.m && o.m===r.m && seedsOk(o).length);
@@ -1073,12 +1100,15 @@ function rowExtra(r){
     if(!r.items || !r.items.length) r.items = [['', '']];
     const zl = REF.mats.filter(m => m.cat==='ЗЗР');
     r.items.forEach((x, i) => { const mm = MAT[x[0]]||{}, u = mm.u||'', n = +x[1]||0, off = mm.norm && n && Math.abs(n-mm.norm)/mm.norm > .3;
-      parts.push(el('div', {class:'xl'},
+      parts.push(el('div', {class:'xl z6'},
         el('div', {}, el('label', {class:'note'}, 'Препарат'+(r.items.length > 1 ? ' '+(i+1) : '')), el('select', {on:{change: ev => { x[0] = ev.target.value; if(!+x[1] && MAT[x[0]] && MAT[x[0]].norm) x[1] = MAT[x[0]].norm; renderDay(); }}},
           el('option', {value:''}, '— оберіть —'), zl.map(m => el('option', m.n===x[0] ? {value:m.n, selected:''} : {value:m.n}, m.n)))),
-        el('div', {}, el('label', {class:'note'}, 'Норма, '+(u||'од.')+'/га'), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:x[1] ?? '', class: off ? 'off' : '', title: off ? 'звична норма '+mm.norm : '', on:{change: ev => { x[1] = ev.target.value; renderDay(); }}})),
-        el('div'), el('div', {class:'calc'}, n && ha ? el('b', {}, nf(ha*n, 2)+' '+u) : (x[0] ? 'всього порахується' : ''), off ? el('span', {class:'off'}, ' · звичайно '+mm.norm) : '', stockTag(x[0])),
-        btns(r.items, i, () => ['', '']))); });
+        el('div', {}, el('label', {class:'note'}, 'План, '+(u||'од.')+'/га'), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:x[1] ?? '', class: off ? 'off' : '', title: off ? 'звична норма '+mm.norm : '', on:{change: ev => { x[1] = ev.target.value; renderDay(); }}})),
+        el('div', {}, el('label', {class:'note'}, 'Видано, '+(u||'од.')), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:x[2] ?? '', placeholder: n && ha ? nf(n*ha, 1) : '', on:{change: ev => { x[2] = ev.target.value; renderDay(); }}})),
+        el('div', {}, el('label', {class:'note'}, 'Повернуто'), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:x[3] ?? '', placeholder:'вранці', on:{change: ev => { x[3] = ev.target.value; renderDay(); }}})),
+        zzrCalc(x, ha, u, off, mm),
+        btns(r.items, i, () => ['', '', '', '']))); });
+    if(isOpenShift(r)) parts.push(el('div', {class:'calc', style:'grid-column:1/-1;color:var(--accent)'}, '🌙 Нічна зміна: день можна закривати. Повернення і гектари бригадир внесе вранці в блоці «Нічні зміни обприскування».'));
   }
   if(k==='harv') parts.push(el('div', {class:'calc', style:'grid-column:1/-1'}, ha ? 'Скошено '+nf(ha)+' га — підуть в історію поля. Вагу пишіть у «Зерно → На склад після ЗАВ».' : 'Вкажіть скошені гектари в «Обсяг».'));
   return el('div', {class:'xtra'}, parts);
@@ -1093,6 +1123,42 @@ function renderZav(){
       el('div', {}, el('label', {class:'note'}, 'Культура'), el('select', {on:{change: ev => { z.c = ev.target.value; }}}, el('option', {value:''}, '—'), (cc.length ? cc : REF.crops).map(c => el('option', c===z.c ? {value:c, selected:''} : {value:c}, c)))),
       numIn(z, 'kg', 'На склад після ЗАВ, кг', {inputmode:'numeric'}), numIn(z, 'w', 'Вологість, %'), numIn(z, 'ws', 'Відходи, кг', {inputmode:'numeric'}),
       el('div', {class:'calc'}, z.f==='*' ? 'Розподілиться між полями культури пропорційно скошеним га' : (+z.kg ? el('b', {}, nf(+z.kg/1000, 2)+' т') : '')))); });
+}
+// ---- ранкове закриття нічних змін обприскування
+function renderShifts(){
+  const box = $('#shifts'); box.replaceChildren(); const list = openShifts().filter(sh => sh.date < DAY || (sh.date===DAY && isClosed(DAY) && !DS.editing));
+  if(!list.length) return;
+  DS.sh = DS.sh || {};
+  box.append(el('h3', {style:'margin:4px 0 8px;font:600 15px var(--display)'}, '🌙 Нічні зміни обприскування — внесіть повернення'));
+  list.forEach(sh => { const st = DS.sh[sh.id] = DS.sh[sh.id] || {ha: sh.ha || '', ret: sh.items.map(() => '')};
+    const ha = +st.ha||0, area = FIELD[sh.f] ? FIELD[sh.f].ha : 0;
+    const lines = sh.items.map(([m, n, iss], i) => { const u = (MAT[m]||{}).u || '', ret = st.ret[i], fact = hasV(ret) ? iss - (+ret) : null, fn = fact!=null && ha ? fact/ha : null, dev = fn!=null && n ? fn/n - 1 : null;
+      return el('div', {class:'sl'}, el('div', {}, el('label', {class:'note'}, 'Препарат'), el('b', {style:'display:block;padding:8px 0'}, m)),
+        el('div', {}, el('label', {class:'note'}, 'План, '+u+'/га'), el('div', {style:'padding:8px 0'}, nf(n, 3))),
+        el('div', {}, el('label', {class:'note'}, 'Видано, '+u), el('div', {style:'padding:8px 0'}, nf(iss, 2))),
+        el('div', {}, el('label', {class:'note'}, 'Повернуто, '+u), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:ret, on:{change: ev => { st.ret[i] = ev.target.value; renderDay(); }}})),
+        el('div', {class:'calc'}, fact==null ? 'внесіть повернення' : (fact < 0 ? el('b', {style:'color:var(--bad)'}, 'повернуто більше, ніж видано') :
+          el('div', {}, el('b', {}, 'факт '+nf(fact, 2)+' '+u), fn!=null ? ' · '+nf(fn, 3)+' '+u+'/га' : '', dev!=null ? el('span', {style:'color:'+(Math.abs(dev) > .1 ? 'var(--warn);font-weight:600' : 'var(--muted)')}, ' ('+(dev > 0 ? '+' : '')+nf(dev*100, 0)+'% до плану)') : '')))); });
+    const ready = ha > 0 && st.ret.every((v, i) => hasV(v) && +v >= 0 && +v <= sh.items[i][2]);
+    box.append(el('div', {class:'shift'},
+      el('div', {style:'display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:6px'},
+        el('div', {}, el('b', {}, sh.p), el('div', {class:'note'}, 'видано '+sh.date.split('-').reverse().join('.')+' · поле '+sh.f+(area ? ' ('+area+' га)' : '')+(sh.m ? ' · '+sh.m : ''))),
+        el('div', {}, el('label', {class:'note'}, 'Оброблено, га'), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:st.ha, style:'width:110px', on:{change: ev => { st.ha = ev.target.value; renderDay(); }}})),
+        area && ha > area*1.02 ? el('span', {style:'color:var(--warn)'}, 'більше площі поля') : ''),
+      lines,
+      el('div', {style:'margin-top:8px'}, el('button', {class:'btn small primary', type:'button', disabled: ready ? null : '', onclick:() => closeShift(sh, st)}, 'Закрити зміну'),
+        ready ? '' : el('span', {class:'note', style:'margin-left:8px'}, 'потрібні гектари й повернення по кожному препарату (0, якщо нічого не лишилось)'))));
+  });
+}
+async function closeShift(sh, st){
+  const n = toSerial(sh.date), ha = +st.ha, crop = cropsFor(sh.f, seasonFor(sh.op)).length > 1 ? null : null;
+  const devs = [];
+  const appl = sh.items.map(([m, nn, iss], i) => { const fact = iss - (+st.ret[i]); if(nn && ha){ const d = fact/ha/nn - 1; if(Math.abs(d) > .1) devs.push(m+' '+(d > 0 ? '+' : '')+nf(d*100, 0)+'%'); }
+    return {'Дата':n, 'Поле':sh.f, 'Культура (лише якщо поле поділене)':crop, 'Операція':'Обприскування (ЗЗР)', 'Матеріал':m, 'Оброблено, га':ha, 'Кількість всього':+fact.toFixed(3), 'Джерело':'додаток', 'Примітка':'нічна зміна · видано '+iss+', повернуто '+(+st.ret[i])+' · '+sh.p+(sh.m ? ' · '+sh.m : '')}; }).filter(a => a['Кількість всього'] > 0);
+  const work = [{'Дата':n, 'Поле':sh.f, 'Культура (лише якщо поле поділене)':crop, 'Операція':sh.op, 'Техніка':sh.m||null, 'Працівник':sh.p, 'Обсяг':ha, 'Од.':'га', 'Джерело':'додаток', 'Опис / примітка':'нічна зміна'+(devs.length ? ' · відхилення: '+devs.join(', ') : '')}];
+  const ok = await saveEvent({'Роботи':work, 'Внесення':appl}, 'нічна зміна '+sh.p+' '+sh.date, {shiftClose:sh.id});
+  delete DS.sh[sh.id]; markDirty(); renderDay();
+  toast((ok ? 'Зміну закрито' : 'Зміну збережено на пристрої, відправлю пізніше')+(devs.length ? ' · відхилення від плану: '+devs.join(', ') : ''));
 }
 function renderRows(){
   const box = $('#rows'); box.replaceChildren(); const lock = isClosed(DAY) && !DS.editing;
@@ -1178,7 +1244,7 @@ function dayTotals(){
 function renderDay(){
   const d = new Date(DAY+'T12:00:00'); $('#date').value = DAY;
   $('#day-title').textContent = d.toLocaleDateString('uk-UA', {weekday:'long', day:'numeric', month:'long', year:'numeric'}).replace(/^./, c => c.toUpperCase());
-  renderRows(); renderAppl(); renderZav(); renderSide(); renderDips();
+  renderShifts(); renderRows(); renderAppl(); renderZav(); renderSide(); renderDips();
   const t = dayTotals(), closed = isClosed(DAY) && !DS.editing;
   $('#kpis').replaceChildren(...[['Люди заповнено', t.people+' / '+t.total], ['Роботи в полі', nf(t.ha)+' га'], ['ДП за день', nf(t.dp, fmt0)+' л'], ['Бензин', nf(t.bz, fmt0)+' л'],
     ['Масла', nf(t.oil)+' л'], ['Обприскано', nf(t.zzr)+' га'], ['Відвантажено', nf(t.ship/1000)+' т']].map(([a, b]) => el('div', {class:'kpi'}, a, el('b', {}, b))));
@@ -1192,7 +1258,7 @@ function checks(){
   const out = [];
   const fnw = DS.rows.filter(r => (+r.fuel||0) > 0 && (!r.op || !(+r.q)));
   out.push(fnw.length ? ['bad', 'Техніка заправлена без роботи: '+fnw.map(r => (r.m||'?')+' ('+r.p+')').join(', '), 'Пальне не розподілиться на поля.'] : ['ok', 'Уся заправлена техніка має роботу', '']);
-  const nq = DS.rows.filter(r => r.st==='працює' && r.op && !(+r.q));
+  const nq = DS.rows.filter(r => r.st==='працює' && r.op && !(+r.q) && !isOpenShift(r));
   out.push(nq.length ? ['warn', 'Не вказано обсяг: '+nq.map(r => r.p).join(', '), 'Без обсягу не порахується виробіток і пальне на гектар.'] : ['ok', 'Усі роботи мають обсяг', '']);
   const nf_ = DS.appl.filter(a => a.items.length && !a.f); if(nf_.length) out.push(['bad', 'Внесення без поля: '+nf_.length, 'Вкажіть поле.']);
   const sowDone = r => seedsOk(r).length > 0, sowBad = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='sow' && (+r.q) && !sowDone(r) && !DS.rows.some(o => o!==r && o.f===r.f && o.m===r.m && sowDone(o)));
@@ -1203,7 +1269,11 @@ function checks(){
   if(sowMis.length) out.push(['warn', 'Гібрид не тієї культури: '+sowMis.join('; '), 'Перевірте поле або сівозміну.']);
   const sowSplit = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='sow' && seedsOk(r).length > 1 && Math.abs(d3.sum(seedsOk(r), sd => +sd.ha||0) - (+r.q||0)) > .05);
   if(sowSplit.length) out.push(['warn', 'Сума га по гібридах не дорівнює га в рядку: '+sowSplit.map(r => r.p+' ('+nf(d3.sum(seedsOk(r), sd => +sd.ha||0), 1)+' з '+nf(+r.q, 1)+')').join(', '), 'Норма висіву по гібриду рахується на його гектари.']);
-  const zzrBad = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='zzr' && !(r.items||[]).some(x => x[0] && +x[1]));
+  const zzrBad = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='zzr' && !(r.items||[]).some(x => x[0] && (+x[1] || +x[2])));
+  const zNoIss = DS.rows.filter(r => r.st==='працює' && rowKind(r)==='zzr' && (r.items||[]).some(x => x[0] && !(+x[2])));
+  if(zNoIss.length) out.push(['warn', 'Обприскування без «видано»: '+zNoIss.map(r => r.p).join(', '), 'Тоді витрата рахується за планом × га, і перевитрату не видно.']);
+  const ns = DS.rows.filter(isOpenShift); if(ns.length) out.push(['ok', '🌙 Нічна зміна обприскування: '+ns.map(r => r.p+' (поле '+(r.f||'?')+')').join(', ')+' — закриється вранці', '']);
+  const oldSh = openShifts().filter(sh => sh.date < DAY); if(oldSh.length) out.push(['warn', 'Не закриті нічні зміни: '+oldSh.map(sh => sh.p+' '+sh.date.split('-').reverse().join('.')).join(', '), 'Внесіть повернення в блоці «Нічні зміни обприскування».']);
   if(zzrBad.length) out.push(['warn', 'Обприскування без препаратів: '+zzrBad.map(r => r.p).join(', '), 'Оберіть шаблон суміші в рядку.']);
   const splitBad = DS.rows.filter(r => r.st==='працює' && r.f && OP[r.op] && FIELDOPS.has(OP[r.op].g) && cropsFor(r.f, seasonFor(r.op)).length > 1 && !rowCrop(r));
   if(splitBad.length) out.push(['warn', 'Поле поділене — не вказано культуру: '+splitBad.map(r => r.p+' ('+r.f+')').join(', '), '']);
@@ -1230,7 +1300,8 @@ function buildDayDoc(){
   const n = toSerial(DAY), tpl = RAW.__fuel[RAW.__fuel.length-1];
   const rows = {'Роботи':[], 'Внесення':[], 'Урожай':[], 'Відвантаження':[], 'Рух зерна':[]}, cells = [];
   const splitC = r => r.f && cropsFor(r.f, seasonFor(r.op)).length > 1 ? (rowCrop(r) || null) : null;
-  DS.rows.filter(r => r.st==='працює' && r.op).forEach(r => rows['Роботи'].push({'Дата':n, 'Поле':r.f||null, 'Культура (лише якщо поле поділене)':splitC(r), 'Операція':r.op, 'Техніка':r.m||null, 'Працівник':r.p, 'Обсяг':+r.q||null, 'Од.':r.u||null, 'Джерело':'додаток', 'Опис / примітка':(() => { const p = passInfo(r); return p && p.ok ? p.passNo+'-й прохід' : null; })()}));
+  const shifts = [];
+  DS.rows.filter(r => r.st==='працює' && r.op && !isOpenShift(r)).forEach(r => rows['Роботи'].push({'Дата':n, 'Поле':r.f||null, 'Культура (лише якщо поле поділене)':splitC(r), 'Операція':r.op, 'Техніка':r.m||null, 'Працівник':r.p, 'Обсяг':+r.q||null, 'Од.':r.u||null, 'Джерело':'додаток', 'Опис / примітка':(() => { const p = passInfo(r); return p && p.ok ? p.passNo+'-й прохід' : null; })()}));
   DS.rows.filter(r => r.st==='працює' && r.op && r.f).forEach(r => { const k = rowKind(r), ha = +r.q||0;
     const base = {'Дата':n, 'Поле':r.f, 'Культура (лише якщо поле поділене)':splitC(r), 'Оброблено, га':ha, 'Джерело':'додаток'}, who = r.p+(r.m ? ' · '+r.m : '');
     normRow(r); const fl = (r.ferts||[]).filter(f => f.m && +f.q), sl = seedsOk(r);
@@ -1238,7 +1309,9 @@ function buildDayDoc(){
       sl.forEach(sd => { const sha = sl.length===1 ? (+sd.ha||ha) : (+sd.ha||0); rows['Внесення'].push({...base, 'Оброблено, га':sha, 'Культура (лише якщо поле поділене)':base['Культура (лише якщо поле поділене)'] ? ((MAT[sd.m]||{}).crop || base['Культура (лише якщо поле поділене)']) : null, 'Операція':op, 'Матеріал':sd.m, 'Кількість всього':+sd.q, 'Примітка':who}); });
       fl.forEach(f => rows['Внесення'].push({...base, 'Операція':op, 'Матеріал':f.m, 'Кількість всього':+f.q, 'Примітка':who})); }
     if(k==='fert') fl.forEach(f => rows['Внесення'].push({...base, 'Операція':'Внесення добрив', 'Матеріал':f.m, 'Кількість всього':+f.q, 'Примітка':who}));
-    if(k==='zzr') (r.items||[]).forEach(([m, q]) => { if(m && +q) rows['Внесення'].push({...base, 'Операція':'Обприскування (ЗЗР)', 'Матеріал':m, 'Кількість всього':+(ha*q).toFixed(3), 'Примітка':(r.tpl ? r.tpl+' · ' : '')+who}); });
+    if(k==='zzr' && isOpenShift(r)) shifts.push({id:DAY+'|'+r.p+'|'+DS.rows.indexOf(r), date:DAY, p:r.p, f:r.f, m:r.m||'', op:r.op, ha:+r.q||'', items:(r.items||[]).filter(x => x[0] && +x[2] > 0).map(x => [x[0], +x[1]||0, +x[2]])});
+    else if(k==='zzr') (r.items||[]).forEach(([m, q, iss, ret]) => { if(!m) return; const byIss = +iss > 0, qty = byIss ? (+iss) - (+ret||0) : ha*(+q||0);
+      if(qty > 0) rows['Внесення'].push({...base, 'Операція':'Обприскування (ЗЗР)', 'Матеріал':m, 'Кількість всього':+qty.toFixed(3), 'Примітка':(byIss ? 'видано '+(+iss)+', повернуто '+(+ret||0)+' · ' : 'за нормою · ')+who}); });
     if(k==='harv' && ha) rows['Урожай'].push({'Дата':n, 'Поле':r.f, 'Культура':rowCrop(r)||null, 'Скошено за день, га':ha, 'Джерело':'додаток', 'Примітка':'комбайн '+(r.m||'')});
   });
   DS.zav.forEach(z => { if(+z.kg) rows['Урожай'].push({'Дата':n, 'Поле':z.f==='*' ? null : (z.f||null), 'Культура':z.c||null, 'Вага на склад, кг':+z.kg, 'Вологість, %':+z.w||null, 'Відходи після очищення, кг':+z.ws||null, 'Джерело':'додаток', 'Примітка':z.f==='*' ? 'змішане (кілька полів)' : 'після ЗАВ'}); });
@@ -1256,7 +1329,7 @@ function buildDayDoc(){
   DS.gm.forEach(g => { if(+g.kg) rows['Рух зерна'].push({'Дата':n, 'Продукт':g.p, 'Тип руху':g.t, 'Кількість, кг':+g.kg, 'Кому / коментар':g.c}); });
   const inputs = Object.fromEntries(['zav-dp','zav-bz','dip1','dip2','dip3','dipb'].map(id => [id, $('#'+id).value]));
   const ui = JSON.parse(JSON.stringify({...DS, editing:false})); ui.inputs = inputs;
-  return {kind:'day', date:DAY, saved_at:new Date().toISOString(), by: ROLE==='o' ? 'власник' : 'бригадир', ui, rows, fuel:{date:DAY, cells}};
+  return {kind:'day', date:DAY, saved_at:new Date().toISOString(), by: ROLE==='o' ? 'власник' : 'бригадир', ui, rows, fuel:{date:DAY, cells}, ...(shifts.length ? {shifts} : {})};
 }
 function openDay(){
   flushDraft();
@@ -1502,7 +1575,7 @@ async function saveDoc(path, doc, msg){
   try{ syncState('Зберігаю…'); await putJSON(path, doc, msg); delete PENDING[path]; storePending(); syncState('Збережено '+new Date().toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'}), 'ok'); return true; }
   catch(e){ if(e.auth){ syncState(e.message, 'bad'); } else { PENDING[path] = {doc, msg}; storePending(); syncState('Не збережено на сервері: '+Object.keys(PENDING).length+' — повторю', 'warn'); } return false; }
 }
-function saveEvent(rows, what){ const ts = new Date().toISOString().replace(/[:.]/g, '-'); return saveDoc('events/'+ts.slice(0,4)+'/'+ts+'-'+Math.random().toString(36).slice(2,6)+'.json', {kind:'event', what, saved_at:new Date().toISOString(), by: ROLE==='o' ? 'власник' : 'бригадир', rows}, 'Запис: '+what); }
+function saveEvent(rows, what, extra={}){ const ts = new Date().toISOString().replace(/[:.]/g, '-'); return saveDoc('events/'+ts.slice(0,4)+'/'+ts+'-'+Math.random().toString(36).slice(2,6)+'.json', {kind:'event', what, saved_at:new Date().toISOString(), by: ROLE==='o' ? 'власник' : 'бригадир', rows, ...extra}, 'Запис: '+what); }
 async function flushPending(){
   for(const [path, {doc, msg}] of Object.entries(PENDING)){ try{ await putJSON(path, doc, msg+' (відкладено)'); delete PENDING[path]; }catch(e){ break; } }
   storePending(); const n = Object.keys(PENDING).length; if(n) syncState('Очікують відправки: '+n, 'warn');
