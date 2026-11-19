@@ -239,15 +239,18 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .mpop{display:grid;gap:3px;font:14px/1.35 var(--body)}.mpop b{font-size:15px}
 #map-legend{display:flex;flex-wrap:wrap;gap:6px 14px}.lg{display:inline-flex;align-items:center;gap:6px;font-size:13px}.lg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
 /* огляди */
+.sc-ai{display:grid;gap:6px;padding:10px;border-radius:10px;background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent)}.sc-ai.wait{opacity:.8}
+.sc-aih{font:600 13px var(--body);color:var(--accent)}.sc-ai p{margin:0}.sc-ain{margin:0;padding-left:20px;font-size:13px;color:var(--muted)}
+.sc-thw{position:relative}.sc-n{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.65);color:#fff;font:600 11px var(--body);border-radius:4px;padding:1px 5px}
 .sc-fieldline{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:16px}
 .sc-big{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.sc-bigbtn{flex-direction:column;min-height:84px;font-size:28px;gap:4px;justify-content:center}.sc-bigbtn span{font:600 14px var(--body)}
 .sc-bigbtn.rec{background:var(--bad);border-color:var(--bad);color:#fff;animation:recp 1.2s infinite}@keyframes recp{50%{opacity:.75}}
 .sc-voices{display:grid;gap:6px}.sc-voice{display:flex;gap:8px;align-items:center}.sc-voice audio{height:36px;flex:1;min-width:0}
 .sc-text{width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}.sc-more{display:grid;gap:12px;padding:10px;border:1px dashed var(--line);border-radius:10px}
 .sc-body{display:flex;gap:14px;align-items:flex-start}
-.sc-gal{display:flex;flex-wrap:wrap;gap:6px;max-width:55%;flex:none}.sc-gal .sc-th{width:140px;height:105px}
+.sc-gal{display:flex;flex-wrap:wrap;gap:6px;max-width:55%;flex:none}.sc-gal .sc-thw{width:140px}.sc-gal .sc-th{width:100%;height:105px}
 .sc-desc{display:grid;gap:6px;flex:1;min-width:0}.sc-desc p{margin:0;font-size:15px;line-height:1.45}.sc-vt{display:grid;gap:4px;justify-items:start}.sc-vt audio{height:34px;max-width:100%}
-@media (max-width:640px){.sc-body{flex-direction:column}.sc-gal{max-width:100%}.sc-gal .sc-th{width:calc(50% - 3px);height:120px}}
+@media (max-width:640px){.sc-body{flex-direction:column;align-items:stretch}.sc-gal{max-width:100%;width:100%}.sc-gal .sc-thw{width:calc(50% - 3px)}.sc-gal .sc-th{height:120px}}
 .sc-gpswarn{display:grid;gap:8px;padding:12px;border-radius:10px;border:2px solid var(--bad);background:color-mix(in srgb,var(--bad) 8%,transparent)}.sc-gpswarn.ok{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 8%,transparent)}
 .sc-help ol{margin:0;padding-left:20px;display:grid;gap:4px;font-size:14px}.btn[disabled]{opacity:.45;cursor:not-allowed}
 .sc-dc{display:grid;gap:8px;padding:10px;border:1px dashed var(--line);border-radius:10px}.sc-dc-pts{display:flex;flex-wrap:wrap;gap:8px}.sc-dc-pts input{width:92px}
@@ -1180,7 +1183,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 голос';
+const APP_VER = '19.11 AI-аналіз';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1980,6 +1983,7 @@ async function loadAll(){
   BASE = await getJSON('base/snapshot.json');
   if(!BASE) throw new Error('У репозиторії dolynske-data немає base/snapshot.json');
   const bundle = await getJSON('bundle/bundle.json') || {docs:{}};
+  AI_STATUS = await getJSON('ai/status.json').catch(() => null);
   const files = [];
   async function walk(dir){ for(const it of await listDir(dir)){ if(it.type==='dir') await walk(it.path); else if(it.name.endsWith('.json')) files.push(it); } }
   await Promise.all(['days', 'events', 'ref', 'scouts'].map(walk));
@@ -2573,6 +2577,23 @@ async function saveScout(){
   flushScouts();
 }
 
+// --- AI-аналіз фото (Claude Opus у сховищі): опис поруч зі словами агронома, позначено як підказку
+let AI_STATUS = null;
+const SEV_CLS = {'висока':'bad', 'середня':'', 'низька':'ok'};
+function aiBlock(d){
+  const a = d.ai, head = el('div', {class:'sc-aih'}, '🤖 AI-аналіз фото', el('span', {class:'note'}, ' · підказка, перевірте на місці'));
+  if(!a){ const t = d.ai_error ? 'AI-аналіз: помилка, повториться автоматично' : AI_STATUS && AI_STATUS.key===false ? 'AI-аналіз не підключено (немає ключа доступу в сховищі)' : d.pending ? 'Аналіз фото — після відправки огляду' : 'Аналізую фото… (зазвичай 5–10 хв після відправки)';
+    return el('div', {class:'sc-ai wait'}, head, el('p', {class:'note'}, t)); }
+  return el('div', {class:'sc-ai'}, head,
+    el('p', {}, a.summary),
+    el('div', {class:'note'}, [a.crop_seen, a.stage, a.condition && a.condition!=='не визначити' ? 'стан: '+a.condition : ''].filter(Boolean).join(' · ')),
+    (a.issues || []).length ? el('div', {class:'chips'}, a.issues.map(x => el('span', {class:'pill '+(SEV_CLS[x.severity] ?? ''), title:x.confidence+(x.photos && x.photos.length ? ', фото '+x.photos.join(', ') : '')},
+      x.type+': '+x.what+(x.confidence==='припущення' ? ' (?)' : '')))) : '',
+    (a.photo_notes || []).length > 1 ? el('ol', {class:'sc-ain'}, a.photo_notes.map(x => el('li', {value:x.n}, x.text))) : '',
+    (a.check || []).length ? el('div', {class:'note'}, el('b', {}, 'Перевірити: '), a.check.join('; ')) : '',
+    a.agrees_with_agronomist ? el('div', {class:'note'}, 'Зі словами агронома: '+a.agrees_with_agronomist) : '');
+}
+
 // --- фото і поруч опис (розшифровка голосу + текст)
 let VPOLL = false;
 const voiceText = d => (d.voice || []).map(v => v.text).filter(Boolean).join(' ');
@@ -2580,20 +2601,21 @@ function playBtn(v, local){ const b = el('button', {class:'btn small ghost'}, '�
   b.addEventListener('click', async () => { try{ const u = local || await photoUrl(v.path); const a = el('audio', {controls:'', src:u, autoplay:''}); b.replaceWith(a); }catch(e){ b.textContent = 'запис недоступний'; } }); return b; }
 function scoutBody(d){
   const np = d.photos.length, lu = i => d.pending && d.localUrls && d.localUrls[i] ? d.localUrls[i].url : null;
-  const imgs = d.photos.map((p, i) => lu(i) ? el('img', {class:'sc-th', src:lu(i), alt:'фото', onclick:() => openPhoto(lu(i))}) : photoImg(p.path));
+  const imgs = d.photos.map((p, i) => el('div', {class:'sc-thw'}, lu(i) ? el('img', {class:'sc-th', src:lu(i), alt:'фото', onclick:() => openPhoto(lu(i))}) : photoImg(p.path), np > 1 ? el('span', {class:'sc-n'}, String(i+1)) : ''));
   const txt = [];
   (d.voice || []).forEach((v, i) => txt.push(el('div', {class:'sc-vt'},
     v.status==='done' && v.text ? el('p', {}, v.text) : el('p', {class:'note'}, v.status==='done' ? 'Слів не розпізнано — прослухайте запис' : v.status==='error' ? 'Не вдалося розшифрувати — прослухайте запис' : d.pending ? '🎙 Розшифрується після відправки' : '🎙 Розшифровується… (зазвичай 3–10 хв після відправки)'),
     playBtn(v, lu(np+i)))));
   if(d.comment) txt.push(el('p', {}, d.comment));
+  if(np) txt.push(aiBlock(d));
   if(!imgs.length && !txt.length) return '';
   return el('div', {class:'sc-body'+(imgs.length ? '' : ' noimg')}, imgs.length ? el('div', {class:'sc-gal'}, imgs) : '', txt.length ? el('div', {class:'sc-desc'}, txt) : '');
 }
 async function pollVoice(){   // розшифровки приходять зі сховища через кілька хвилин — підтягуємо, поки відкрито
   if(!navigator.onLine || !TOKEN) return;
-  const pend = Object.entries(SCOUTS).filter(([, d]) => (d.voice || []).some(v => v.status==='pending')); if(!pend.length) return;
+  const pend = Object.entries(SCOUTS).filter(([, d]) => (d.voice || []).some(v => v.status==='pending') || ((d.photos || []).length && !d.ai && !(AI_STATUS && AI_STATUS.key===false) && (d.date || '') >= '2026-11-19')); if(!pend.length) return;
   let ch = false;
-  for(const [p] of pend){ try{ const d = await getJSON(p); if(d && JSON.stringify(d.voice)!==JSON.stringify(SCOUTS[p].voice)){ SCOUTS[p] = d; ch = true; } }catch(e){} }
+  for(const [p] of pend){ try{ const d = await getJSON(p); if(d && (JSON.stringify(d.voice)!==JSON.stringify(SCOUTS[p].voice) || !!d.ai!==!!SCOUTS[p].ai)){ SCOUTS[p] = d; ch = true; } }catch(e){} }
   if(ch){ if(TAB==='scout') renderScList(); if(TAB==='history') renderHistory(); if(TAB==='map' && MAPV.map) drawScoutPins(); }
 }
 setInterval(pollVoice, 60000);
@@ -2667,7 +2689,7 @@ function drawScoutPins(){
       const m = L.circleMarker([p.lat, p.lon], {radius:p.i==null ? 6 : 8, weight:2, color:'#fff', fillColor:SC_COL[d.state] || '#2f5d8a', fillOpacity:1});
       m.bindPopup(() => { const b = el('div', {class:'mpop'}, el('b', {}, d.field+' · '+ddmm(dt(toSerial(d.date)))), el('div', {class:'note'}, [d.author, d.phase, (SC_STATE.find(s => s[0]===d.state) || [,''])[1]].filter(Boolean).join(' · ')));
         if(d.problems.length) b.append(el('div', {class:'note', style:'color:var(--bad)'}, d.problems.map(x => x.t+(x.pct!=null ? ' '+x.pct+'%' : '')).join(', ')));
-        const vt = [voiceText(d), d.comment].filter(Boolean).join(' '); if(vt) b.append(el('div', {}, vt.length > 260 ? vt.slice(0, 260)+'…' : vt));
+        const vt = [voiceText(d), d.comment].filter(Boolean).join(' ') || (d.ai ? '🤖 '+d.ai.summary : ''); if(vt) b.append(el('div', {}, vt.length > 260 ? vt.slice(0, 260)+'…' : vt));
         else if((d.voice || []).length) b.append(el('div', {class:'note'}, '🎙 голосова нотатка розшифровується'));
         const upd = () => { const pp = m.getPopup(); if(pp && pp.isOpen()) pp.update(); };
         if(p.i!=null) b.append(d.pending && d.localUrls ? el('img', {class:'sc-pop', src:d.localUrls[p.i].url, alt:'фото', on:{load:upd}}) : photoImg(d.photos[p.i].path, 'sc-pop', upd));
