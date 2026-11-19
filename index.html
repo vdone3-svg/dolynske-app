@@ -229,6 +229,15 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .login-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:420px;width:100%;display:grid;gap:10px}
 .login-card h1{font:600 22px var(--display);margin:0}
 .login-card select{width:100%}
+/* карта */
+#map{height:min(72vh,760px);min-height:420px;border-radius:10px;border:1px solid var(--line);background:#dfe5dc}
+.leaflet-tooltip.map-lbl{background:rgba(20,24,22,.72);color:#fff;border:none;box-shadow:none;font:600 12px/1.2 var(--body);padding:2px 6px;border-radius:5px}
+.leaflet-tooltip.map-lbl:before{display:none}.leaflet-tooltip.map-lbl.small{font-size:11px;font-weight:500}
+#map.far .leaflet-tooltip.map-lbl{font-size:10px;padding:1px 4px}#map.vfar .map-lbl{display:none}
+#pane-map [hidden]{display:none!important}
+#map.drawing .leaflet-interactive{pointer-events:none}#map.drawing{cursor:crosshair}
+.mpop{display:grid;gap:3px;font:14px/1.35 var(--body)}.mpop b{font-size:15px}
+#map-legend{display:flex;flex-wrap:wrap;gap:6px 14px}.lg{display:inline-flex;align-items:center;gap:6px;font-size:13px}.lg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
 </style>
 </head>
 <body>
@@ -397,6 +406,20 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
   </main>
 
   <!-- ДОВІДНИКИ -->
+  <!-- КАРТА -->
+  <main class="pane" id="pane-map">
+    <section class="card">
+      <div class="toolbar"><h2 style="margin:0">Карта полів</h2>
+        <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button></div>
+        <button class="btn small" id="map-loc">Де я</button>
+        <button class="chip" id="map-pai" aria-pressed="false" hidden>Паї</button>
+        <button class="btn small" id="map-split" hidden>Розділити Малаківку</button></div>
+      <div id="map-owner"></div>
+      <div id="map"></div>
+      <div id="map-legend"></div><div class="note" id="map-info"></div>
+    </section>
+  </main>
+
   <main class="pane" id="pane-settings">
     <div class="grid">
       <section class="card span12"><div class="sechead"><div><h2>Сівозміна</h2><div class="note">Що росте на кожному полі в році урожаю. Перед сезоном заповніть наступний рік — тоді осінні роботи підуть під правильну культуру.</div></div>
@@ -1114,8 +1137,8 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '18.11 18:30';
-const TABS = [['day','День'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
+const APP_VER = '19.11 карта';
+const TABS = [['day','День'],['map','Карта'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
 
@@ -1133,7 +1156,7 @@ window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
-    fields:() => { renderFields(); renderFieldCard(); }, history:renderHistory, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
+    fields:() => { renderFields(); renderFieldCard(); }, history:renderHistory, map:renderMap, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
     fuel:renderFuelTable, tech:renderTech, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:renderJournal, settings:renderSettings})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
@@ -1936,6 +1959,236 @@ function exportExcel(){
   ['Д_Поле-рік','Д_Поля','Д_Культури','Д_Зерно','Д_Техніка','Д_Операції','Д_Матеріали','Д_Резервуари'].forEach(n => { const s = RAW[n]; if(s) add(n, [[n], [], s.h, ...s.r]); });
   XLSX.writeFile(wb, 'Загальний_звіт_Долинське_'+new Date().toISOString().slice(0,10)+'.xlsx');
 }
+
+// ======= КАРТА ПОЛІВ: контури з geo/fields.json; шар паїв — лише власнику, зашифрований (geo/pai.enc.json)
+const MAPV = {map:null, geo:null, fl:null, mode:'crop', pai:null, paiL:null, key:null, me:null, draw:null, enc:undefined};
+const LEAF = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet', TURF = 'https://unpkg.com/@turf/turf@7.1.0/turf.min.js';
+const PUB_MAP = 'https://vdone3-svg.github.io/dolynske-map/';
+function loadScript(src){ return new Promise((ok, no) => { if(document.querySelector('script[src="'+src+'"]')) return ok();
+  const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('Не завантажилась бібліотека карти — перевірте інтернет')); document.head.append(s); }); }
+function loadCss(href){ if(!document.querySelector('link[href="'+href+'"]')) document.head.append(el('link', {rel:'stylesheet', href})); }
+
+// поле за координатою: точка в контурі, інакше — найближче поле й відстань до межі (м)
+function inRing(pt, ring){ let c = false; for(let i = 0, j = ring.length-1; i < ring.length; j = i++){ const [xi, yi] = ring[i], [xj, yj] = ring[j];
+  if(((yi > pt[1]) !== (yj > pt[1])) && (pt[0] < (xj-xi)*(pt[1]-yi)/(yj-yi)+xi)) c = !c; } return c; }
+function inGeom(pt, g){ const polys = g.type==='Polygon' ? [g.coordinates] : g.coordinates; return polys.some(p => inRing(pt, p[0]) && !p.slice(1).some(h => inRing(pt, h))); }
+function distToGeom(pt, g){ const k = Math.cos(pt[1]*Math.PI/180)*111320, m = 110540; let best = Infinity;
+  (g.type==='Polygon' ? [g.coordinates] : g.coordinates).forEach(p => p.forEach(r => { for(let i = 1; i < r.length; i++){
+    const ax = (r[i-1][0]-pt[0])*k, ay = (r[i-1][1]-pt[1])*m, bx = (r[i][0]-pt[0])*k, by = (r[i][1]-pt[1])*m, dx = bx-ax, dy = by-ay;
+    const t = Math.max(0, Math.min(1, -(ax*dx+ay*dy)/((dx*dx+dy*dy) || 1))); best = Math.min(best, Math.hypot(ax+t*dx, ay+t*dy)); } }));
+  return best; }
+function fieldAt(lat, lon){ if(!MAPV.geo) return null; const pt = [lon, lat];
+  const hit = MAPV.geo.features.find(f => inGeom(pt, f.geometry)); if(hit) return {f:hit, inside:true, m:0};
+  let best = null; MAPV.geo.features.forEach(f => { const m = distToGeom(pt, f.geometry); if(!best || m < best.m) best = {f, inside:false, m}; }); return best; }
+
+const fieldsOf = f => f.properties.covers || [f.properties.n];
+function cropsOfField(n, y){ return (REF.prl || []).filter(r => r.y===y && r.f===n); }
+function yieldClass(n, y){   // урожайність відносно середньої по культурі цього року
+  const mine = MODEL.fields.filter(x => x.f===n && x.y===y && x.ycut); if(!mine.length) return null;
+  const x = mine[0], peers = MODEL.fields.filter(z => z.y===y && z.c===x.c && z.ycut), avg = d3.mean(peers, z => z.ycut);
+  return {c:x.c, v:x.ycut, avg, d: avg ? x.ycut/avg-1 : 0};
+}
+const YCOL = d => d==null ? '#9aa0a6' : d > 0.1 ? '#2e7d4f' : d < -0.1 ? '#b3372e' : '#d4a72c';
+function fieldStyle(f){
+  const n = fieldsOf(f)[0], base = {weight:2, color:'#ffffff', opacity:.9, fillOpacity:.55};
+  if(MAPV.mode==='yield'){ const yc = yieldClass(n, YEAR); return {...base, fillColor:YCOL(yc && yc.d)}; }
+  const cs = cropsOfField(n, YEAR); return {...base, fillColor: cs.length ? cropColor(cs[0].c) : '#9aa0a6', dashArray: f.properties.flag ? '6 4' : null};
+}
+function fieldPopup(f){
+  const p = f.properties, box = el('div', {class:'mpop'});
+  box.append(el('b', {}, fieldsOf(f).join(' + ')));
+  fieldsOf(f).forEach(n => {
+    const cs = cropsOfField(n, YEAR), yc = yieldClass(n, YEAR), fr = FIELD[n];
+    box.append(el('div', {class:'note'}, (fieldsOf(f).length > 1 ? n+': ' : '')+(fr ? nf(fr.ha)+' га в довіднику' : '')+' · урожай '+YEAR+': '+(cs.length ? cs.map(c => c.c).join(' / ') : 'немає даних')+(yc ? ' · '+nf(yc.v)+' ц/га' : '')));
+    box.append(el('div', {class:'acts', style:'justify-content:flex-start;margin:4px 0'},
+      el('button', {class:'btn small', onclick:() => { SELFIELD = n; location.hash = 'fields'; }}, 'Картка поля'),
+      el('button', {class:'btn small', onclick:() => { HF = n; location.hash = 'history'; }}, 'Історія')));
+  });
+  box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га (GPS '+nf(p.ha_gps)+' га) · '+(p.source || '')));
+  if(p.flag) box.append(el('div', {class:'note', style:'color:var(--warn)'}, '⚠ '+p.flag));
+  return box;
+}
+function drawFields(){
+  if(MAPV.fl) MAPV.fl.remove();
+  MAPV.fl = L.geoJSON(MAPV.geo, {style:fieldStyle, onEachFeature:(f, l) => {
+    l.bindTooltip(fieldsOf(f).join(' + '), {permanent:true, direction:'center', className:'map-lbl'});
+    l.bindPopup(() => fieldPopup(f), {maxWidth:320});
+  }}).addTo(MAPV.map);
+  if(MAPV.paiL) MAPV.paiL.bringToFront();
+  renderMapLegend();
+}
+function renderMapLegend(){
+  const lg = $('#map-legend'); lg.replaceChildren();
+  const sw = (c, t) => el('span', {class:'lg'}, el('i', {style:'background:'+c}), t);
+  if(MAPV.mode==='yield') lg.append(sw(YCOL(0.2), 'вище середньої по культурі > 10%'), sw(YCOL(0), '±10%'), sw(YCOL(-0.2), 'нижче > 10%'), sw(YCOL(null), 'немає даних'));
+  else { const cs = [...new Set((REF.prl || []).filter(r => r.y===YEAR).map(r => r.c))]; cs.forEach(c => lg.append(sw(cropColor(c), c))); lg.append(sw('#9aa0a6', 'немає даних')); }
+  const tot = d3.sum(MAPV.geo.features, f => f.properties.ha_geom);
+  $('#map-info').textContent = 'Урожай '+YEAR+' · '+MAPV.geo.features.length+' контурів, '+nf(tot)+' га за контурами · пунктир — контур потребує уточнення';
+}
+
+async function renderMap(){
+  const info = $('#map-info');
+  try{
+    if(!window.L){ info.textContent = 'Завантажую карту…'; loadCss(LEAF+'.css'); await loadScript(LEAF+'.js'); }
+    if(!MAPV.geo){ MAPV.geo = await getJSON('geo/fields.json'); if(!MAPV.geo){ info.textContent = 'У сховищі ще немає geo/fields.json'; return; } }
+  }catch(e){ info.textContent = e.message; return; }
+  if(!MAPV.map){
+    MAPV.map = L.map('map', {zoomControl:true});
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19, attribution:'Esri World Imagery'});
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'© OpenStreetMap'});
+    sat.addTo(MAPV.map); L.control.layers({'Супутник':sat, 'Схема':osm}, null, {position:'topright'}).addTo(MAPV.map);
+    const zc = () => { const z = MAPV.map.getZoom(); $('#map').classList.toggle('far', z < 14); $('#map').classList.toggle('vfar', z < 13); }; MAPV.map.on('zoomend', zc);
+    drawFields(); MAPV.map.fitBounds(MAPV.fl.getBounds(), {padding:[12, 12]}); zc();
+  } else { drawFields(); setTimeout(() => MAPV.map.invalidateSize(), 0); }
+  renderMapTools();
+}
+function renderMapTools(){
+  document.querySelectorAll('#map-mode .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.m===MAPV.mode)));
+  const own = ROLE==='o';
+  $('#map-pai').hidden = !own; $('#map-split').hidden = !own || !MAPV.geo.features.some(f => f.properties.covers);
+  if(!own) $('#map-owner').replaceChildren();
+}
+document.querySelectorAll('#map-mode .chip').forEach(b => b.addEventListener('click', () => { MAPV.mode = b.dataset.m; drawFields(); renderMapTools(); }));
+
+// «Де я»: позиція телефона → поле
+$('#map-loc').addEventListener('click', () => {
+  if(!navigator.geolocation){ toast('Телефон не дає координати'); return; }
+  $('#map-info').textContent = 'Визначаю місце…';
+  navigator.geolocation.getCurrentPosition(pos => {
+    const {latitude:la, longitude:lo, accuracy:acc} = pos.coords;
+    if(MAPV.me) MAPV.me.remove();
+    MAPV.me = L.layerGroup([L.circle([la, lo], {radius:acc, weight:1, color:'#2f5d8a', fillOpacity:.1}), L.circleMarker([la, lo], {radius:7, weight:3, color:'#fff', fillColor:'#2f5d8a', fillOpacity:1})]).addTo(MAPV.map);
+    MAPV.map.setView([la, lo], Math.max(MAPV.map.getZoom(), 15));
+    const r = fieldAt(la, lo), name = r ? fieldsOf(r.f).join(' + ') : '';
+    $('#map-info').textContent = !r ? 'Контури не завантажені' : r.inside ? 'Ви на полі «'+name+'» (точність ±'+Math.round(acc)+' м)' : 'Поза контурами. Найближче поле «'+name+'» — '+Math.round(r.m)+' м від межі';
+  }, err => { $('#map-info').textContent = 'Не вдалось визначити місце: '+(err.code===1 ? 'дозвольте доступ до геопозиції для цього сайту' : err.message); }, {enableHighAccuracy:true, timeout:15000, maximumAge:30000});
+});
+
+// ---------- шифрування шару паїв (AES-256-GCM, ключ з пароля через PBKDF2-SHA256)
+const PAI_ITER = 600000, PAI_PATH = 'geo/pai.enc.json';
+const u8b64 = u => { let s = ''; for(let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i+0x8000)); return btoa(s); };
+const b64u8 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function paiKey(pass, salt, iter){ const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2', hash:'SHA-256', salt, iterations:iter}, base, {name:'AES-GCM', length:256}, true, ['encrypt', 'decrypt']); }
+async function paiEncrypt(obj, pass){
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12)), key = await paiKey(pass, salt, PAI_ITER);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, new TextEncoder().encode(JSON.stringify(obj))));
+  return {doc:{kind:'pai-enc', v:1, alg:'AES-256-GCM', kdf:'PBKDF2-SHA256', iter:PAI_ITER, salt:u8b64(salt), iv:u8b64(iv), ct:u8b64(ct), created_at:new Date().toISOString()}, key};
+}
+async function paiDecrypt(doc, key){ const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:b64u8(doc.iv)}, key, b64u8(doc.ct)); return JSON.parse(new TextDecoder().decode(pt)); }
+async function rememberedKey(doc){ try{ const j = JSON.parse(LS.get('dl_paikey') || 'null'); if(!j || j.salt!==doc.salt) return null;
+  return await crypto.subtle.importKey('jwk', j.jwk, {name:'AES-GCM'}, true, ['decrypt']); }catch(e){ return null; } }
+
+// дані публічної карти: ті самі константи, що в її index.html
+function parseMapHtml(h){
+  const grab = v => { const m = h.match(new RegExp('const '+v+'\\s*=\\s*(.*?);?\\s*$', 'm')); return m ? m[1].trim().replace(/;$/, '') : null; };
+  const out = {}; for(const v of ['mainData', 'theirData', 'EXCHANGES', 'FIELDS']){ const s = grab(v); if(!s) throw new Error('У файлі карти немає '+v); out[v] = JSON.parse(s); }
+  const os = grab('OWN_SURNAMES'); out.OWN_SURNAMES = os ? JSON.parse(os.replace(/'/g, '"')) : [];
+  if(!out.mainData.features || !out.mainData.features.length) throw new Error('У файлі карти немає ділянок');
+  return out;
+}
+
+$('#map-pai').addEventListener('click', async ev => {
+  const on = ev.target.getAttribute('aria-pressed')!=='true'; ev.target.setAttribute('aria-pressed', String(on));
+  if(!on){ if(MAPV.paiL) MAPV.paiL.remove(); $('#map-owner').replaceChildren(); return; }
+  if(MAPV.pai){ drawPai(); return; }
+  $('#map-info').textContent = 'Перевіряю шар паїв…';
+  try{ MAPV.enc = await getJSON(PAI_PATH); }catch(e){ $('#map-info').textContent = e.message; ev.target.setAttribute('aria-pressed', 'false'); return; }
+  if(!MAPV.enc){ paiSetupForm(); return; }
+  const k = await rememberedKey(MAPV.enc);
+  if(k){ try{ MAPV.pai = await paiDecrypt(MAPV.enc, k); MAPV.key = k; drawPai(); return; }catch(e){ LS.del('dl_paikey'); } }
+  paiUnlockForm();
+});
+function paiUnlockForm(){
+  const box = $('#map-owner'), pw = el('input', {type:'password', autocomplete:'current-password', placeholder:'Пароль шару паїв', style:'max-width:260px'});
+  const rem = el('input', {type:'checkbox', id:'pai-rem'}), msg = el('span', {class:'note'});
+  const go = async () => { msg.textContent = 'Розшифровую…';
+    try{ const key = await paiKey(pw.value, b64u8(MAPV.enc.salt), MAPV.enc.iter); MAPV.pai = await paiDecrypt(MAPV.enc, key); MAPV.key = key;
+      if(rem.checked) LS.set('dl_paikey', JSON.stringify({salt:MAPV.enc.salt, jwk: await crypto.subtle.exportKey('jwk', key)}));
+      box.replaceChildren(); drawPai(); }
+    catch(e){ msg.textContent = 'Пароль не підходить'; } };
+  pw.addEventListener('keydown', e => { if(e.key==='Enter') go(); });
+  box.replaceChildren(el('div', {class:'toolbar'}, el('b', {}, 'Шар «Паї»'), pw, el('button', {class:'btn primary small', onclick:go}, 'Відкрити'),
+    el('label', {class:'note', for:'pai-rem'}, rem, ' запам’ятати на цьому пристрої'), msg));
+  pw.focus();
+}
+function paiSetupForm(){
+  const box = $('#map-owner'), p1 = el('input', {type:'password', autocomplete:'new-password', placeholder:'Новий пароль (від 10 символів)'}), p2 = el('input', {type:'password', autocomplete:'new-password', placeholder:'Повторіть пароль'});
+  const file = el('input', {type:'file', accept:'.html,text/html'}), msg = el('div', {class:'note'});
+  const go = async () => {
+    if(p1.value.length < 10){ msg.textContent = 'Пароль — щонайменше 10 символів.'; return; }
+    if(p1.value!==p2.value){ msg.textContent = 'Паролі не збігаються.'; return; }
+    try{
+      msg.textContent = 'Беру дані карти…';
+      const html = file.files[0] ? await file.files[0].text() : await (async () => { const r = await fetch(PUB_MAP+'?t='+Date.now(), {cache:'no-store'}); if(!r.ok) throw new Error('Публічна карта недоступна ('+r.status+'). Виберіть файл index.html карти.'); return r.text(); })();
+      const data = parseMapHtml(html);
+      msg.textContent = 'Шифрую '+data.mainData.features.length+' ділянок…';
+      const {doc, key} = await paiEncrypt(data, p1.value);
+      const back = await paiDecrypt(doc, key); if(back.mainData.features.length!==data.mainData.features.length) throw new Error('Перевірка шифрування не пройшла');
+      msg.textContent = 'Зберігаю в приватне сховище…';
+      await putJSON(PAI_PATH, doc, 'Шар паїв (зашифровано)');
+      const stored = await getJSON(PAI_PATH); await paiDecrypt(stored, key);   // читаємо назад і розшифровуємо — файл точно робочий
+      MAPV.enc = stored; MAPV.pai = data; MAPV.key = key; box.replaceChildren(); drawPai();
+      toast('Паї перенесено: '+data.mainData.features.length+' ділянок, зашифровано');
+    }catch(e){ msg.textContent = e.message; }
+  };
+  box.replaceChildren(el('div', {class:'card', style:'display:grid;gap:8px;max-width:560px'},
+    el('b', {}, 'Перенести шар «Паї» з публічної карти'),
+    el('div', {class:'note'}, 'Дані ділянок (кадастр, пайовики, обміни) візьму з публічної карти, зашифрую вашим паролем у цьому браузері і збережу в приватне сховище. Без пароля файл не прочитає ніхто, зокрема той, хто має ключ доступу. Пароль ніде не зберігається: якщо його забути, шар доведеться перенести ще раз.'),
+    p1, p2, el('label', {class:'note'}, 'Якщо публічну карту вже закрито — файл index.html карти: ', file),
+    el('button', {class:'btn primary', style:'justify-self:start', onclick:go}, 'Зашифрувати і зберегти'), msg));
+}
+function drawPai(){
+  const P = MAPV.pai; if(MAPV.paiL) MAPV.paiL.remove();
+  const own = o => o && P.OWN_SURNAMES.some(s => o.toLowerCase().includes(s));
+  const ex = {}; P.EXCHANGES.forEach(e => { ex[e.our] = e.theirs; ex[e.theirs] = e.our; });
+  const style = f => { const p = f.properties;
+    if(p.ftype==='exchanged_out') return {color:'#c0390a', weight:2, fillColor:'#ff6b2b', fillOpacity:.45};
+    if(p.ftype==='exchanged_in') return {color:'#0048cc', weight:2, fillColor:'#4488ff', fillOpacity:.4, dashArray:'8 4'};
+    return {color: own(p.owner) ? '#ffe14d' : '#ffffff', weight: own(p.owner) ? 2.2 : 1, fillOpacity:0}; };
+  const pop = f => { const p = f.properties;
+    return el('div', {class:'mpop'}, el('b', {}, 'Ділянка '+p.short), el('div', {class:'note'}, p.cadnum || ''),
+      el('div', {}, nf(p.area)+' га · '+({own:'наша', exchanged_out:'наша — віддали в обмін', exchanged_in:'чужа — отримали в обмін'}[p.ftype] || p.ftype || '')),
+      p.owner ? el('div', {}, 'Пайовик: '+p.owner+(own(p.owner) ? ' (родина)' : '')) : '',
+      ex[p.short] ? el('div', {class:'note'}, 'Обмін ↔ '+ex[p.short]) : ''); };
+  const feats = [...P.mainData.features, ...(P.theirData.features || []).map(f => ({...f, properties:{...f.properties, ftype:'exchanged_in'}}))];
+  MAPV.paiL = L.geoJSON({type:'FeatureCollection', features:feats}, {style, onEachFeature:(f, l) => { l.bindPopup(() => pop(f), {maxWidth:300}); l.bindTooltip(f.properties.short, {className:'map-lbl small'}); }}).addTo(MAPV.map);
+  $('#map-info').textContent = 'Шар «Паї»: '+P.mainData.features.length+' ділянок, обмінів '+P.EXCHANGES.length+' · жовта межа — ділянки родини, помаранчеві — віддали, сині — отримали';
+}
+
+// ---------- розділ спільного контуру (Малаківка / 9 Малаківка): власник обводить меншу частину
+$('#map-split').addEventListener('click', () => {
+  const tgt = MAPV.geo.features.find(f => f.properties.covers); if(!tgt) return;
+  const [big, small] = tgt.properties.covers, pts = [];
+  const line = L.polygon([], {color:'#ffe14d', weight:3, dashArray:'4 4', fillOpacity:.15, interactive:false}).addTo(MAPV.map), dots = L.layerGroup().addTo(MAPV.map);
+  const msg = el('span', {class:'note'}), box = $('#map-owner');
+  const redraw = () => { line.setLatLngs(pts); dots.clearLayers(); pts.forEach(p => L.circleMarker(p, {radius:4, color:'#000', weight:1, fillColor:'#ffe14d', fillOpacity:1, interactive:false}).addTo(dots)); msg.textContent = 'Точок: '+pts.length; };
+  const onClick = e => { pts.push(e.latlng); redraw(); };
+  const stop = () => { MAPV.map.off('click', onClick); line.remove(); dots.remove(); box.replaceChildren(); $('#map').classList.remove('drawing'); };
+  const done = async () => {
+    if(pts.length < 3){ msg.textContent = 'Потрібно щонайменше 3 точки'; return; }
+    try{ msg.textContent = 'Рахую площі…'; if(!window.turf) await loadScript(TURF);
+      const ring = pts.map(p => [p.lng, p.lat]); ring.push(ring[0]);
+      const part = turf.intersect(turf.featureCollection([tgt, turf.polygon([ring])])), rest = part && turf.difference(turf.featureCollection([tgt, part]));
+      if(!part || !rest){ msg.textContent = 'Обведена область не ділить контур — спробуйте ще раз'; return; }
+      const ha = g => +(turf.area(g)/1e4).toFixed(2), hs = ha(part), hb = ha(rest);
+      const mk = (n, g, h) => ({type:'Feature', properties:{n, map_name:tgt.properties.map_name, ha_geom:h, ha_gps:null, source:'розділ власника '+new Date().toLocaleDateString('uk-UA')+' зі спільного контуру '+nf(tgt.properties.ha_gps)+' га', note:tgt.properties.note}, geometry:g.geometry});
+      box.replaceChildren(el('div', {class:'toolbar'}, el('b', {}, big+' — '+nf(hb)+' га, '+small+' — '+nf(hs)+' га'),
+        el('button', {class:'btn primary small', onclick: async () => {
+          const geo = JSON.parse(JSON.stringify(MAPV.geo)); geo.features = geo.features.filter(f => !f.properties.covers).concat([mk(big, rest, hb), mk(small, part, hs)]); geo.updated_at = new Date().toISOString();
+          try{ await putJSON('geo/fields.json', geo, 'Карта: розділено «'+big+'» / «'+small+'» ('+nf(hb)+' / '+nf(hs)+' га)'); MAPV.geo = geo; stop(); drawFields(); renderMapTools();
+            toast('Збережено. Площі в довіднику полів оновіть окремо: '+nf(hb)+' / '+nf(hs)+' га'); }
+          catch(e){ toast('Не збережено: '+e.message); } }}, 'Зберегти розділ'),
+        el('button', {class:'btn small', onclick:() => { stop(); }}, 'Скасувати')));
+    }catch(e){ msg.textContent = e.message; }
+  };
+  MAPV.map.closePopup(); $('#map').classList.add('drawing');
+  MAPV.map.fitBounds(L.geoJSON(tgt).getBounds(), {padding:[20, 20]}); MAPV.map.on('click', onClick);
+  box.replaceChildren(el('div', {class:'toolbar'}, el('b', {}, 'Обведіть «'+small+'»'),
+    el('span', {class:'note'}, 'Ставте точки по межі. Там, де межа збігається з краєм поля, ведіть лінію трохи за краєм — зайве обріжеться.'),
+    el('button', {class:'btn small', onclick:() => { pts.pop(); redraw(); }}, 'Прибрати точку'),
+    el('button', {class:'btn primary small', onclick:done}, 'Готово'), el('button', {class:'btn small', onclick:stop}, 'Скасувати'), msg));
+});
 
 // ======= вхід
 function showLogin(msg){ $('#login').hidden = false; $('#login-msg').textContent = msg || ''; }
