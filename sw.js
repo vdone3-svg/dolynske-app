@@ -1,0 +1,55 @@
+// Робота без інтернету: оболонка застосунку, бібліотеки, дані зі сховища (останні завантажені) і плитки карти
+const SHELL = 'shell-v1', LIBS = 'libs-v1', API = 'api-v1', TILES = 'tiles-v1', MAX_TILES = 5000;
+self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(SHELL).then(c => c.add(self.registration.scope)).catch(() => {})); });
+self.addEventListener('activate', e => e.waitUntil((async () => {
+  const keep = [SHELL, LIBS, API, TILES]; for(const k of await caches.keys()) if(!keep.includes(k)) await caches.delete(k);
+  await self.clients.claim(); })()));
+
+const isTile = u => /server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\//.test(u) || /tile\.openstreetmap\.org\//.test(u);
+const isLib = u => /^https:\/\/(cdnjs\.cloudflare\.com|unpkg\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)\//.test(u);
+const isApi = u => u.startsWith('https://api.github.com/repos/');
+const wait = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), ms))]);
+
+self.addEventListener('fetch', e => {
+  const r = e.request; if(r.method!=='GET') return;
+  const u = r.url;
+  if(r.mode==='navigate' && u.startsWith(self.registration.scope)) e.respondWith(shell(r));
+  else if(isLib(u)) e.respondWith(cacheFirst(r, LIBS));
+  else if(isTile(u)) e.respondWith(tile(r));
+  else if(isApi(u)) e.respondWith(api(r));
+});
+
+// сторінка: спершу мережа (щоб приходили оновлення), без зв'язку — збережена копія
+async function shell(r){
+  const c = await caches.open(SHELL), key = self.registration.scope;
+  try{ const res = await wait(fetch(r), 5000); if(res.ok) c.put(key, res.clone()); return res; }
+  catch(e){ return (await c.match(key)) || Response.error(); }
+}
+async function cacheFirst(r, name){
+  const c = await caches.open(name), hit = await c.match(r); if(hit) return hit;
+  const res = await fetch(r); if(res.ok || res.type==='opaque') c.put(r, res.clone()); return res;
+}
+let puts = 0;
+async function tile(r){
+  const c = await caches.open(TILES), hit = await c.match(r.url); if(hit) return hit;
+  try{ const res = await fetch(r.url, {mode:'cors', credentials:'omit'}); if(res.ok){ await c.put(r.url, res.clone()); if(++puts % 100===0) trim(c); } return res; }
+  catch(e){ return new Response('', {status:504, statusText:'offline tile'}); }
+}
+async function trim(c){ const keys = await c.keys(); if(keys.length > MAX_TILES) for(const k of keys.slice(0, keys.length - MAX_TILES + 300)) await c.delete(k); }
+
+// дані сховища: мережа з тайм-аутом, без зв'язку — остання збережена відповідь (позначена заголовком x-cache-date)
+async function api(r){
+  const raw = (r.headers.get('accept') || '').includes('raw'), key = r.url+(r.url.includes('?') ? '&' : '?')+'__a='+(raw ? 'raw' : 'json');
+  const c = await caches.open(API);
+  try{
+    const res = await wait(fetch(r), 8000);
+    if(res.ok){ const h = new Headers(res.headers); h.set('x-cache-date', new Date().toISOString()); const body = await res.clone().blob();
+      await c.put(key, new Response(body, {status:200, headers:h})); }
+    else if(res.status===404) await c.delete(key);
+    return res;
+  }catch(e){
+    const hit = await c.match(key); if(!hit) return new Response('', {status:404, headers:{'x-offline':'1'}});
+    const h = new Headers(hit.headers); h.set('x-offline', '1'); return new Response(await hit.blob(), {status:200, headers:h});
+  }
+}
+self.addEventListener('message', e => { if(e.data==='clear-api') e.waitUntil(caches.delete(API)); });

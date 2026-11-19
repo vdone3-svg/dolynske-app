@@ -7,7 +7,7 @@
 <title>Щоденне господарство</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap" rel="stylesheet" crossorigin="anonymous">
 <style>
 /* Layout: зведення зверху → сівозміна й поля → ресурси → техніка → склад; сітка 12 колонок, на телефоні — одна */
 :root{
@@ -438,6 +438,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <div class="toolbar"><h2 style="margin:0">Карта полів</h2>
         <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button></div>
         <button class="btn small" id="map-loc">Де я</button>
+        <button class="btn small" id="map-off">Зберегти карту офлайн</button>
         <button class="chip" id="map-sc" aria-pressed="true">Огляди</button>
         <button class="chip" id="map-pai" aria-pressed="false" hidden>Паї</button>
         <button class="btn small" id="map-split" hidden>Розділити Малаківку</button></div>
@@ -464,8 +465,8 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
 <div class="toast" id="toast" role="status"></div>
 <div class="tip" id="tip" role="tooltip"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
 <script>
 
 const SHEETS = ['Роботи','Внесення','Урожай','Відвантаження','Рух зерна','Склад','Мотогодини','Ремонти і ТО','Д_Поле-рік','Д_Поля','Д_Культури','Д_Зерно','Д_Техніка','Д_Операції','Д_Матеріали'];
@@ -1168,7 +1169,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 густота';
+const APP_VER = '19.11 офлайн';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1868,11 +1869,13 @@ $('#rot-add').addEventListener('click', () => { const pr = RAW['Д_Поле-рі
 // ================= СХОВИЩЕ: приватний репозиторій GitHub =================
 const GH = {owner:'vdone3-svg', repo:'dolynske-data', branch:'main'};
 const LS = {get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }, del(k){ try{ localStorage.removeItem(k); }catch(e){} }};
-let TOKEN = LS.get('dl_token');
+let TOKEN = LS.get('dl_token'), OFFLINE = false, OFFLINE_AT = null;
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 function syncState(t, kind=''){ const s = $('#sync'); s.textContent = t; s.className = 'sync '+kind; }
 async function gh(path, opts={}){
   const r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+(path ? '/'+path : ''), {method:opts.method||'GET', body:opts.body, cache:'no-store',
     headers:{'Authorization':'Bearer '+TOKEN, 'Accept': opts.raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28', ...(opts.body ? {'Content-Type':'application/json'} : {})}});
+  if(r.headers.get('x-offline')){ OFFLINE = true; const cd = r.headers.get('x-cache-date'); if(cd && (!OFFLINE_AT || cd < OFFLINE_AT)) OFFLINE_AT = cd; }
   if(r.status===404) return null;
   if(r.status===401 || r.status===403){ const e = new Error('Ключ доступу не підходить або закінчився ('+r.status+')'); e.auth = true; throw e; }
   if(!r.ok){ const e = new Error('GitHub '+r.status+': '+(await r.text()).slice(0,160)); e.status = r.status; throw e; }
@@ -1978,6 +1981,7 @@ async function loadAll(){
   rebuild();
   const last = d3.max(Object.values(DOCS).map(d => d && d.saved_at).filter(Boolean));
   syncState('Дані завантажено'+(last ? ' · останнє збереження '+new Date(last).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : ''), 'ok');
+  if(OFFLINE) syncState('Без зв’язку — показую дані, збережені на телефоні'+(OFFLINE_AT ? ' станом на '+new Date(OFFLINE_AT).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '')+'. Нові записи відправляться, щойно з’явиться зв’язок', 'warn');
   if(Object.keys(PENDING).length) flushPending();
 }
 // ======= Excel: та сама книга, що й раніше (журнали + пальне у звичній формі)
@@ -1994,11 +1998,39 @@ function exportExcel(){
 
 // ======= КАРТА ПОЛІВ: контури з geo/fields.json; шар паїв — лише власнику, зашифрований (geo/pai.enc.json)
 const MAPV = {showSc:true, focus:null, scL:null, map:null, geo:null, fl:null, mode:'crop', pai:null, paiL:null, key:null, me:null, draw:null, enc:undefined};
+const SAT_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+['online', 'offline'].forEach(ev => window.addEventListener(ev, () => { if(MAPV.sat){ MAPV.sat.options.maxNativeZoom = navigator.onLine ? 19 : 17; MAPV.sat.redraw(); } }));
+// плитки для збереження: увесь район z11–15, навколо полів (+150 м) z16–17 — ≈1100 плиток, ≈25 МБ
+function offlineTiles(){
+  const tx = (lon, z) => Math.floor((lon+180)/360*2**z), ty = (lat, z) => { const r = lat*Math.PI/180; return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*2**z); };
+  const bbox = f => { let b = [180, 90, -180, -90]; (f.geometry.type==='Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates).flat(2).forEach(([x, y]) => { b = [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)]; }); return b; };
+  const set = new Set(), add = (b, z) => { for(let x = tx(b[0], z); x <= tx(b[2], z); x++) for(let y = ty(b[3], z); y <= ty(b[1], z); y++) set.add(SAT_URL.replace('{z}', z).replace('{y}', y).replace('{x}', x)); };
+  const bs = MAPV.geo.features.map(bbox), all = [d3.min(bs, b => b[0]), d3.min(bs, b => b[1]), d3.max(bs, b => b[2]), d3.max(bs, b => b[3])];
+  for(let z = 11; z <= 15; z++) add([all[0]-.01, all[1]-.01, all[2]+.01, all[3]+.01], z);
+  const pad = (b, lat) => { const dx = .15/(111.32*Math.cos(lat*Math.PI/180)), dy = .15/110.54; return [b[0]-dx, b[1]-dy, b[2]+dx, b[3]+dy]; };
+  [16, 17].forEach(z => bs.forEach(b => add(pad(b, b[1]), z)));
+  return [...set];
+}
+async function saveOffline(){
+  const btn = $('#map-off'), info = $('#map-info');
+  if(!navigator.serviceWorker || !navigator.serviceWorker.controller){ info.textContent = 'Збереження ще не готове — оновіть сторінку один раз і повторіть'; return; }
+  if(!navigator.onLine){ info.textContent = 'Немає зв’язку — збережіть карту, коли буде інтернет (краще Wi-Fi)'; return; }
+  try{ if(navigator.storage && navigator.storage.persist) await navigator.storage.persist(); }catch(e){}
+  const urls = offlineTiles(); let done = 0, bad = 0; btn.disabled = true;
+  await Promise.all([getJSON('geo/fields.json'), getJSON('base/snapshot.json'), getJSON('bundle/bundle.json')].map(p => p.catch(() => null)));   // дані — теж на телефон
+  const q = urls.slice(), worker = async () => { while(q.length){ const u = q.shift(); try{ const r = await fetch(u, {mode:'cors'}); if(!r.ok) bad++; }catch(e){ bad++; } done++;
+    if(done % 20===0 || done===urls.length) info.textContent = 'Зберігаю карту: '+done+' з '+urls.length+' плиток…'; } };
+  await Promise.all([1, 2, 3, 4].map(worker));
+  let mb = ''; try{ const est = await navigator.storage.estimate(); mb = ' · на телефоні зайнято '+nf(est.usage/1048576, 0)+' МБ'; }catch(e){}
+  LS.set('dl_offline_at', new Date().toISOString()); btn.disabled = false; renderOfflineNote();
+  info.textContent = bad ? 'Збережено '+(done-bad)+' з '+urls.length+' плиток, '+bad+' не вдалось — повторіть пізніше'+mb : 'Карту господарства збережено: '+urls.length+' плиток, працюватиме без інтернету'+mb;
+}
+function renderOfflineNote(){ const t = LS.get('dl_offline_at'), b = $('#map-off'); if(b) b.textContent = t ? 'Оновити офлайн-карту ('+new Date(t).toLocaleDateString('uk-UA')+')' : 'Зберегти карту офлайн'; }
 const LEAF = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet', TURF = 'https://unpkg.com/@turf/turf@7.1.0/turf.min.js';
 const PUB_MAP = 'https://vdone3-svg.github.io/dolynske-map/';
 function loadScript(src){ return new Promise((ok, no) => { if(document.querySelector('script[src="'+src+'"]')) return ok();
-  const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('Не завантажилась бібліотека карти — перевірте інтернет')); document.head.append(s); }); }
-function loadCss(href){ if(!document.querySelector('link[href="'+href+'"]')) document.head.append(el('link', {rel:'stylesheet', href})); }
+  const s = document.createElement('script'); s.crossOrigin = 'anonymous'; s.src = src; s.onload = ok; s.onerror = () => no(new Error('Не завантажилась бібліотека карти — перевірте інтернет')); document.head.append(s); }); }
+function loadCss(href){ if(!document.querySelector('link[href="'+href+'"]')) document.head.append(el('link', {rel:'stylesheet', href, crossorigin:'anonymous'})); }
 
 // поле за координатою: точка в контурі, інакше — найближче поле й відстань до межі (м)
 function inRing(pt, ring){ let c = false; for(let i = 0, j = ring.length-1; i < ring.length; j = i++){ const [xi, yi] = ring[i], [xj, yj] = ring[j];
@@ -2069,13 +2101,13 @@ async function renderMap(){
   }catch(e){ info.textContent = e.message; return; }
   if(!MAPV.map){
     MAPV.map = L.map('map', {zoomControl:true});
-    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19, attribution:'Esri World Imagery'});
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'© OpenStreetMap'});
+    const sat = L.tileLayer(SAT_URL, {maxZoom:19, maxNativeZoom: navigator.onLine ? 19 : 17, crossOrigin:true, attribution:'Esri World Imagery'}); MAPV.sat = sat;
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, crossOrigin:true, attribution:'© OpenStreetMap'});
     sat.addTo(MAPV.map); L.control.layers({'Супутник':sat, 'Схема':osm}, null, {position:'topright'}).addTo(MAPV.map);
     const zc = () => { const z = MAPV.map.getZoom(); $('#map').classList.toggle('far', z < 14); $('#map').classList.toggle('vfar', z < 13); }; MAPV.map.on('zoomend', zc);
     drawFields(); MAPV.map.fitBounds(MAPV.fl.getBounds(), {padding:[12, 12]}); zc();
   } else { drawFields(); setTimeout(() => MAPV.map.invalidateSize(), 0); }
-  renderMapTools(); drawScoutPins();
+  renderMapTools(); drawScoutPins(); renderOfflineNote();
 }
 function renderMapTools(){
   document.querySelectorAll('#map-mode .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.m===MAPV.mode)));
@@ -2083,6 +2115,7 @@ function renderMapTools(){
   $('#map-pai').hidden = !own; $('#map-split').hidden = !own || !MAPV.geo.features.some(f => f.properties.covers);
   if(!own) $('#map-owner').replaceChildren();
 }
+$('#map-off').addEventListener('click', saveOffline);
 $('#map-sc').addEventListener('click', ev => { MAPV.showSc = !MAPV.showSc; ev.target.setAttribute('aria-pressed', String(MAPV.showSc)); drawScoutPins(); });
 document.querySelectorAll('#map-mode .chip').forEach(b => b.addEventListener('click', () => { MAPV.mode = b.dataset.m; drawFields(); renderMapTools(); }));
 
@@ -2546,7 +2579,7 @@ $('#login-go').addEventListener('click', async () => {
     LS.set('dl_token', t); LS.set('dl_role', $('#login-role').value); $('#login').hidden = true; start(); }
   catch(e){ TOKEN = null; $('#login-msg').textContent = e.message; }
 });
-$('#btn-logout').addEventListener('click', () => { LS.del('dl_token'); TOKEN = null; location.hash = ''; location.reload(); });
+$('#btn-logout').addEventListener('click', () => { if(navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear-api'); if(window.caches) caches.delete('api-v1'); LS.del('dl_token'); TOKEN = null; location.hash = ''; location.reload(); });
 $('#btn-xlsx').addEventListener('click', () => { if(!RAW){ toast('Дані ще не завантажені'); return; } exportExcel(); });
 async function start(){
   ROLE = LS.get('dl_role') || 'b';
