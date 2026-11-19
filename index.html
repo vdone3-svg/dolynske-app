@@ -246,6 +246,9 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 
 .sc-ai{display:grid;gap:6px;padding:10px;border-radius:10px;background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent)}.sc-ai.wait{opacity:.8}
 .sc-aih{font:600 13px var(--body);color:var(--accent)}.sc-ai p{margin:0}.sc-ain{margin:0;padding-left:20px;font-size:13px;color:var(--muted)}
+.sc-q{display:grid;gap:6px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card,transparent)}.sc-q.old{border-color:var(--bad)}.sc-q textarea,.sc-chat textarea{width:100%;min-height:54px;font:inherit;box-sizing:border-box}
+.sc-chat{display:grid;gap:6px}.sc-msg{padding:6px 10px;border-radius:8px;font-size:14px;white-space:pre-wrap}.sc-msg.h{background:color-mix(in srgb,var(--muted) 10%,transparent)}.sc-msg.c{background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.sc-rem{display:grid;gap:8px;margin:6px 0 12px}.sc-prod{font-variant-numeric:tabular-nums}
 .sc-thw{position:relative;margin:0;display:grid;gap:2px}.sc-thw figcaption{font-size:11px;line-height:1.25;color:var(--muted)}.sc-n.used{background:var(--accent)}.sc-ail{font-size:14px}.sc-ain li{margin:2px 0}.sc-more-ph{align-self:center}
 .sc-n{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.65);color:#fff;font:600 11px var(--body);border-radius:4px;padding:1px 5px}
 .sc-fieldline{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:16px}
@@ -2630,9 +2633,10 @@ async function saveScout(){
 let AI_STATUS = null;
 const SEV_CLS = {'висока':'bad', 'середня':'', 'низька':'ok'};
 function aiBlock(d){
-  const a = d.ai, head = el('div', {class:'sc-aih'}, '🤖 AI-аналіз фото', el('span', {class:'note'}, ' · підказка, перевірте на місці'));
-  if(!a){ const t = d.ai_error ? 'AI-аналіз: помилка, повториться автоматично' : AI_STATUS && AI_STATUS.key===false ? 'AI-аналіз не підключено (немає ключа доступу в сховищі)' : d.pending ? 'Аналіз фото — після відправки огляду' : 'Аналізую фото… (зазвичай 5–10 хв після відправки)';
+  const a = d.ai, head = el('div', {class:'sc-aih'}, '🤖 Висновок Claude', el('span', {class:'note'}, ' · підказка, перевірте на місці'));
+  if(!a){ const t = d.ai_error ? 'Аналіз: помилка, повториться автоматично' : AI_STATUS && AI_STATUS.key===false ? 'AI-аналіз не підключено (немає ключа доступу в сховищі)' : d.pending ? 'Аналіз — після відправки огляду' : 'Аналізую… (зазвичай 2–5 хв після відправки)';
     return el('div', {class:'sc-ai wait'}, head, el('p', {class:'note'}, t)); }
+  const prod = o => (o.products || []).map(x => el('div', {class:'sc-prod'}, '• ', el('b', {}, x.name), x.rate!=null ? ' — '+String(+x.rate).replace('.', ',')+' '+(x.unit || '') : '', x.in_stock===true ? el('span', {class:'pill ok'}, 'є на складі') : x.in_stock===false ? el('span', {class:'pill'}, 'купити') : '', x.need ? el('span', {class:'note'}, ' '+x.need) : ''));
   return el('div', {class:'sc-ai'}, head,
     el('p', {}, a.summary),
     el('div', {class:'note'}, [a.crop_seen, a.stage, a.condition && a.condition!=='не визначити' ? 'стан: '+a.condition : ''].filter(Boolean).join(' · ')),
@@ -2640,10 +2644,57 @@ function aiBlock(d){
       x.type+': '+x.what+(x.confidence==='припущення' ? ' (?)' : '')))) : '',
     a.history_link ? el('div', {class:'sc-ail'}, el('b', {}, 'З урахуванням історії поля: '), a.history_link) : '',
     (a.issues || []).some(x => x.causes) ? el('ul', {class:'sc-ain'}, a.issues.filter(x => x.causes).map(x => el('li', {}, el('b', {}, x.type+': '), x.causes))) : '',
-    (a.options || []).length ? el('div', {class:'sc-ail'}, el('b', {}, 'Варіанти заходів (рішення — за агрономом):'), el('ul', {class:'sc-ain'}, a.options.map(o => el('li', {}, el('b', {}, o.action), o.when ? ' — '+o.when : '', o.why ? '. '+o.why : '', o.risk ? el('span', {class:'note'}, ' Ризик: '+o.risk) : '')))) : '',
+    (a.options || []).length ? el('div', {class:'sc-ail'}, el('b', {}, 'Рекомендації (звірити з етикеткою; рішення — за агрономом):'), el('ul', {class:'sc-ain'}, a.options.map(o => el('li', {}, el('b', {}, o.action), o.why ? '. '+o.why : '', ...prod(o),
+      o.water_l_ha ? el('div', {class:'note'}, 'Робочий розчин: '+nf(o.water_l_ha)+' л/га') : '', o.when ? el('div', {}, '🕒 ', o.when) : '', o.risk ? el('div', {class:'note'}, 'Ризик: '+o.risk) : '')))) : '',
     a.photos_n > (a.used || []).length && (a.used || []).length ? el('div', {class:'note'}, 'Переглянуто всі '+a.photos_n+' фото, детально — '+a.used.length+' найінформативніших (позначені синім номером).') : '',
     (a.check || []).length ? el('div', {class:'note'}, el('b', {}, 'Перевірити: '), a.check.join('; ')) : '',
-    a.agrees_with_agronomist ? el('div', {class:'note'}, 'Зі словами агронома: '+a.agrees_with_agronomist) : '');
+    a.agrees_with_agronomist ? el('div', {class:'note'}, 'Зі словами агронома: '+a.agrees_with_agronomist) : '',
+    (a.revisions || []).length ? el('div', {class:'sc-ail'}, el('b', {}, 'Уточнення висновку: '), a.revisions.map(r => el('div', {}, ddmm(dt(toSerial(r.at.slice(0,10))))+': '+r.text))) : '',
+    reqBlock(d), chatBlock(d));
+}
+// --- питання Claude (чого не вистачає для висновку) і діалог під висновком
+const daysAgo = iso => Math.floor((Date.now() - new Date(iso).getTime()) / 864e5);
+const openReqs = d => ((d.ai || {}).data_requests || []).filter(q => !q.resolved);
+function qItem(d, q){
+  const ta = el('textarea', {placeholder:'Відповідь (можна надиктувати 🎙 з клавіатури)'}), age = q.at ? daysAgo(q.at) : 0;
+  const btn = el('button', {class:'btn small primary'}, 'Відповісти');
+  btn.addEventListener('click', () => sendChat(d, ta.value, q.n, btn));
+  return el('div', {class:'sc-q'+(age > 3 ? ' old' : '')}, el('div', {}, el('b', {}, '❓ '+q.q), el('span', {class:'note'}, ' → '+q.to+(q.kind ? ', '+q.kind : '')+(age ? ' · висить '+age+' дн.' : ''))), q.why ? el('div', {class:'note'}, 'Навіщо: '+q.why) : '', d.pending ? '' : [ta, btn]);
+}
+function reqBlock(d){
+  const all = (d.ai || {}).data_requests || []; if(!all.length) return '';
+  const op = all.filter(q => !q.resolved), done = all.filter(q => q.resolved);
+  return el('div', {class:'sc-ail'}, el('b', {}, 'Питання Claude ('+op.length+' відкрит.)'), ...op.map(q => qItem(d, q)),
+    done.length ? el('details', {}, el('summary', {class:'note'}, 'Закриті ('+done.length+')'), done.map(q => el('div', {class:'note'}, '✓ '+q.q+(q.answer ? ' — '+q.answer : '')))) : '');
+}
+function chatBlock(d){
+  if(d.pending || !d.path) return '';
+  const ch = d.chat || [], waiting = ch.length && ch[ch.length-1].role!=='claude';
+  const ta = el('textarea', {placeholder:'Питання до Claude по цьому полю (можна надиктувати 🎙 з клавіатури)'}), btn = el('button', {class:'btn small'}, 'Надіслати');
+  btn.addEventListener('click', () => sendChat(d, ta.value, null, btn));
+  return el('div', {class:'sc-chat'}, el('b', {class:'sc-ail'}, '💬 Діалог'),
+    ...ch.map(m => el('div', {class:'sc-msg '+(m.role==='claude' ? 'c' : 'h')}, el('b', {}, (m.role==='claude' ? '🤖 Claude' : (m.by || 'людина'))+': '), m.re ? el('span', {class:'note'}, '(відповідь на питання '+m.re+') ') : '', m.text)),
+    waiting ? el('p', {class:'note'}, 'Claude відповідає… (зазвичай 2–5 хв)') : '', ta, btn);
+}
+async function sendChat(d, text, re, btn){
+  text = (text || '').trim(); if(!text){ toast('Напишіть відповідь'); return; }
+  if(!navigator.onLine || !TOKEN){ toast('Потрібен інтернет'); return; }
+  btn.disabled = true;
+  try{
+    const cur = await getJSON(d.path) || d;
+    cur.chat = cur.chat || []; cur.chat.push({role:'human', by:LS.get('dl_name') || ROLE_NAMES[ROLE] || ROLE, at:new Date().toISOString(), text, ...(re ? {re} : {})});
+    await putJSON(d.path, cur, 'Діалог огляду: '+cur.field); SCOUTS[d.path] = cur;
+    toast('Надіслано — Claude відповість за кілька хвилин'); if(TAB==='scout') renderScList();
+  }catch(e){ toast('Не вдалося надіслати: '+e.message); btn.disabled = false; }
+}
+// нагадування: усі відкриті питання Claude; агроному — його, власнику — усі (старші 3 днів — червоні)
+function remindersBlock(){
+  const mine = q => ROLE==='o' || (ROLE==='a' ? q.to==='агроном' : false);
+  const items = Object.entries(SCOUTS).flatMap(([path, d]) => openReqs(d).filter(mine).map(q => ({d:{...d, path}, q}))).sort((x, y) => (x.q.at || '').localeCompare(y.q.at || ''));
+  if(!items.length) return '';
+  const old = items.filter(x => x.q.at && daysAgo(x.q.at) > 3).length;
+  return el('details', {class:'sc-rem', open:''}, el('summary', {}, el('b', {}, '🔔 Питання Claude без відповіді: '+items.length), old ? el('span', {class:'pill bad'}, old+' старші 3 днів') : ''),
+    items.map(x => el('div', {}, el('div', {class:'note'}, x.d.field+' · огляд '+ddmm(dt(toSerial(x.d.date)))), qItem(x.d, x.q))));
 }
 
 // --- фото і поруч опис (розшифровка голосу + текст)
@@ -2664,15 +2715,15 @@ function scoutBody(d){
     playBtn(v, lu(np+i)))));
   (d.videos || []).forEach(v => txt.push(el('div', {class:'sc-vt'}, v.status==='done' && v.text ? el('p', {}, '🎥 ', v.text) : el('p', {class:'note'}, v.status==='done' ? '🎥 У відео слів не розпізнано' : v.status==='error' ? '🎥 Звук відео не вдалося розшифрувати' : d.pending ? '🎥 Звук відео розшифрується після відправки' : '🎥 Розшифровую звук відео…'))));
   if(d.comment) txt.push(el('p', {}, d.comment));
-  if(np || (d.videos || []).length) txt.push(aiBlock(d));
+  if(np || (d.videos || []).length || d.ai || (!d.pending && (d.comment || (d.voice || []).length) && (d.date || '') >= '2026-11-19')) txt.push(aiBlock(d));
   if(!imgs.length && !txt.length) return '';
   return el('div', {class:'sc-body'+(imgs.length ? '' : ' noimg')}, imgs.length ? el('div', {class:'sc-gal'}, imgs) : '', txt.length ? el('div', {class:'sc-desc'}, txt) : '');
 }
 async function pollVoice(){   // розшифровки приходять зі сховища через кілька хвилин — підтягуємо, поки відкрито
   if(!navigator.onLine || !TOKEN) return;
-  const pend = Object.entries(SCOUTS).filter(([, d]) => [...(d.voice || []), ...(d.videos || [])].some(v => v.status==='pending') || (((d.photos || []).length || (d.videos || []).length) && !d.ai && !(AI_STATUS && AI_STATUS.key===false) && (d.date || '') >= '2026-11-19')); if(!pend.length) return;
+  const pend = Object.entries(SCOUTS).filter(([, d]) => [...(d.voice || []), ...(d.videos || [])].some(v => v.status==='pending') || (((d.photos || []).length || (d.videos || []).length) && !d.ai && !(AI_STATUS && AI_STATUS.key===false) && (d.date || '') >= '2026-11-19') || ((d.chat || []).length && d.chat[d.chat.length-1].role!=='claude')); if(!pend.length) return;
   let ch = false;
-  for(const [p] of pend){ try{ const d = await getJSON(p); if(d && (JSON.stringify(d.voice)!==JSON.stringify(SCOUTS[p].voice) || JSON.stringify(d.videos)!==JSON.stringify(SCOUTS[p].videos) || !!d.ai!==!!SCOUTS[p].ai)){ SCOUTS[p] = d; ch = true; } }catch(e){} }
+  for(const [p] of pend){ try{ const d = await getJSON(p); if(d && (JSON.stringify(d.voice)!==JSON.stringify(SCOUTS[p].voice) || JSON.stringify(d.videos)!==JSON.stringify(SCOUTS[p].videos) || !!d.ai!==!!SCOUTS[p].ai || (d.chat || []).length!==(SCOUTS[p].chat || []).length)){ SCOUTS[p] = d; ch = true; } }catch(e){} }
   if(ch){ if(TAB==='scout') renderScList(); if(TAB==='history') renderHistory(); if(TAB==='map' && MAPV.map) drawScoutPins(); }
 }
 setInterval(pollVoice, 60000);
@@ -2728,8 +2779,8 @@ function renderScList(){
   const box = $('#sc-list'); if(!box) return; box.replaceChildren();
   const list = allScouts().filter(d => d.season===YEAR && (!SCF || d.field===SCF));
   const fsel = $('#sc-field'); fsel.replaceChildren(el('option', {value:''}, 'усі'), ...REF.allFields.map(f => el('option', f.n===SCF ? {value:f.n, selected:''} : {value:f.n}, f.n)));
-  if(!list.length){ box.append(el('p', {class:'note'}, 'За сезон «урожай '+YEAR+'»'+(SCF ? ' по полю «'+SCF+'»' : '')+' оглядів ще немає. Натисніть «+ Новий огляд» прямо в полі — місце і поле визначаться за GPS.')); return; }
-  box.append(el('div', {class:'note'}, list.length+' огляд(и) · урожай '+YEAR), ...list.slice(0, 60).map(scoutCard));
+  if(!list.length){ box.append(remindersBlock(), el('p', {class:'note'}, 'За сезон «урожай '+YEAR+'»'+(SCF ? ' по полю «'+SCF+'»' : '')+' оглядів ще немає. Натисніть «+ Новий огляд» прямо в полі — місце і поле визначаться за GPS.')); return; }
+  box.append(remindersBlock(), el('div', {class:'note'}, list.length+' огляд(и) · урожай '+YEAR), ...list.slice(0, 60).map(scoutCard));
 }
 async function renderScouts(){ renderGpsPill(); pollVoice(); OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); renderScForm(); renderScList(); ensureGeo().catch(() => {}); if(OUTQ.length) flushScouts(); }
 $('#sc-new').addEventListener('click', newScout);
