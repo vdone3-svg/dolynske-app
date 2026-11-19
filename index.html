@@ -239,12 +239,17 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .mpop{display:grid;gap:3px;font:14px/1.35 var(--body)}.mpop b{font-size:15px}
 #map-legend{display:flex;flex-wrap:wrap;gap:6px 14px}.lg{display:inline-flex;align-items:center;gap:6px;font-size:13px}.lg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
 /* огляди */
+.vr-dlg{padding:10px;border:none;border-radius:12px;background:#000;max-width:100vw;width:min(720px,100vw)}.vr-dlg::backdrop{background:rgba(0,0,0,.9)}.vr-pv{width:100%;max-height:70vh;background:#111;border-radius:8px;display:block}
+.vr-bar{display:flex;gap:10px;align-items:center;margin:8px 0;color:#fff}.vr-go.rec{background:var(--bad);border-color:var(--bad)}
+.sc-vprev{width:150px;height:110px;object-fit:cover;border-radius:8px;background:#000}
+.sc-vt-tile{width:140px;height:105px;border-radius:7px;border:none;background:#1d2421;color:#fff;font-size:30px;display:grid;place-items:center;align-content:center;gap:2px;cursor:pointer}.sc-vt-tile span{font:600 12px var(--body)}.sc-vt-tile.wait{opacity:.5}
+
 .sc-ai{display:grid;gap:6px;padding:10px;border-radius:10px;background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent)}.sc-ai.wait{opacity:.8}
 .sc-aih{font:600 13px var(--body);color:var(--accent)}.sc-ai p{margin:0}.sc-ain{margin:0;padding-left:20px;font-size:13px;color:var(--muted)}
 .sc-thw{position:relative;margin:0;display:grid;gap:2px}.sc-thw figcaption{font-size:11px;line-height:1.25;color:var(--muted)}.sc-n.used{background:var(--accent)}.sc-ail{font-size:14px}.sc-ain li{margin:2px 0}.sc-more-ph{align-self:center}
 .sc-n{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.65);color:#fff;font:600 11px var(--body);border-radius:4px;padding:1px 5px}
 .sc-fieldline{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:16px}
-.sc-big{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.sc-bigbtn{flex-direction:column;min-height:84px;font-size:28px;gap:4px;justify-content:center}.sc-bigbtn span{font:600 14px var(--body)}
+.sc-big{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.sc-bigbtn{flex-direction:column;min-height:84px;font-size:28px;gap:4px;justify-content:center}.sc-bigbtn span{font:600 14px var(--body)}
 .sc-bigbtn.rec{background:var(--bad);border-color:var(--bad);color:#fff;animation:recp 1.2s infinite}@keyframes recp{50%{opacity:.75}}
 .sc-voices{display:grid;gap:6px}.sc-voice{display:flex;gap:8px;align-items:center}.sc-voice audio{height:36px;flex:1;min-width:0}
 .sc-text{width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}.sc-more{display:grid;gap:12px;padding:10px;border:1px dashed var(--line);border-radius:10px}
@@ -267,6 +272,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .sc-pop{width:220px;height:140px;object-fit:cover;border-radius:7px;margin-top:4px;cursor:zoom-in}
 dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialog.sc-full img{max-width:96vw;max-height:92vh;display:block;border-radius:8px}dialog.sc-full::backdrop{background:rgba(0,0,0,.8)}
 @media (max-width:600px){.sc-prob{grid-template-columns:1fr 90px}.sc-prob input:last-child{grid-column:1/-1}}
+@media (max-width:640px){.sc-big{grid-template-columns:repeat(2,1fr)}.sc-vt-tile{width:100%;height:120px}.sc-bigbtn{min-height:72px}}
 </style>
 </head>
 <body>
@@ -1184,7 +1190,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 AI-аналіз+історія';
+const APP_VER = '19.11 відео';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2344,8 +2350,9 @@ let FLUSHING = false;
 async function flushScouts(){
   if(FLUSHING || !TOKEN) return; FLUSHING = true;
   try{ for(const it of await OUTBOX.all()){
-      for(const ph of [...it.doc.photos, ...(it.doc.voice || [])]){ if(ph.done) continue; await putBin(ph.path, it.blobs[ph.k], (ph.dur!=null ? 'Голосова нотатка: ' : 'Фото огляду: ')+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); }
-      const doc = JSON.parse(JSON.stringify(it.doc)); [...doc.photos, ...(doc.voice || [])].forEach(p => { delete p.done; delete p.k; });
+      const parts = d => [...d.photos, ...(d.voice || []), ...(d.videos || []).flatMap(v => v.parts)];
+      for(const ph of parts(it.doc)){ if(ph.done) continue; await putBin(ph.path, it.blobs[ph.k], (ph.vpart ? 'Відео огляду (частина): ' : ph.dur!=null ? 'Голосова нотатка: ' : 'Фото огляду: ')+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); }
+      const doc = JSON.parse(JSON.stringify(it.doc)); parts(doc).forEach(p => { delete p.done; delete p.k; delete p.vpart; });
       await putJSON(it.path, doc, 'Огляд: '+doc.field+' '+doc.date+' ('+doc.author+', '+doc.by+')');
       SCOUTS[it.path] = doc; await OUTBOX.del(it.id);
       it.urls && it.urls.forEach(u => IMGC[u.path] = u.url); VPOLL = true;
@@ -2423,7 +2430,7 @@ async function renderGpsPill(){
 // --- форма
 async function newScout(){
   const date = isoNow().slice(0,10);
-  SC = {id: date.replace(/-/g,'')+'-'+isoNow().slice(11,19).replace(/:/g,'')+'-'+Math.random().toString(36).slice(2,6), date, field:'', season:+date.slice(0,4), crop:'', phase:'', state:'', problems:{}, density:'', forecast:'', comment:'', voice:[], sowOn:false, sow:{}, dc:{on:false, row:'', len:'10', counts:['', '', '']},
+  SC = {id: date.replace(/-/g,'')+'-'+isoNow().slice(11,19).replace(/:/g,'')+'-'+Math.random().toString(36).slice(2,6), date, field:'', season:+date.slice(0,4), crop:'', phase:'', state:'', problems:{}, density:'', forecast:'', comment:'', voice:[], videos:[], sowOn:false, sow:{}, dc:{on:false, row:'', len:'10', counts:['', '', '']},
     author: LS.get('dl_name') || '', gps:null, gpsMsg:'Визначаю місце…', photos:[]};
   renderScForm(); $('#sc-form').scrollIntoView({behavior:'smooth', block:'start'});
   try{ await ensureGeo(); }catch(e){}
@@ -2455,6 +2462,40 @@ async function addPhotos(files, fromCamera){
     renderScForm();
   }
 }
+// --- відео з поля: до 60 с, 720p, ≈1,2 Мбіт/с (≈9 МБ/хв); відправляється частинами по 3 МБ (обрив зв'язку — повтор лише частини)
+const VREC = {mr:null, stream:null, chunks:[], t0:0, timer:null, dlg:null, pos:null}, VMAX = 60; let VPART = 3*1048576;
+const vMime = () => ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+const vExt = m => /mp4/.test(m) ? 'mp4' : 'webm';
+async function vrecOpen(){
+  if(!window.MediaRecorder || !navigator.mediaDevices){ toast('Цей браузер не записує відео — оновіть браузер'); return; }
+  try{ VREC.stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:24, max:30}}, audio:{echoCancellation:true, noiseSuppression:true}}); }
+  catch(e){ toast(e.name==='NotAllowedError' ? 'Дозвольте камеру й мікрофон для цього сайту' : 'Камера недоступна: '+e.message); return; }
+  const pv = el('video', {autoplay:'', muted:'', playsinline:'', class:'vr-pv'}); pv.muted = true; pv.srcObject = VREC.stream;
+  const t = el('b', {id:'vr-t'}, '0:00 / 1:00'), go = el('button', {class:'btn primary vr-go'}, '● Почати запис');
+  const close = () => { VREC.stream && VREC.stream.getTracks().forEach(x => x.stop()); clearInterval(VREC.timer); VREC.mr = null; VREC.dlg && VREC.dlg.close(); VREC.dlg && VREC.dlg.remove(); VREC.dlg = null; renderScForm(); };
+  go.addEventListener('click', () => { if(VREC.mr){ VREC.mr.stop(); return; }
+    const mime = vMime(); VREC.chunks = []; VREC.mr = new MediaRecorder(VREC.stream, mime ? {mimeType:mime, videoBitsPerSecond:1200000, audioBitsPerSecond:48000} : {videoBitsPerSecond:1200000});
+    VREC.mr.ondataavailable = e => { if(e.data && e.data.size) VREC.chunks.push(e.data); };
+    VREC.mr.onstop = () => { const type = (VREC.mr && VREC.mr.mimeType) || mime || 'video/webm', blob = new Blob(VREC.chunks, {type}), dur = Math.round((Date.now()-VREC.t0)/1000), g = VREC.pos || (SC && SC.gps);
+      const r = g && fieldOfPoint(g);
+      if(SC && blob.size > 5000) SC.videos.push({blob, url:URL.createObjectURL(blob), dur, mime:type, at:isoNow(), lat:g ? g.lat : null, lon:g ? g.lon : null, acc:g ? g.acc : null, src:g ? 'phone' : null, field:r && (r.inside || r.m <= 150) ? r.field : null});
+      close(); };
+    VREC.mr.start(1000); VREC.t0 = Date.now(); VREC.pos = null; bestPos(5000, 25).then(p => VREC.pos = posObj(p)).catch(() => {});
+    go.textContent = '■ Зупинити'; go.classList.add('rec');
+    VREC.timer = setInterval(() => { const sec = Math.round((Date.now()-VREC.t0)/1000); t.textContent = mmss(sec)+' / 1:00'; if(sec >= VMAX && VREC.mr) VREC.mr.stop(); }, 300); });
+  VREC.dlg = el('dialog', {class:'vr-dlg'}, pv, el('div', {class:'vr-bar'}, go, t, el('button', {class:'btn ghost', onclick:() => { if(VREC.mr){ VREC.mr.onstop = null; VREC.mr.stop(); } close(); }}, 'Скасувати')),
+    el('div', {class:'note', style:'color:#ddd'}, 'Знімайте до 1 хв і коментуйте голосом — звук розшифрується, а кадри піде в AI-аналіз.'));
+  document.body.append(VREC.dlg); VREC.dlg.showModal();
+}
+async function videoUrl(v){   // зібрати відео з частин зі сховища
+  if(IMGC['v:'+v.parts[0].path]) return IMGC['v:'+v.parts[0].path];
+  const bs = []; for(const p of v.parts){ const r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+'/contents/'+enc(p.path)+'?ref='+GH.branch, {headers:{'Authorization':'Bearer '+TOKEN, 'Accept':'application/vnd.github.raw+json'}}); if(!r.ok) throw new Error('відео '+r.status); bs.push(await r.blob()); }
+  return IMGC['v:'+v.parts[0].path] = URL.createObjectURL(new Blob(bs, {type:v.mime || 'video/mp4'}));
+}
+function openVideo(u){ const d = el('dialog', {class:'sc-full'}, el('video', {src:u, controls:'', autoplay:'', playsinline:'', style:'max-width:96vw;max-height:88vh;display:block;border-radius:8px'}), el('button', {class:'btn', style:'margin-top:6px', onclick:() => { d.close(); d.remove(); }}, 'Закрити')); document.body.append(d); d.showModal(); }
+function videoTile(v, local){ const b = el('button', {class:'sc-vt-tile', title:'відео'}, '▶', el('span', {}, 'відео '+mmss(v.dur || 0)));
+  b.addEventListener('click', async () => { b.classList.add('wait'); try{ openVideo(local || await videoUrl(v)); }catch(e){ toast('Відео недоступне: '+e.message); } b.classList.remove('wait'); }); return b; }
+
 // --- голосова нотатка: запис на телефоні (працює без інтернету), розшифровка в текст — після відправки (Whisper у сховищі)
 const REC = {mr:null, chunks:[], t0:0, timer:null, stream:null};
 const recMime = () => ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
@@ -2539,10 +2580,14 @@ function renderScForm(){
       el('button', dis ? {class:'btn sc-bigbtn', disabled:''} : {class:'btn sc-bigbtn', onclick:() => cam.click()}, '📷', el('span', {}, 'Фото')),
       recOn ? el('button', {class:'btn sc-bigbtn rec', onclick:recStop}, '■', el('span', {}, 'Стоп ', el('b', {id:'sc-rec-t'}, '0:00')))
             : el('button', dis ? {class:'btn sc-bigbtn', disabled:''} : {class:'btn sc-bigbtn', onclick:recStart}, '🎙', el('span', {}, 'Надиктувати')),
+      el('button', dis ? {class:'btn sc-bigbtn', disabled:''} : {class:'btn sc-bigbtn', onclick:vrecOpen}, '🎥', el('span', {}, 'Відео')),
       el('button', dis ? {class:'btn sc-bigbtn ghost', disabled:''} : {class:'btn sc-bigbtn ghost', onclick:() => gal.click()}, '🖼', el('span', {}, 'З галереї')), cam, gal),
     dis ? el('div', {class:'note', style:'color:var(--bad)'}, wait ? 'Зачекайте кілька секунд — визначаю поле…' : 'Спершу виберіть поле або ввімкніть GPS') :
       el('div', {class:'note'}, 'Говоріть, що бачите: стан, фаза, проблеми, що робити. Запис розшифрується в текст автоматично після відправки.'),
     voices.length ? el('div', {class:'sc-voices'}, voices) : '',
+    SC.videos.length ? el('div', {class:'sc-phs'}, SC.videos.map(v => el('figure', {class:'sc-ph'}, el('video', {src:v.url, controls:'', playsinline:'', preload:'metadata', class:'sc-vprev'}),
+      el('figcaption', {}, '🎥 '+mmss(v.dur)+' · '+nf(v.blob.size/1048576, 1)+' МБ · '+(v.field ? 'GPS: «'+v.field+'»' : SC.field ? 'поле «'+SC.field+'»' : 'без поля')),
+      el('button', {class:'btn small ghost', 'aria-label':'видалити відео', onclick:() => { SC.videos = SC.videos.filter(x => x!==v); renderScForm(); }}, '✕')))) : '',
     thumbs.length ? el('div', {class:'sc-phs'}, thumbs) : '',
     el('div', {class:'toolbar', style:'margin:0'},
       el('button', {class:'chip', 'aria-pressed':String(!!SC.typeOn), onclick:() => { SC.typeOn = !SC.typeOn; renderScForm(); }}, 'Написати текстом'),
@@ -2550,7 +2595,7 @@ function renderScForm(){
     SC.typeOn ? el('textarea', {rows:3, class:'sc-text', placeholder:'що бачите, що рекомендуєте', on:{input: ev => SC.comment = ev.target.value}}, SC.comment) : '',
     SC.more ? el('div', {class:'sc-more'}, scExtra()) : '',
     el('div', {class:'toolbar', style:'margin:0'}, el('button', recOn ? {class:'btn primary', id:'sc-save', disabled:''} : {class:'btn primary', id:'sc-save', onclick:saveScout}, 'Зберегти огляд'),
-      el('button', {class:'btn ghost', onclick:() => { if((SC.photos.length || SC.voice.length) && !confirm('Скасувати огляд з фото/записами?')) return; recStop(); SC = null; renderScForm(); }}, 'Скасувати'),
+      el('button', {class:'btn ghost', onclick:() => { if((SC.photos.length || SC.voice.length || SC.videos.length) && !confirm('Скасувати огляд з фото/записами?')) return; recStop(); SC = null; renderScForm(); }}, 'Скасувати'),
       el('span', {class:'note', id:'sc-msg'}))));
   if(!$('#dl-crops-sc')) document.body.append(el('datalist', {id:'dl-crops-sc'}, (REF.crops || []).map(c => el('option', {value:c}))));
 }
@@ -2559,7 +2604,7 @@ async function saveScout(){
   if(!SC.field){ msg.textContent = 'Виберіть поле.'; return; }
   if(SC.photos.some(p => !p.blob && !p.bad)){ msg.textContent = 'Зачекайте — фото ще обробляються.'; return; }
   const extra = SC.state || SC.phase || Object.keys(SC.problems).length || SC.density!=='' || SC.forecast!=='' || Object.values(SC.sow).some(v => v!=='' && v!=null);
-  if(!SC.photos.length && !SC.voice.length && !SC.comment.trim() && !extra){ msg.textContent = 'Порожній огляд: зробіть фото або надиктуйте нотатку.'; return; }
+  if(!SC.photos.length && !SC.voice.length && !SC.videos.length && !SC.comment.trim() && !extra){ msg.textContent = 'Порожній огляд: зробіть фото, відео або надиктуйте нотатку.'; return; }
   if(SC.author) LS.set('dl_name', SC.author);
   const y = SC.date.slice(0,4), photos = SC.photos.filter(p => p.blob), np = photos.length;
   const doc = {kind:'scout', v:2, id:SC.id, date:SC.date, at:isoNow(), by:ROLE_NAMES[ROLE] || ROLE, author:SC.author || LS.get('dl_name') || ROLE_NAMES[ROLE], field:SC.field, season:SC.season, crop:SC.crop, phase:SC.phase, state:SC.state,
@@ -2569,8 +2614,11 @@ async function saveScout(){
     density: SC.density==='' ? null : +SC.density, forecast: SC.forecast==='' ? null : +SC.forecast, comment:SC.comment.trim(), gps:SC.gps ? {lat:SC.gps.lat, lon:SC.gps.lon, acc:SC.gps.acc, auto:SC.gps.auto || null, inside:!!SC.gps.inside, m:SC.gps.m ?? null} : null,
     photos: photos.map((p, i) => ({k:i, path:'media/'+y+'/'+SC.id+'-'+(i+1)+'.jpg', lat:p.lat, lon:p.lon, acc:p.acc, src:p.src || 'manual', field:p.field || SC.field, at:p.at, w:p.w, h:p.h, bytes:p.bytes})),
     voice: SC.voice.map((v, i) => ({k:np+i, path:'media/'+y+'/'+SC.id+'-v'+(i+1)+'.'+audExt(v.mime), mime:v.mime, dur:v.dur, at:v.at, bytes:v.blob.size, status:'pending', text:null}))};
-  const item = {id:SC.id, path:'scouts/'+y+'/'+SC.id+'.json', doc, blobs:[...photos.map(p => p.blob), ...SC.voice.map(v => v.blob)],
-    urls:[...photos.map((p, i) => ({path:doc.photos[i].path, url:p.url})), ...SC.voice.map((v, i) => ({path:doc.voice[i].path, url:v.url}))]};
+  const blobs = [...photos.map(p => p.blob), ...SC.voice.map(v => v.blob)];
+  doc.videos = SC.videos.map((v, i) => { const parts = []; for(let o = 0, n = 1; o < v.blob.size; o += VPART, n++){ parts.push({k:blobs.length, vpart:true, path:'media/'+y+'/'+SC.id+'-video'+(i+1)+'.'+vExt(v.mime)+'.part'+n}); blobs.push(v.blob.slice(o, o+VPART)); }
+    return {mime:v.mime, dur:v.dur, at:v.at, bytes:v.blob.size, lat:v.lat, lon:v.lon, acc:v.acc, src:v.src || 'manual', field:v.field || SC.field, parts, status:'pending', text:null}; });
+  const item = {id:SC.id, path:'scouts/'+y+'/'+SC.id+'.json', doc, blobs,
+    urls:[...photos.map((p, i) => ({path:doc.photos[i].path, url:p.url})), ...SC.voice.map((v, i) => ({path:doc.voice[i].path, url:v.url}))], vurls:SC.videos.map(v => v.url)};
   try{ await OUTBOX.put(item); }catch(e){ msg.textContent = 'Не вдалось зберегти на телефоні: '+e.message; return; }
   item.urls.forEach(u => IMGC[u.path] = u.url);
   SC = null; renderScForm(); OUTQ = await OUTBOX.all().catch(() => [item]); renderScQueue(); renderScList();
@@ -2600,7 +2648,7 @@ function aiBlock(d){
 
 // --- фото і поруч опис (розшифровка голосу + текст)
 let VPOLL = false;
-const voiceText = d => (d.voice || []).map(v => v.text).filter(Boolean).join(' ');
+const voiceText = d => [...(d.voice || []), ...(d.videos || [])].map(v => v.text).filter(Boolean).join(' ');
 function playBtn(v, local){ const b = el('button', {class:'btn small ghost'}, '▶ '+mmss(v.dur || 0));
   b.addEventListener('click', async () => { try{ const u = local || await photoUrl(v.path); const a = el('audio', {controls:'', src:u, autoplay:''}); b.replaceWith(a); }catch(e){ b.textContent = 'запис недоступний'; } }); return b; }
 function scoutBody(d){
@@ -2608,28 +2656,30 @@ function scoutBody(d){
   const notes = {}; ((d.ai || {}).photo_notes || []).forEach(x => notes[x.n] = x.text); const used = new Set((d.ai || {}).used || []);
   const all = d.photos.map((p, i) => el('figure', {class:'sc-thw'}, lu(i) ? el('img', {class:'sc-th', src:lu(i), alt:'фото', onclick:() => openPhoto(lu(i))}) : photoImg(p.path),
     np > 1 ? el('span', {class:'sc-n'+(used.has(i+1) ? ' used' : ''), title: used.has(i+1) ? 'AI розглянув у повній якості' : ''}, String(i+1)) : '', notes[i+1] ? el('figcaption', {}, notes[i+1]) : ''));
+  (d.videos || []).forEach((v, i) => all.unshift(el('figure', {class:'sc-thw'}, videoTile(v, d.pending && d.localV ? d.localV[i] : null))));
   const SHOW = 8, imgs = all.length > SHOW && !d._all ? [...all.slice(0, SHOW), el('button', {class:'btn small ghost sc-more-ph', onclick:ev => { d._all = true; const g = ev.target.closest('.sc-gal'); g.replaceChildren(...all); }}, 'Показати всі ('+all.length+')')] : all;
   const txt = [];
   (d.voice || []).forEach((v, i) => txt.push(el('div', {class:'sc-vt'},
     v.status==='done' && v.text ? el('p', {}, v.text) : el('p', {class:'note'}, v.status==='done' ? 'Слів не розпізнано — прослухайте запис' : v.status==='error' ? 'Не вдалося розшифрувати — прослухайте запис' : d.pending ? '🎙 Розшифрується після відправки' : '🎙 Розшифровується… (зазвичай 3–10 хв після відправки)'),
     playBtn(v, lu(np+i)))));
+  (d.videos || []).forEach(v => txt.push(el('div', {class:'sc-vt'}, v.status==='done' && v.text ? el('p', {}, '🎥 ', v.text) : el('p', {class:'note'}, v.status==='done' ? '🎥 У відео слів не розпізнано' : v.status==='error' ? '🎥 Звук відео не вдалося розшифрувати' : d.pending ? '🎥 Звук відео розшифрується після відправки' : '🎥 Розшифровую звук відео…'))));
   if(d.comment) txt.push(el('p', {}, d.comment));
-  if(np) txt.push(aiBlock(d));
+  if(np || (d.videos || []).length) txt.push(aiBlock(d));
   if(!imgs.length && !txt.length) return '';
   return el('div', {class:'sc-body'+(imgs.length ? '' : ' noimg')}, imgs.length ? el('div', {class:'sc-gal'}, imgs) : '', txt.length ? el('div', {class:'sc-desc'}, txt) : '');
 }
 async function pollVoice(){   // розшифровки приходять зі сховища через кілька хвилин — підтягуємо, поки відкрито
   if(!navigator.onLine || !TOKEN) return;
-  const pend = Object.entries(SCOUTS).filter(([, d]) => (d.voice || []).some(v => v.status==='pending') || ((d.photos || []).length && !d.ai && !(AI_STATUS && AI_STATUS.key===false) && (d.date || '') >= '2026-11-19')); if(!pend.length) return;
+  const pend = Object.entries(SCOUTS).filter(([, d]) => [...(d.voice || []), ...(d.videos || [])].some(v => v.status==='pending') || (((d.photos || []).length || (d.videos || []).length) && !d.ai && !(AI_STATUS && AI_STATUS.key===false) && (d.date || '') >= '2026-11-19')); if(!pend.length) return;
   let ch = false;
-  for(const [p] of pend){ try{ const d = await getJSON(p); if(d && (JSON.stringify(d.voice)!==JSON.stringify(SCOUTS[p].voice) || !!d.ai!==!!SCOUTS[p].ai)){ SCOUTS[p] = d; ch = true; } }catch(e){} }
+  for(const [p] of pend){ try{ const d = await getJSON(p); if(d && (JSON.stringify(d.voice)!==JSON.stringify(SCOUTS[p].voice) || JSON.stringify(d.videos)!==JSON.stringify(SCOUTS[p].videos) || !!d.ai!==!!SCOUTS[p].ai)){ SCOUTS[p] = d; ch = true; } }catch(e){} }
   if(ch){ if(TAB==='scout') renderScList(); if(TAB==='history') renderHistory(); if(TAB==='map' && MAPV.map) drawScoutPins(); }
 }
 setInterval(pollVoice, 60000);
 
 // --- список оглядів
 function allScouts(){ const sent = Object.entries(SCOUTS).map(([path, d]) => ({...d, path, pending:false}));
-  const pend = OUTQ.map(it => ({...it.doc, path:it.path, pending:true, localUrls:it.urls}));
+  const pend = OUTQ.map(it => ({...it.doc, path:it.path, pending:true, localUrls:it.urls, localV:it.vurls}));
   const ids = new Set(sent.map(d => d.id)); return [...sent, ...pend.filter(d => !ids.has(d.id))].sort((a, b) => (b.at || '').localeCompare(a.at || '')); }
 function scoutCard(d){
   const st = SC_STATE.find(s => s[0]===d.state);
@@ -2691,7 +2741,7 @@ function drawScoutPins(){
   if(!MAPV.map) return; if(MAPV.scL) MAPV.scL.remove(); if(!MAPV.showSc) return;
   const g = L.layerGroup(); let focus = null;
   allScouts().filter(d => d.season===YEAR).forEach(d => {
-    const pts = d.photos.map((p, i) => p.lat ? {lat:p.lat, lon:p.lon, i} : null).filter(Boolean); if(!pts.length && d.gps) pts.push({lat:d.gps.lat, lon:d.gps.lon, i:null});
+    const pts = d.photos.map((p, i) => p.lat ? {lat:p.lat, lon:p.lon, i} : null).filter(Boolean); (d.videos || []).forEach(v => { if(v.lat) pts.push({lat:v.lat, lon:v.lon, i:null, v}); }); if(!pts.length && d.gps) pts.push({lat:d.gps.lat, lon:d.gps.lon, i:null});
     pts.forEach(p => {
       const m = L.circleMarker([p.lat, p.lon], {radius:p.i==null ? 6 : 8, weight:2, color:'#fff', fillColor:SC_COL[d.state] || '#2f5d8a', fillOpacity:1});
       m.bindPopup(() => { const b = el('div', {class:'mpop'}, el('b', {}, d.field+' · '+ddmm(dt(toSerial(d.date)))), el('div', {class:'note'}, [d.author, d.phase, (SC_STATE.find(s => s[0]===d.state) || [,''])[1]].filter(Boolean).join(' · ')));
