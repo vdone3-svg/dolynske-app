@@ -239,6 +239,8 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .mpop{display:grid;gap:3px;font:14px/1.35 var(--body)}.mpop b{font-size:15px}
 #map-legend{display:flex;flex-wrap:wrap;gap:6px 14px}.lg{display:inline-flex;align-items:center;gap:6px;font-size:13px}.lg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
 /* огляди */
+.sc-gpswarn{display:grid;gap:8px;padding:12px;border-radius:10px;border:2px solid var(--bad);background:color-mix(in srgb,var(--bad) 8%,transparent)}.sc-gpswarn.ok{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 8%,transparent)}
+.sc-help ol{margin:0;padding-left:20px;display:grid;gap:4px;font-size:14px}.btn[disabled]{opacity:.45;cursor:not-allowed}
 .sc-dc{display:grid;gap:8px;padding:10px;border:1px dashed var(--line);border-radius:10px}.sc-dc-pts{display:flex;flex-wrap:wrap;gap:8px}.sc-dc-pts input{width:92px}
 .sc-form{display:grid;gap:12px;border-color:var(--accent)}
 .sc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
@@ -426,7 +428,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <div class="toolbar"><h2 style="margin:0">Огляди полів</h2>
         <button class="btn primary" id="sc-new">+ Новий огляд</button>
         <label class="note" for="sc-field">Поле</label><select id="sc-field"><option value="">усі</option></select>
-        <span class="note" id="sc-queue"></span></div>
+        <span class="pill" id="sc-gps"></span><span class="note" id="sc-queue"></span></div>
       <div id="sc-form"></div>
       <div id="sc-list" class="sc-list"></div>
     </section>
@@ -1169,7 +1171,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 офлайн';
+const APP_VER = '19.11 GPS-контроль';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2278,11 +2280,11 @@ async function ensureGeo(){ if(!MAPV.geo){ MAPV.geo = await getJSON('geo/fields.
 
 // --- GPS: найточніша позиція за кілька секунд
 function bestPos(ms=12000, good=20){ return new Promise((ok, no) => {
-  if(!navigator.geolocation) return no(new Error('Телефон не дає координати'));
+  if(!navigator.geolocation){ const x = new Error('Телефон не дає координати'); x.code = 9; return no(x); }
   let best = null, id = null, t = null;
-  const fin = () => { if(id!=null) navigator.geolocation.clearWatch(id); clearTimeout(t); best ? ok(best) : no(new Error('Немає сигналу GPS')); };
+  const fin = () => { if(id!=null) navigator.geolocation.clearWatch(id); clearTimeout(t); if(best) return ok(best); const x = new Error('Слабкий сигнал GPS'); x.code = 3; no(x); };
   id = navigator.geolocation.watchPosition(p => { if(!best || p.coords.accuracy < best.coords.accuracy) best = p; if(p.coords.accuracy <= good) fin(); },
-    e => { if(!best){ navigator.geolocation.clearWatch(id); clearTimeout(t); no(new Error(e.code===1 ? 'Дозвольте доступ до геопозиції для цього сайту' : 'GPS: '+e.message)); } },
+    e => { if(!best){ navigator.geolocation.clearWatch(id); clearTimeout(t); const x = new Error(e.code===1 ? 'GPS вимкнено або заборонено для цього сайту' : 'Слабкий сигнал GPS'); x.code = e.code; no(x); } },
     {enableHighAccuracy:true, maximumAge:3000, timeout:ms});
   t = setTimeout(fin, ms); }); }
 const posObj = p => p ? {lat:+p.coords.latitude.toFixed(6), lon:+p.coords.longitude.toFixed(6), acc:Math.round(p.coords.accuracy)} : null;
@@ -2387,6 +2389,23 @@ function densityCalcBox(){
   setTimeout(upd, 0); return box;
 }
 
+// --- стан GPS: індикатор на вкладці «Огляди» і підказка, як увімкнути
+let GPS_OK = null;
+function gpsHelp(){ const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  return el('div', {class:'sc-help'}, ios
+    ? el('ol', {}, el('li', {}, 'Налаштування → Конфіденційність і безпека → Служби локації — увімкнути.'), el('li', {}, 'Там же: Safari (або ваш браузер) → «Під час використання», «Точна геопозиція» — увімкнути.'),
+        el('li', {}, 'У Safari: «аА» зліва в адресному рядку → Параметри веб-сайту → Геопозиція → Дозволити.'), el('li', {}, 'Повернутись сюди й натиснути «Я ввімкнув GPS — спробувати знову».'))
+    : el('ol', {}, el('li', {}, 'Опустити шторку зверху і ввімкнути «Місцезнаходження» (Геодані).'), el('li', {}, 'У Chrome: значок ліворуч від адреси сайту → Дозволи → Місцезнаходження → Дозволити.'),
+        el('li', {}, 'Налаштування телефона → Місцезнаходження → «Точне визначення» / «Підвищена точність» — увімкнути.'), el('li', {}, 'Повернутись сюди й натиснути «Я ввімкнув GPS — спробувати знову».'))); }
+async function renderGpsPill(){
+  const b = $('#sc-gps'); if(!b) return;
+  let st = GPS_OK===true ? 'ok' : GPS_OK===false ? 'off' : null;
+  if(st===null && navigator.permissions){ try{ const p = await navigator.permissions.query({name:'geolocation'}); st = p.state==='granted' ? 'ok' : p.state==='denied' ? 'off' : 'ask'; if(!p._dl){ p._dl = 1; p.onchange = () => { GPS_OK = null; renderGpsPill(); }; } }catch(e){} }
+  if(!navigator.geolocation) st = 'off';
+  b.className = 'pill '+(st==='ok' ? 'ok' : st==='off' ? 'bad' : '');
+  b.textContent = st==='ok' ? 'GPS увімкнено' : st==='off' ? 'GPS вимкнено — фото без точки на карті' : 'GPS: дозвольте доступ при першому огляді';
+}
+
 // --- форма
 async function newScout(){
   const date = isoNow().slice(0,10);
@@ -2397,13 +2416,13 @@ async function newScout(){
   locateScout();
 }
 async function locateScout(){
-  SC.gpsMsg = 'Визначаю місце…'; renderScForm();
-  try{ const g = posObj(await bestPos()); SC.gps = g; const r = fieldOfPoint(g);
+  SC.gpsMsg = 'Визначаю місце…'; SC.gpsState = 'wait'; renderScForm();
+  try{ const g = posObj(await bestPos()); if(!SC) return; SC.gps = g; SC.gpsState = 'ok'; GPS_OK = true; renderGpsPill(); const r = fieldOfPoint(g);
     if(r){ SC.gps.auto = r.field; SC.gps.inside = r.inside; SC.gps.m = r.m;
       if(r.inside || r.m <= 150){ if(!SC.field || SC.fieldAuto){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); } }
       SC.gpsMsg = r.inside ? 'Ви на полі «'+r.field+'» (±'+g.acc+' м)' : 'Поза контурами: найближче «'+r.field+'», '+r.m+' м від межі (±'+g.acc+' м)'+(r.m > 150 ? ' — виберіть поле' : ' — перевірте поле'); }
     else SC.gpsMsg = 'Координати є (±'+g.acc+' м), контури полів не завантажились — виберіть поле';
-  }catch(e){ SC.gpsMsg = e.message+' — виберіть поле вручну'; }
+  }catch(e){ if(!SC) return; SC.gpsState = e.code===1 || e.code===9 ? 'off' : 'weak'; SC.gpsMsg = e.message; GPS_OK = false; renderGpsPill(); }
   if(SC) renderScForm();
 }
 function scFieldChanged(){ SC.season = scSeason(SC.field, SC.date); SC.crop = scCrop(SC.field, SC.season); if(!scPhases(SC.crop.split(' / ')[0]).includes(SC.phase)) SC.phase = ''; }
@@ -2416,7 +2435,7 @@ async function addPhotos(files, fromCamera){
       const {blob, w, h} = await shrink(file);
       Object.assign(ph, {blob, w, h, bytes:blob.size, url:URL.createObjectURL(blob), lat:g ? g.lat : null, lon:g ? g.lon : null, acc:g ? g.acc : null, src});
       const r = g && fieldOfPoint(g); ph.field = r ? r.field : null; ph.inside = r ? r.inside : false; ph.m = r ? r.m : null;
-      ph.status = !g ? 'без координат — прив’яжеться до вибраного поля' : r && r.inside ? 'GPS: «'+r.field+'»' : r ? 'GPS: '+r.m+' м від «'+r.field+'»' : 'GPS є';
+      ph.status = !g ? '' : r && r.inside ? 'GPS: «'+r.field+'»' : r ? 'GPS: '+r.m+' м від «'+r.field+'»' : 'GPS є';
       if(!SC.field && r && (r.inside || r.m <= 150)){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); }
     }catch(e){ ph.status = e.message; ph.bad = true; }
     renderScForm();
@@ -2434,12 +2453,25 @@ function renderScForm(){
     el('input', {type:'number', inputmode:'decimal', min:0, max:100, placeholder:'% ураження', value:p.pct, on:{input: ev => p.pct = ev.target.value}}),
     el('input', {placeholder:'уточнення (вид, де саме)', value:p.note, on:{input: ev => p.note = ev.target.value}})));
   const thumbs = SC.photos.map(ph => el('figure', {class:'sc-ph'+(ph.bad ? ' bad' : '')}, ph.url ? el('img', {src:ph.url, alt:'фото'}) : el('div', {class:'sc-ph-wait'}, '…'),
-    el('figcaption', {}, ph.status), el('button', {class:'btn small ghost', 'aria-label':'прибрати фото', onclick:() => { SC.photos = SC.photos.filter(x => x!==ph); renderScForm(); }}, '✕')));
+    el('figcaption', {}, ph.status || (ph.blob ? (SC.field ? 'без GPS-точки → поле «'+SC.field+'»' : 'без GPS-точки — виберіть поле') : '')), el('button', {class:'btn small ghost', 'aria-label':'прибрати фото', onclick:() => { SC.photos = SC.photos.filter(x => x!==ph); renderScForm(); }}, '✕')));
+  const noGps = SC.gpsState==='off' || SC.gpsState==='weak', lock = noGps && !SC.field;
+  const gpsBox = !noGps ? '' : el('div', {class:'sc-gpswarn'+(SC.field ? ' ok' : '')},
+    el('b', {}, SC.gpsState==='off' ? '⚠ GPS вимкнено — фото не отримають точку на карті' : '⚠ Слабкий сигнал GPS — місце не визначено'),
+    SC.field ? el('div', {}, 'Поле вибрано вручну: «'+SC.field+'». Усі фото цього огляду прив’яжуться до нього (без точки на карті).')
+             : el('div', {}, 'Щоб фото не залишились без поля, зробіть одне з двох:'),
+    el('div', {class:'toolbar', style:'margin:0'},
+      SC.field ? '' : el('select', {'aria-label':'Вибрати поле вручну', style:'max-width:240px;border:2px solid var(--accent)', on:{change: ev => { SC.field = ev.target.value; SC.fieldAuto = false; scFieldChanged(); renderScForm(); }}},
+        el('option', {value:''}, 'Вибрати поле вручну…'), REF.fields.map(f => el('option', {value:f.n}, f.n))),
+      el('button', {class:'btn small', onclick:locateScout}, SC.gpsState==='off' ? 'Я ввімкнув GPS — спробувати знову' : 'Спробувати ще раз'),
+      SC.gpsState==='off' ? el('button', {class:'btn small ghost', onclick:() => { SC.gpsHelp = !SC.gpsHelp; renderScForm(); }}, 'Як увімкнути GPS') : ''),
+    SC.gpsHelp ? gpsHelp() : '',
+    SC.gpsState==='weak' ? el('div', {class:'note'}, 'Без інтернету телефон може шукати супутники до 1 хв. Відійдіть від техніки й будівель, зачекайте і натисніть «Спробувати ще раз».') : '');
   const cam = el('input', {type:'file', accept:'image/*', capture:'environment', multiple:'', hidden:'', on:{change: ev => { addPhotos([...ev.target.files], true); ev.target.value = ''; }}});
   const gal = el('input', {type:'file', accept:'image/*', multiple:'', hidden:'', on:{change: ev => { addPhotos([...ev.target.files], false); ev.target.value = ''; }}});
   const num = (lbl, key, ph) => el('label', {class:'sc-f'}, el('span', {class:'note'}, lbl), el('input', {type:'number', inputmode:'decimal', placeholder:ph, value:SC[key], on:{input: ev => SC[key] = ev.target.value}}));
   box.append(el('div', {class:'card sc-form'},
     el('div', {class:'toolbar', style:'margin:0'}, el('h3', {style:'margin:0'}, 'Новий огляд · '+SC.date), el('span', {class:'note'}, SC.gpsMsg), el('button', {class:'btn small', onclick:locateScout}, 'Оновити місце')),
+    gpsBox,
     el('div', {class:'sc-grid'},
       el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Поле'), sel('sc-f-field', fopts, SC.field, v => { SC.field = v; SC.fieldAuto = false; scFieldChanged(); renderScForm(); })),
       el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Сезон'), sel('sc-f-season', yrs.map(y => [String(y), 'урожай '+y]), String(SC.season), v => { SC.season = +v; SC.crop = scCrop(SC.field, SC.season); renderScForm(); })),
@@ -2460,8 +2492,8 @@ function renderScForm(){
       el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Хто оглядає'), el('input', {value:SC.author, placeholder:'ім’я', on:{input: ev => SC.author = ev.target.value}}))),
     SC.dc.on ? densityCalcBox() : '',
     el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Коментар'), el('textarea', {rows:3, placeholder:'що бачите, що рекомендуєте', on:{input: ev => SC.comment = ev.target.value}}, SC.comment)),
-    el('div', {class:'toolbar', style:'margin:0'}, el('button', {class:'btn', onclick:() => cam.click()}, '📷 Сфотографувати'), el('button', {class:'btn ghost', onclick:() => gal.click()}, 'З галереї'), cam, gal,
-      el('span', {class:'note'}, SC.photos.length ? SC.photos.length+' фото' : 'Фото з камери отримують точку на карті автоматично')),
+    el('div', {class:'toolbar', style:'margin:0'}, el('button', lock ? {class:'btn', disabled:''} : {class:'btn', onclick:() => cam.click()}, '📷 Сфотографувати'), el('button', lock ? {class:'btn ghost', disabled:''} : {class:'btn ghost', onclick:() => gal.click()}, 'З галереї'), cam, gal,
+      el('span', {class:'note', style: lock ? 'color:var(--bad)' : ''}, lock ? 'Спершу ввімкніть GPS або виберіть поле вручну' : SC.photos.length ? SC.photos.length+' фото' : noGps ? 'Фото прив’яжуться до поля «'+SC.field+'»' : 'Фото з камери отримують точку на карті автоматично')),
     thumbs.length ? el('div', {class:'sc-phs'}, thumbs) : '',
     el('div', {class:'toolbar', style:'margin:0'}, el('button', {class:'btn primary', id:'sc-save', onclick:saveScout}, 'Зберегти огляд'), el('button', {class:'btn ghost', onclick:() => { if(SC.photos.length && !confirm('Скасувати огляд з фото?')) return; SC = null; renderScForm(); }}, 'Скасувати'),
       el('span', {class:'note', id:'sc-msg'}))));
@@ -2479,7 +2511,7 @@ async function saveScout(){
     sow: (() => { const w = {}; SOW_F.forEach(([k]) => { const v = SC.sow[k]; if(v!=='' && v!=null && isFinite(+v)) w[k] = +v; }); return Object.keys(w).length ? w : null; })(),
     density_calc: SC.dc.on && dcCalc() ? {row:dcRow(), len:+SC.dc.len, counts:SC.dc.counts.filter(v => v!=='').map(Number)} : null,
     density: SC.density==='' ? null : +SC.density, forecast: SC.forecast==='' ? null : +SC.forecast, comment:SC.comment.trim(), gps:SC.gps ? {lat:SC.gps.lat, lon:SC.gps.lon, acc:SC.gps.acc, auto:SC.gps.auto || null, inside:!!SC.gps.inside, m:SC.gps.m ?? null} : null,
-    photos: photos.map((p, i) => ({k:i, path:'media/'+y+'/'+SC.id+'-'+(i+1)+'.jpg', lat:p.lat, lon:p.lon, acc:p.acc, src:p.src, field:p.field, at:p.at, w:p.w, h:p.h, bytes:p.bytes}))};
+    photos: photos.map((p, i) => ({k:i, path:'media/'+y+'/'+SC.id+'-'+(i+1)+'.jpg', lat:p.lat, lon:p.lon, acc:p.acc, src:p.src || 'manual', field:p.field || SC.field, at:p.at, w:p.w, h:p.h, bytes:p.bytes}))};
   const item = {id:SC.id, path:'scouts/'+y+'/'+SC.id+'.json', doc, blobs:photos.map(p => p.blob), urls:photos.map((p, i) => ({path:doc.photos[i].path, url:p.url}))};
   try{ await OUTBOX.put(item); }catch(e){ msg.textContent = 'Не вдалось зберегти на телефоні: '+e.message; return; }
   photos.forEach((p, i) => IMGC[doc.photos[i].path] = p.url);
@@ -2544,7 +2576,7 @@ function renderScList(){
   if(!list.length){ box.append(el('p', {class:'note'}, 'За сезон «урожай '+YEAR+'»'+(SCF ? ' по полю «'+SCF+'»' : '')+' оглядів ще немає. Натисніть «+ Новий огляд» прямо в полі — місце і поле визначаться за GPS.')); return; }
   box.append(el('div', {class:'note'}, list.length+' огляд(и) · урожай '+YEAR), ...list.slice(0, 60).map(scoutCard));
 }
-async function renderScouts(){ OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); renderScForm(); renderScList(); ensureGeo().catch(() => {}); if(OUTQ.length) flushScouts(); }
+async function renderScouts(){ renderGpsPill(); OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); renderScForm(); renderScList(); ensureGeo().catch(() => {}); if(OUTQ.length) flushScouts(); }
 $('#sc-new').addEventListener('click', newScout);
 $('#sc-field').addEventListener('change', ev => { SCF = ev.target.value; renderScList(); });
 
