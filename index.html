@@ -971,8 +971,8 @@ function drawAgro(){
 }
 
 // ---------- ІСТОРІЯ ПОЛЯ: усе, що робилося на полі, з щоденних записів
-const HGROUPS = [['', 'Усі'], ['Обробіток ґрунту','Обробіток'], ['Посів','Посів'], ['Внесення добрив','Добрива'], ['Захист рослин','ЗЗР'], ['Догляд','Догляд'], ['Збирання','Збирання'], ['Інше','Інше']];
-const HCOL = {'Обробіток ґрунту':'#8c6d46', 'Посів':'#2f8f5b', 'Внесення добрив':'#3b6fb6', 'Захист рослин':'#c2410c', 'Догляд':'#7c5cc4', 'Збирання':'#c89211', 'Інше':'#8a8a8a'};
+const HGROUPS = [['', 'Усі'], ['Обробіток ґрунту','Обробіток'], ['Посів','Посів'], ['Внесення добрив','Добрива'], ['Захист рослин','ЗЗР'], ['Догляд','Догляд'], ['Збирання','Збирання'], ['Огляд','Огляди'], ['Інше','Інше']];
+const HCOL = {'Обробіток ґрунту':'#8c6d46', 'Посів':'#2f8f5b', 'Внесення добрив':'#3b6fb6', 'Захист рослин':'#c2410c', 'Догляд':'#7c5cc4', 'Збирання':'#c89211', 'Огляд':'#0f766e', 'Інше':'#8a8a8a'};
 const APPL_G = op => /Посів/.test(op) ? 'Посів' : (/Обприск/.test(op) ? 'Захист рослин' : 'Внесення добрив');
 let HF = null, HY = null, HG = '';
 const ddmm = d => String(d.d).padStart(2,'0')+'.'+String(d.m).padStart(2,'0')+'.'+String(d.y).slice(2);
@@ -983,7 +983,8 @@ function renderHistory(){
   const fs = $('#h-field'); fs.replaceChildren(...names.map(n => el('option', n===HF ? {value:n, selected:''} : {value:n}, n+(FIELD[n] ? ' · '+FIELD[n].ha+' га' : ''))));
   fs.onchange = ev => { HF = ev.target.value; renderHistory(); };
   const onF = x => x.f===HF;
-  const years = [...new Set([...M.fields.filter(onF), ...M.works.filter(onF), ...M.appl.filter(onF), ...M.harv.filter(onF)].map(x => x.y))].sort((a, b) => b-a);
+  const fScouts = allScouts().filter(d => d.field===HF);
+  const years = [...new Set([...M.fields.filter(onF), ...M.works.filter(onF), ...M.appl.filter(onF), ...M.harv.filter(onF)].map(x => x.y).concat(fScouts.map(d => d.season)))].sort((a, b) => b-a);
   const now = (() => { const t = new Date(); return t.getFullYear()+(t.getMonth()>=7 ? 1 : 0); })();
   if(HY!=='all' && !years.includes(HY)) HY = years.includes(now) ? now : (years[0] ?? now);
   const ys = $('#h-year'); ys.replaceChildren(...years.map(y => el('option', y===HY ? {value:y, selected:''} : {value:y}, 'урожай '+y)), el('option', HY==='all' ? {value:'all', selected:''} : {value:'all'}, 'усі роки'));
@@ -993,6 +994,7 @@ function renderHistory(){
   (HY==='all' ? years : [HY]).forEach(y => {
     body.append(el('div', {class:'hhead'}, el('h3', {}, 'Сезон — урожай '+y)));
     M.fields.filter(p => p.f===HF && p.y===y).forEach(p => body.append(seasonCard(p)));
+    const ss = fScouts.filter(d => d.season===y); if(ss.length) body.append(scoutSummary(ss));
     body.append(timeline(y));
   });
 }
@@ -1048,11 +1050,13 @@ function timeline(y){
     const hum = v.find(h => h.hum!=null), wst = d3.sum(v, h => h.waste);
     ev.push({n, d:v[0].d, g:'Збирання', op: kg ? (mix ? 'Зерно на склад — частка з «кількох полів»' : 'Зерно на склад (після ЗАВ)') : 'Косіння', c:[...new Set(v.map(h => h.c))].join('/'), harv:{kg, ha:cut ? 0 : ha, hum:hum ? hum.hum : null, wst, mix}, mats:[]});
   });
+  allScouts().filter(d => d.field===HF && d.season===y).forEach(d => { const n = toSerial(d.date); ev.push({n, d:dt(n), g:'Огляд', op:'Огляд — '+d.author+(d.author!==d.by ? ' ('+d.by+')' : ''), scout:d, mats:[]}); });
   const list = ev.filter(e => !HG || e.g===HG).sort((a, b) => a.n-b.n || (a.harv ? 1 : 0)-(b.harv ? 1 : 0));
   if(!list.length) return el('p', {class:'note'}, HG ? 'Записів цього типу за сезон немає.' : 'Записів за сезон немає.');
   return el('div', {class:'tl'}, list.map(e => {
     const sub = [];
-    if(e.harv){ const h = e.harv;
+    if(e.scout) sub.push(...scoutLines(e.scout));
+    else if(e.harv){ const h = e.harv;
       sub.push(el('div', {class:'sub'}, h.ha ? 'Скошено '+nf(h.ha, 1)+' га' : '', h.ha && h.kg ? ' · ' : '', h.kg ? el('b', {}, nf(h.kg/1000, 2)+' т') : '',
         h.hum!=null ? ' · вологість '+nf(h.hum, 1)+'%' : '', h.wst ? ' · відходи '+nf(h.wst/1000, 2)+' т' : '', h.mix ? ' · розподілено пропорційно скошеним га' : ''));
     } else {
@@ -1163,7 +1167,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 огляди';
+const APP_VER = '19.11 історія+огляди';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2420,6 +2424,28 @@ function scoutCard(d){
     imgs.length ? el('div', {class:'sc-thumbs'}, imgs) : '',
     (d.gps || d.photos.some(p => p.lat)) ? el('button', {class:'btn small ghost', style:'justify-self:start', onclick:() => { MAPV.focus = d.id; location.hash = 'map'; }}, 'На карті') : '');
 }
+function scoutLines(d){
+  const st = SC_STATE.find(s => s[0]===d.state), out = [];
+  out.push(el('div', {class:'sub'}, [d.phase, d.density!=null ? 'густота '+nf(d.density)+' тис./га' : '', d.forecast!=null ? 'прогноз '+nf(d.forecast)+' ц/га' : ''].filter(Boolean).join(' · '), st ? el('span', {class:'pill '+st[2], style:'margin-left:6px'}, st[1]) : '', d.pending ? el('span', {class:'pill', style:'margin-left:6px'}, 'очікує відправки') : ''));
+  if(d.problems.length) out.push(el('div', {class:'mats'}, d.problems.map(p => el('span', {style:'color:var(--bad)'}, p.t+(p.pct!=null ? ' '+p.pct+'%' : '')+(p.note ? ' — '+p.note : '')))));
+  if(d.comment) out.push(el('div', {class:'sub', style:'color:var(--ink)'}, d.comment));
+  if(d.photos.length) out.push(el('div', {class:'sc-thumbs', style:'margin-top:4px'}, d.photos.map((p, i) => d.pending && d.localUrls && d.localUrls[i] ? el('img', {class:'sc-th', src:d.localUrls[i].url, alt:'фото', onclick:() => openPhoto(d.localUrls[i].url)}) : photoImg(p.path))));
+  if(d.gps || d.photos.some(p => p.lat)) out.push(el('button', {class:'btn small ghost', style:'margin-top:4px', onclick:() => { MAPV.focus = d.id; location.hash = 'map'; }}, 'На карті'));
+  return out;
+}
+function scoutSummary(ss){   // останній стан поля за оглядами сезону
+  const last = ss[0], probs = d3.rollups(ss.flatMap(d => d.problems), v => d3.max(v, p => p.pct), p => p.t);
+  const st = SC_STATE.find(s => s[0]===last.state), fc = ss.find(d => d.forecast!=null), dn = ss.find(d => d.density!=null);
+  const kpi = (a, b, c) => el('div', {class:'kpi'}, el('span', {class:'note'}, a), el('b', {}, b), c ? el('div', {class:'note'}, c) : '');
+  return el('div', {class:'card', style:'margin:8px 0;border-left:4px solid #0f766e'},
+    el('div', {}, el('b', {}, 'Огляди сезону: '+ss.length), el('span', {class:'note'}, ' · останній '+ddmm(dt(toSerial(last.date)))+', '+last.author)),
+    el('div', {class:'hsum', style:'grid-template-columns:repeat(auto-fit,minmax(130px,1fr))'},
+      kpi('Фаза', last.phase || '—', last.crop || ''), kpi('Стан', st ? st[1] : '—', ''),
+      kpi('Густота', dn ? nf(dn.density)+' тис./га' : '—', dn ? 'огляд '+ddmm(dt(toSerial(dn.date))) : ''),
+      kpi('Прогноз', fc ? nf(fc.forecast)+' ц/га' : '—', fc ? 'огляд '+ddmm(dt(toSerial(fc.date))) : ''),
+      kpi('Проблеми', probs.length ? String(probs.length) : 'немає', probs.map(([t, m]) => t+(m!=null ? ' до '+m+'%' : '')).join(', ')),
+      kpi('Фото', String(d3.sum(ss, d => d.photos.length)), '')));
+}
 function renderScList(){
   const box = $('#sc-list'); if(!box) return; box.replaceChildren();
   const list = allScouts().filter(d => d.season===YEAR && (!SCF || d.field===SCF));
@@ -2474,6 +2500,7 @@ async function start(){
   YEAR = MODEL.years.includes(new Date().getFullYear()) ? new Date().getFullYear() : d3.max(MODEL.years);
   $('#src-line').textContent = 'ТОВ «Долинське» · дані з приватного сховища · версія '+APP_VER;
   openDay(); showTab(location.hash.slice(1) || 'day');
+  OUTBOX.all().then(q => { OUTQ = q; if(q.length){ renderScQueue(); flushScouts(); } }).catch(() => {});
 }
 if(TOKEN) start(); else showLogin();
 // ---------- нова версія застосунку: браузер міг показати стару збережену копію сторінки
