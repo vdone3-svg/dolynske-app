@@ -239,6 +239,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .mpop{display:grid;gap:3px;font:14px/1.35 var(--body)}.mpop b{font-size:15px}
 #map-legend{display:flex;flex-wrap:wrap;gap:6px 14px}.lg{display:inline-flex;align-items:center;gap:6px;font-size:13px}.lg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
 /* огляди */
+.sc-dc{display:grid;gap:8px;padding:10px;border:1px dashed var(--line);border-radius:10px}.sc-dc-pts{display:flex;flex-wrap:wrap;gap:8px}.sc-dc-pts input{width:92px}
 .sc-form{display:grid;gap:12px;border-color:var(--accent)}
 .sc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 .sc-f{display:grid;gap:4px}.sc-f textarea{width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
@@ -1167,7 +1168,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 посів+схожість';
+const APP_VER = '19.11 густота';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2333,10 +2334,30 @@ function emergence(d){ if(d.density==null) return null; const n = normFor(d); re
 function sowText(w){ if(!w) return ''; return [w.depth!=null ? 'глибина '+nf(w.depth)+' см' : '', w.row!=null ? 'міжряддя '+nf(w.row, 0)+' см' : '', w.speed!=null ? nf(w.speed)+' км/год' : '',
   w.t!=null ? 'ґрунт '+nf(w.t)+' °C' : '', w.hum!=null ? 'вологість '+nf(w.hum, 0)+'%' : '', w.norm!=null ? 'норма '+nf(w.norm, 0)+' тис./га' : ''].filter(Boolean).join(' · '); }
 
+// --- калькулятор густоти: рослини на N м рядка → тис. рослин/га = n / (довжина × міжряддя, м) × 10
+const ROW_DEF = {'Соняшник':70, 'Кукурудза':70, 'Пшениця':15};
+const dcRow = () => +SC.dc.row || +SC.sow.row || ROW_DEF[(SC.crop || '').split(' / ')[0]] || 70;
+function dcCalc(){ const row = dcRow()/100, len = +SC.dc.len || 0, vals = SC.dc.counts.filter(v => v!=='' && isFinite(+v)).map(v => +v/(len*row)*10);
+  if(!len || !vals.length) return null; const avg = d3.mean(vals); return {vals, avg, min:d3.min(vals), max:d3.max(vals), spread: vals.length > 1 ? (d3.max(vals)-d3.min(vals))/avg*100 : 0}; }
+function densityCalcBox(){
+  const out = el('div', {class:'note', id:'sc-dc-out'});
+  const upd = () => { const r = dcCalc(); if(!r){ out.textContent = 'Введіть кількість рослин хоча б в одній точці'; return; }
+    SC.density = String(+r.avg.toFixed(1)); const di = $('#sc-density'); if(di) di.value = SC.density; SC._upd && SC._upd();
+    out.replaceChildren('Точки: '+r.vals.map(v => nf(v, 1)).join(' · ')+' тис./га → середнє ', el('b', {}, nf(r.avg, 1)+' тис./га'),
+      r.vals.length > 1 ? ' · розкид '+nf(r.spread, 0)+'%'+(r.spread > 20 ? ' — нерівномірно, додайте точок' : '') : ' · краще 3–5 точок'); };
+  const inp = (lbl, val, on, ph) => el('label', {class:'sc-f'}, el('span', {class:'note'}, lbl), el('input', {type:'number', inputmode:'decimal', step:'any', placeholder:ph || '', value:val, on:{input: ev => { on(ev.target.value); upd(); }}}));
+  const box = el('div', {class:'sc-dc'},
+    el('div', {class:'sc-grid'}, inp('Міжряддя, см', SC.dc.row, v => SC.dc.row = v, String(dcRow())), inp('Довжина рядка в точці, м', SC.dc.len, v => SC.dc.len = v, '10')),
+    el('div', {class:'note'}, 'Рослин у рядку на кожній точці:'),
+    el('div', {class:'sc-dc-pts'}, SC.dc.counts.map((v, i) => el('input', {type:'number', inputmode:'numeric', placeholder:'точка '+(i+1), value:v, 'aria-label':'рослин у точці '+(i+1), on:{input: ev => { SC.dc.counts[i] = ev.target.value; upd(); }}})),
+      SC.dc.counts.length < 10 ? el('button', {class:'btn small ghost', onclick:() => { SC.dc.counts.push(''); renderScForm(); }}, '+ точка') : ''), out);
+  setTimeout(upd, 0); return box;
+}
+
 // --- форма
 async function newScout(){
   const date = isoNow().slice(0,10);
-  SC = {id: date.replace(/-/g,'')+'-'+isoNow().slice(11,19).replace(/:/g,'')+'-'+Math.random().toString(36).slice(2,6), date, field:'', season:+date.slice(0,4), crop:'', phase:'', state:'', problems:{}, density:'', forecast:'', comment:'', sowOn:false, sow:{},
+  SC = {id: date.replace(/-/g,'')+'-'+isoNow().slice(11,19).replace(/:/g,'')+'-'+Math.random().toString(36).slice(2,6), date, field:'', season:+date.slice(0,4), crop:'', phase:'', state:'', problems:{}, density:'', forecast:'', comment:'', sowOn:false, sow:{}, dc:{on:false, row:'', len:'10', counts:['', '', '']},
     author: LS.get('dl_name') || '', gps:null, gpsMsg:'Визначаю місце…', photos:[]};
   renderScForm(); $('#sc-form').scrollIntoView({behavior:'smooth', block:'start'});
   try{ await ensureGeo(); }catch(e){}
@@ -2400,9 +2421,11 @@ function renderScForm(){
       const sowBox = !SC.sowOn ? '' : el('div', {class:'sc-grid sc-sow'}, SOW_F.map(([k, lbl, ph]) => el('label', {class:'sc-f'}, el('span', {class:'note'}, lbl),
         el('input', {type:'number', inputmode:'decimal', step:'any', placeholder: k==='norm' ? (auto ? 'з записів: '+auto.v : 'напр. 60') : ph, value:SC.sow[k] ?? '', on:{input: ev => { SC.sow[k] = ev.target.value; if(k==='norm') upd(); }}}))));
       return el('div', {style:'display:grid;gap:8px'}, el('button', {class:'chip', style:'justify-self:start', 'aria-pressed':String(SC.sowOn), onclick:() => { SC.sowOn = !SC.sowOn; renderScForm(); }}, (SC.sowOn ? '− ' : '+ ')+'Параметри посіву'), sowBox, em); })(),
-    el('div', {class:'sc-grid'}, el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Густота, тис. рослин/га'), el('input', {type:'number', inputmode:'decimal', step:'any', placeholder:'напр. 55', value:SC.density, on:{input: ev => { SC.density = ev.target.value; SC._upd && SC._upd(); }}})),
+    el('div', {class:'sc-grid'}, el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Густота, тис. рослин/га'), el('input', {id:'sc-density', type:'number', inputmode:'decimal', step:'any', placeholder:'напр. 55', value:SC.density, on:{input: ev => { SC.density = ev.target.value; SC._upd && SC._upd(); }}}),
+        el('button', {class:'chip', style:'justify-self:start', 'aria-pressed':String(SC.dc.on), onclick:() => { SC.dc.on = !SC.dc.on; renderScForm(); }}, 'Порахувати в рядку')),
       num('Прогноз урожаю, ц/га', 'forecast', 'напр. 30'),
       el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Хто оглядає'), el('input', {value:SC.author, placeholder:'ім’я', on:{input: ev => SC.author = ev.target.value}}))),
+    SC.dc.on ? densityCalcBox() : '',
     el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Коментар'), el('textarea', {rows:3, placeholder:'що бачите, що рекомендуєте', on:{input: ev => SC.comment = ev.target.value}}, SC.comment)),
     el('div', {class:'toolbar', style:'margin:0'}, el('button', {class:'btn', onclick:() => cam.click()}, '📷 Сфотографувати'), el('button', {class:'btn ghost', onclick:() => gal.click()}, 'З галереї'), cam, gal,
       el('span', {class:'note'}, SC.photos.length ? SC.photos.length+' фото' : 'Фото з камери отримують точку на карті автоматично')),
@@ -2421,6 +2444,7 @@ async function saveScout(){
   const doc = {kind:'scout', v:1, id:SC.id, date:SC.date, at:isoNow(), by:ROLE_NAMES[ROLE] || ROLE, author:SC.author || ROLE_NAMES[ROLE], field:SC.field, season:SC.season, crop:SC.crop, phase:SC.phase, state:SC.state,
     problems:Object.entries(SC.problems).map(([t, p]) => ({t, pct: p.pct==='' ? null : +p.pct, note:p.note || ''})),
     sow: (() => { const w = {}; SOW_F.forEach(([k]) => { const v = SC.sow[k]; if(v!=='' && v!=null && isFinite(+v)) w[k] = +v; }); return Object.keys(w).length ? w : null; })(),
+    density_calc: SC.dc.on && dcCalc() ? {row:dcRow(), len:+SC.dc.len, counts:SC.dc.counts.filter(v => v!=='').map(Number)} : null,
     density: SC.density==='' ? null : +SC.density, forecast: SC.forecast==='' ? null : +SC.forecast, comment:SC.comment.trim(), gps:SC.gps ? {lat:SC.gps.lat, lon:SC.gps.lon, acc:SC.gps.acc, auto:SC.gps.auto || null, inside:!!SC.gps.inside, m:SC.gps.m ?? null} : null,
     photos: photos.map((p, i) => ({k:i, path:'media/'+y+'/'+SC.id+'-'+(i+1)+'.jpg', lat:p.lat, lon:p.lon, acc:p.acc, src:p.src, field:p.field, at:p.at, w:p.w, h:p.h, bytes:p.bytes}))};
   const item = {id:SC.id, path:'scouts/'+y+'/'+SC.id+'.json', doc, blobs:photos.map(p => p.blob), urls:photos.map((p, i) => ({path:doc.photos[i].path, url:p.url}))};
@@ -2453,6 +2477,7 @@ function scoutLines(d){
   const st = SC_STATE.find(s => s[0]===d.state), out = [];
   out.push(el('div', {class:'sub'}, [d.phase, d.density!=null ? 'густота '+nf(d.density)+' тис./га' : '', d.forecast!=null ? 'прогноз '+nf(d.forecast)+' ц/га' : ''].filter(Boolean).join(' · '), st ? el('span', {class:'pill '+st[2], style:'margin-left:6px'}, st[1]) : '', d.pending ? el('span', {class:'pill', style:'margin-left:6px'}, 'очікує відправки') : ''));
   if(d.sow) out.push(el('div', {class:'sub'}, 'Посів: '+sowText(d.sow)));
+  if(d.density_calc) out.push(el('div', {class:'sub'}, 'Густота за підрахунком: '+d.density_calc.counts.length+' точ. по '+nf(d.density_calc.len, 0)+' м, міжряддя '+nf(d.density_calc.row, 0)+' см ('+d.density_calc.counts.join(', ')+' рослин)'));
   const em = emergence(d); if(em) out.push(el('div', {class:'sub'}, 'Польова схожість ≈ ', el('b', {}, nf(em.pct, 0)+'%'), ' (норма '+nf(em.norm.v, 0)+' тис./га, '+em.norm.src+')'));
   if(d.problems.length) out.push(el('div', {class:'mats'}, d.problems.map(p => el('span', {style:'color:var(--bad)'}, p.t+(p.pct!=null ? ' '+p.pct+'%' : '')+(p.note ? ' — '+p.note : '')))));
   if(d.comment) out.push(el('div', {class:'sub', style:'color:var(--ink)'}, d.comment));
