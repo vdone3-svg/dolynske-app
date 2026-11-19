@@ -238,6 +238,19 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 #map.drawing .leaflet-interactive{pointer-events:none}#map.drawing{cursor:crosshair}
 .mpop{display:grid;gap:3px;font:14px/1.35 var(--body)}.mpop b{font-size:15px}
 #map-legend{display:flex;flex-wrap:wrap;gap:6px 14px}.lg{display:inline-flex;align-items:center;gap:6px;font-size:13px}.lg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+/* огляди */
+.sc-form{display:grid;gap:12px;border-color:var(--accent)}
+.sc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.sc-f{display:grid;gap:4px}.sc-f textarea{width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+.sc-prob{display:grid;grid-template-columns:minmax(110px,auto) 110px 1fr;gap:8px;align-items:center;margin-top:6px}
+.sc-phs{display:flex;flex-wrap:wrap;gap:10px}.sc-ph{margin:0;width:150px;display:grid;gap:4px;position:relative}.sc-ph img,.sc-ph-wait{width:150px;height:110px;object-fit:cover;border-radius:8px;background:var(--line);display:grid;place-items:center}
+.sc-ph figcaption{font-size:12px;color:var(--muted)}.sc-ph.bad figcaption{color:var(--bad)}.sc-ph .btn{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.55);color:#fff;border:none}
+.sc-list{display:grid;gap:10px}.sc-card{border:1px solid var(--line);border-radius:10px;padding:12px;display:grid;gap:6px}
+.sc-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.sc-thumbs{display:flex;gap:8px;overflow-x:auto}
+.sc-th{width:120px;height:90px;object-fit:cover;border-radius:7px;background:var(--line);cursor:zoom-in;flex:none}.sc-th.err{opacity:.3}
+.sc-pop{width:220px;height:140px;object-fit:cover;border-radius:7px;margin-top:4px;cursor:zoom-in}
+dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialog.sc-full img{max-width:96vw;max-height:92vh;display:block;border-radius:8px}dialog.sc-full::backdrop{background:rgba(0,0,0,.8)}
+@media (max-width:600px){.sc-prob{grid-template-columns:1fr 90px}.sc-prob input:last-child{grid-column:1/-1}}
 </style>
 </head>
 <body>
@@ -248,7 +261,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
     <label class="note" for="login-token">Ключ доступу</label>
     <input id="login-token" type="password" autocomplete="off" placeholder="github_pat_…">
     <label class="note" for="login-role">Роль</label>
-    <select id="login-role"><option value="b">Бригадир</option><option value="o">Власник</option></select>
+    <select id="login-role"><option value="b">Бригадир</option><option value="a">Агроном</option><option value="o">Власник</option></select>
     <button class="btn primary" id="login-go">Увійти</button>
     <p class="note" id="login-msg" role="alert"></p>
     <p class="note">Ключ видає власник. Він зберігається лише в цьому браузері й дає доступ тільки до даних господарства.</p>
@@ -406,12 +419,25 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
   </main>
 
   <!-- ДОВІДНИКИ -->
+  <!-- ОГЛЯДИ -->
+  <main class="pane" id="pane-scout">
+    <section class="card">
+      <div class="toolbar"><h2 style="margin:0">Огляди полів</h2>
+        <button class="btn primary" id="sc-new">+ Новий огляд</button>
+        <label class="note" for="sc-field">Поле</label><select id="sc-field"><option value="">усі</option></select>
+        <span class="note" id="sc-queue"></span></div>
+      <div id="sc-form"></div>
+      <div id="sc-list" class="sc-list"></div>
+    </section>
+  </main>
+
   <!-- КАРТА -->
   <main class="pane" id="pane-map">
     <section class="card">
       <div class="toolbar"><h2 style="margin:0">Карта полів</h2>
         <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button></div>
         <button class="btn small" id="map-loc">Де я</button>
+        <button class="chip" id="map-sc" aria-pressed="true">Огляди</button>
         <button class="chip" id="map-pai" aria-pressed="false" hidden>Паї</button>
         <button class="btn small" id="map-split" hidden>Розділити Малаківку</button></div>
       <div id="map-owner"></div>
@@ -1137,8 +1163,8 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 Молоківка';
-const TABS = [['day','День'],['map','Карта'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
+const APP_VER = '19.11 огляди';
+const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
 
@@ -1156,7 +1182,7 @@ window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
-    fields:() => { renderFields(); renderFieldCard(); }, history:renderHistory, map:renderMap, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
+    fields:() => { renderFields(); renderFieldCard(); }, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
     fuel:renderFuelTable, tech:renderTech, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:renderJournal, settings:renderSettings})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
@@ -1573,7 +1599,7 @@ function buildDayDoc(){
   DS.gm.forEach(g => { if(+g.kg) rows['Рух зерна'].push({'Дата':n, 'Продукт':g.p, 'Тип руху':g.t, 'Кількість, кг':+g.kg, 'Кому / коментар':g.c}); });
   const inputs = Object.fromEntries(['zav-dp','zav-bz','dip1','dip2','dip3','dipb'].map(id => [id, $('#'+id).value]));
   const ui = JSON.parse(JSON.stringify({...DS, editing:false})); ui.inputs = inputs;
-  return {kind:'day', date:DAY, saved_at:new Date().toISOString(), by: ROLE==='o' ? 'власник' : 'бригадир', ui, rows, fuel:{date:DAY, cells}, ...(shifts.length ? {shifts} : {})};
+  return {kind:'day', date:DAY, saved_at:new Date().toISOString(), by: ROLE_NAMES[ROLE] || 'бригадир', ui, rows, fuel:{date:DAY, cells}, ...(shifts.length ? {shifts} : {})};
 }
 function openDay(){
   flushDraft();
@@ -1618,7 +1644,7 @@ async function loadRemoteDraft(day, doc){
 function markDirty(){
   if(!DS || !DAY) return; DIRTY = true;
   const inputs = {}; DRAFT_INPUTS.forEach(id => inputs[id] = $('#'+id).value);
-  const o = {kind:'draft', day:DAY, ts:Date.now(), by: ROLE==='o' ? 'власник' : 'бригадир', ds:DS, inputs};
+  const o = {kind:'draft', day:DAY, ts:Date.now(), by: ROLE_NAMES[ROLE] || 'бригадир', ds:DS, inputs};
   LS.set(draftKey(DAY), JSON.stringify(o)); DRAFT_TS = o.ts;
   draftNote('чернетка збережена на пристрої '+hhmm(o.ts));
   clearTimeout(DRAFT_TIMER); DRAFT_DAY = DAY; DRAFT_TIMER = setTimeout(() => pushDraft(DRAFT_DAY), 15000);
@@ -1866,7 +1892,7 @@ async function saveDoc(path, doc, msg){
   try{ syncState('Зберігаю…'); await putJSON(path, doc, msg); delete PENDING[path]; storePending(); syncState('Збережено '+new Date().toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'}), 'ok'); return true; }
   catch(e){ if(e.auth){ syncState(e.message, 'bad'); } else { PENDING[path] = {doc, msg}; storePending(); syncState('Не збережено на сервері: '+Object.keys(PENDING).length+' — повторю', 'warn'); } return false; }
 }
-function saveEvent(rows, what, extra={}){ const ts = new Date().toISOString().replace(/[:.]/g, '-'); return saveDoc('events/'+ts.slice(0,4)+'/'+ts+'-'+Math.random().toString(36).slice(2,6)+'.json', {kind:'event', what, saved_at:new Date().toISOString(), by: ROLE==='o' ? 'власник' : 'бригадир', rows, ...extra}, 'Запис: '+what); }
+function saveEvent(rows, what, extra={}){ const ts = new Date().toISOString().replace(/[:.]/g, '-'); return saveDoc('events/'+ts.slice(0,4)+'/'+ts+'-'+Math.random().toString(36).slice(2,6)+'.json', {kind:'event', what, saved_at:new Date().toISOString(), by: ROLE_NAMES[ROLE] || 'бригадир', rows, ...extra}, 'Запис: '+what); }
 async function flushPending(){
   for(const [path, {doc, msg}] of Object.entries(PENDING)){ try{ await putJSON(path, doc, msg+' (відкладено)'); delete PENDING[path]; }catch(e){ break; } }
   storePending(); const n = Object.keys(PENDING).length; if(n) syncState('Очікують відправки: '+n, 'warn');
@@ -1937,10 +1963,10 @@ async function loadAll(){
   const bundle = await getJSON('bundle/bundle.json') || {docs:{}};
   const files = [];
   async function walk(dir){ for(const it of await listDir(dir)){ if(it.type==='dir') await walk(it.path); else if(it.name.endsWith('.json')) files.push(it); } }
-  await Promise.all(['days', 'events', 'ref'].map(walk));
-  DOCS = {};
+  await Promise.all(['days', 'events', 'ref', 'scouts'].map(walk));
+  DOCS = {}; SCOUTS = {};
   const queue = files.slice();
-  async function worker(){ while(queue.length){ const it = queue.shift(); const b = bundle.docs[it.path]; DOCS[it.path] = (b && b.sha===it.sha) ? b.doc : await getJSON(it.path); } }
+  async function worker(){ while(queue.length){ const it = queue.shift(); const b = bundle.docs[it.path]; (it.path.startsWith('scouts/') ? SCOUTS : DOCS)[it.path] = (b && b.sha===it.sha) ? b.doc : await getJSON(it.path); } }
   await Promise.all([1,2,3,4,5,6].map(worker));
   loadPending(); MODEL = null; REF = null;
   RAW = JSON.parse(JSON.stringify(BASE)); MODEL = compute(RAW);
@@ -1962,7 +1988,7 @@ function exportExcel(){
 }
 
 // ======= КАРТА ПОЛІВ: контури з geo/fields.json; шар паїв — лише власнику, зашифрований (geo/pai.enc.json)
-const MAPV = {map:null, geo:null, fl:null, mode:'crop', pai:null, paiL:null, key:null, me:null, draw:null, enc:undefined};
+const MAPV = {showSc:true, focus:null, scL:null, map:null, geo:null, fl:null, mode:'crop', pai:null, paiL:null, key:null, me:null, draw:null, enc:undefined};
 const LEAF = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet', TURF = 'https://unpkg.com/@turf/turf@7.1.0/turf.min.js';
 const PUB_MAP = 'https://vdone3-svg.github.io/dolynske-map/';
 function loadScript(src){ return new Promise((ok, no) => { if(document.querySelector('script[src="'+src+'"]')) return ok();
@@ -2033,8 +2059,8 @@ async function renderMap(){
   const info = $('#map-info');
   try{
     if(!window.L){ info.textContent = 'Завантажую карту…'; loadCss(LEAF+'.css'); await loadScript(LEAF+'.js'); }
-    if(!MAPV.geo){ MAPV.geo = await getJSON('geo/fields.json'); if(!MAPV.geo){ info.textContent = 'У сховищі ще немає geo/fields.json'; return; } }
-    MAPV.geo.features.forEach(x => { if(x.properties.legacy) LEGACY[x.properties.n] = x.properties.legacy; });
+    if(!await ensureGeo()){ info.textContent = 'У сховищі ще немає geo/fields.json'; return; }
+    OUTQ = await OUTBOX.all().catch(() => []);
   }catch(e){ info.textContent = e.message; return; }
   if(!MAPV.map){
     MAPV.map = L.map('map', {zoomControl:true});
@@ -2044,7 +2070,7 @@ async function renderMap(){
     const zc = () => { const z = MAPV.map.getZoom(); $('#map').classList.toggle('far', z < 14); $('#map').classList.toggle('vfar', z < 13); }; MAPV.map.on('zoomend', zc);
     drawFields(); MAPV.map.fitBounds(MAPV.fl.getBounds(), {padding:[12, 12]}); zc();
   } else { drawFields(); setTimeout(() => MAPV.map.invalidateSize(), 0); }
-  renderMapTools();
+  renderMapTools(); drawScoutPins();
 }
 function renderMapTools(){
   document.querySelectorAll('#map-mode .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.m===MAPV.mode)));
@@ -2052,6 +2078,7 @@ function renderMapTools(){
   $('#map-pai').hidden = !own; $('#map-split').hidden = !own || !MAPV.geo.features.some(f => f.properties.covers);
   if(!own) $('#map-owner').replaceChildren();
 }
+$('#map-sc').addEventListener('click', ev => { MAPV.showSc = !MAPV.showSc; ev.target.setAttribute('aria-pressed', String(MAPV.showSc)); drawScoutPins(); });
 document.querySelectorAll('#map-mode .chip').forEach(b => b.addEventListener('click', () => { MAPV.mode = b.dataset.m; drawFields(); renderMapTools(); }));
 
 // «Де я»: позиція телефона → поле
@@ -2194,6 +2221,238 @@ $('#map-split').addEventListener('click', () => {
     el('button', {class:'btn primary small', onclick:done}, 'Готово'), el('button', {class:'btn small', onclick:stop}, 'Скасувати'), msg));
 });
 
+// ======= ОГЛЯДИ ПОЛІВ (агроном, власник, бригадир): нотатка + фото з GPS-міткою → поле визначається за контуром
+// документи: scouts/РРРР/…json; фото: media/РРРР/<id>-<n>.jpg (стиснені ~1600 px); без зв'язку — черга в IndexedDB
+const ROLE_NAMES = {o:'власник', b:'бригадир', a:'агроном'};
+let SCOUTS = {}, SC = null, SCF = '';   // SCOUTS: path → doc; SC — форма, що заповнюється; SCF — фільтр поля
+const SC_STATE = [['good', 'добрий', 'ok'], ['mid', 'задовільний', ''], ['bad', 'поганий', 'bad']];
+const SC_TAGS = ['бур’яни', 'шкідники', 'хвороби', 'посуха', 'перезволоження', 'вимерзання', 'град', 'нерівномірні сходи', 'дефіцит живлення', 'полягання', 'пошкодження технікою'];
+const SC_PHASES = {
+  'Пшениця': ['сходи', 'кущіння', 'вихід у трубку', 'колосіння', 'цвітіння', 'молочна стиглість', 'воскова стиглість', 'повна стиглість'],
+  'Кукурудза': ['сходи', '3–5 листків', '6–8 листків', '9–12 листків', 'викидання волоті', 'цвітіння', 'молочна стиглість', 'воскова стиглість', 'фізіологічна стиглість'],
+  'Соняшник': ['сходи', '2–4 листки', '6–8 листків', 'зірочка (бутонізація)', 'цвітіння', 'налив', 'фізіологічна стиглість'],
+  '': ['до посіву / стерня', 'сходи', 'вегетація', 'цвітіння', 'дозрівання', 'перед збиранням']};
+const scPhases = c => SC_PHASES[c] || SC_PHASES[''];
+const isoNow = () => { const t = new Date(); return new Date(t.getTime() - t.getTimezoneOffset()*6e4).toISOString(); };
+
+// --- контури полів (спільні з картою)
+async function ensureGeo(){ if(!MAPV.geo){ MAPV.geo = await getJSON('geo/fields.json'); if(MAPV.geo) MAPV.geo.features.forEach(x => { if(x.properties.legacy) LEGACY[x.properties.n] = x.properties.legacy; }); } return MAPV.geo; }
+
+// --- GPS: найточніша позиція за кілька секунд
+function bestPos(ms=12000, good=20){ return new Promise((ok, no) => {
+  if(!navigator.geolocation) return no(new Error('Телефон не дає координати'));
+  let best = null, id = null, t = null;
+  const fin = () => { if(id!=null) navigator.geolocation.clearWatch(id); clearTimeout(t); best ? ok(best) : no(new Error('Немає сигналу GPS')); };
+  id = navigator.geolocation.watchPosition(p => { if(!best || p.coords.accuracy < best.coords.accuracy) best = p; if(p.coords.accuracy <= good) fin(); },
+    e => { if(!best){ navigator.geolocation.clearWatch(id); clearTimeout(t); no(new Error(e.code===1 ? 'Дозвольте доступ до геопозиції для цього сайту' : 'GPS: '+e.message)); } },
+    {enableHighAccuracy:true, maximumAge:3000, timeout:ms});
+  t = setTimeout(fin, ms); }); }
+const posObj = p => p ? {lat:+p.coords.latitude.toFixed(6), lon:+p.coords.longitude.toFixed(6), acc:Math.round(p.coords.accuracy)} : null;
+function fieldOfPoint(g){ if(!g) return null; const r = fieldAt(g.lat, g.lon); if(!r) return null; return {field:fieldsOf(r.f)[0], inside:r.inside, m:Math.round(r.m)}; }
+
+// --- EXIF: координати з фото (галерея). iPhone інколи їх вирізає — тоді беремо телефон або питаємо поле
+async function exifGps(file){
+  try{ const v = new DataView(await file.slice(0, 256*1024).arrayBuffer()); if(v.getUint16(0)!==0xFFD8) return null;
+    let o = 2; while(o < v.byteLength-10){ const m = v.getUint16(o), len = v.getUint16(o+2); if(m===0xFFE1 && v.getUint32(o+4)===0x45786966) return tiffGps(v, o+10); if((m & 0xFF00)!==0xFF00) break; o += 2+len; }
+  }catch(e){} return null; }
+function tiffGps(v, t){
+  const le = v.getUint16(t)===0x4949, u16 = o => v.getUint16(o, le), u32 = o => v.getUint32(o, le);
+  const ifd = t+u32(t+4); let gps = null, dt = null;
+  for(let i = 0, n = u16(ifd); i < n; i++){ const e = ifd+2+i*12; if(u16(e)===0x8825) gps = t+u32(e+8); }
+  if(!gps) return null; const g = {};
+  for(let i = 0, n = u16(gps); i < n; i++){ const e = gps+2+i*12, tag = u16(e), type = u16(e+2);
+    if(tag===1 || tag===3) g[tag] = String.fromCharCode(v.getUint8(e+8));
+    if((tag===2 || tag===4) && type===5){ const p = t+u32(e+8), r = k => u32(p+k*8)/(u32(p+k*8+4) || 1); g[tag] = r(0)+r(1)/60+r(2)/3600; } }
+  if(!g[2] || !g[4]) return null;
+  return {lat:+(g[1]==='S' ? -g[2] : g[2]).toFixed(6), lon:+(g[3]==='W' ? -g[4] : g[4]).toFixed(6), acc:null}; }
+
+// --- стиснення фото
+function shrink(file, max=1600, q=0.8){ return new Promise((ok, no) => {
+  const url = URL.createObjectURL(file), img = new Image();
+  img.onload = () => { const k = Math.min(1, max/Math.max(img.naturalWidth, img.naturalHeight)), w = Math.round(img.naturalWidth*k), h = Math.round(img.naturalHeight*k);
+    const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url);
+    c.toBlob(b => b ? ok({blob:b, w, h}) : no(new Error('Не вдалось стиснути фото')), 'image/jpeg', q); };
+  img.onerror = () => { URL.revokeObjectURL(url); no(new Error('Формат фото не підтримується (HEIC?) — увімкніть на iPhone «Найсумісніший» формат камери')); };
+  img.src = url; }); }
+
+// --- черга без зв'язку (IndexedDB: фото як Blob)
+const OUTBOX = {db:null,
+  open(){ return this.db || (this.db = new Promise((ok, no) => { const r = indexedDB.open('dl_outbox', 1); r.onupgradeneeded = () => r.result.createObjectStore('scouts', {keyPath:'id'}); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); })); },
+  async run(mode, fn){ const db = await this.open(); return new Promise((ok, no) => { const tx = db.transaction('scouts', mode), rq = fn(tx.objectStore('scouts')); tx.oncomplete = () => ok(rq && rq.result); tx.onerror = () => no(tx.error); }); },
+  put(x){ return this.run('readwrite', s => s.put(x)); }, del(id){ return this.run('readwrite', s => s.delete(id)); }, all(){ return this.run('readonly', s => s.getAll()); }};
+let OUTQ = [];   // копія черги для показу
+function blobB64(b){ return new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => no(r.error); r.readAsDataURL(b); }); }
+async function putBin(path, blob, msg){
+  try{ await gh('contents/'+enc(path), {method:'PUT', body:JSON.stringify({message:msg, content: await blobB64(blob), branch:GH.branch})}); }
+  catch(e){ if(e.status===422) return; throw e; }   // файл уже є (повторна відправка) — вважаємо відправленим
+}
+let FLUSHING = false;
+async function flushScouts(){
+  if(FLUSHING || !TOKEN) return; FLUSHING = true;
+  try{ for(const it of await OUTBOX.all()){
+      for(const ph of it.doc.photos){ if(ph.done) continue; await putBin(ph.path, it.blobs[ph.k], 'Фото огляду: '+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); }
+      const doc = JSON.parse(JSON.stringify(it.doc)); doc.photos.forEach(p => { delete p.done; delete p.k; });
+      await putJSON(it.path, doc, 'Огляд: '+doc.field+' '+doc.date+' ('+doc.author+', '+doc.by+')');
+      SCOUTS[it.path] = doc; await OUTBOX.del(it.id);
+      it.urls && it.urls.forEach(u => IMGC[u.path] = u.url);
+  } }catch(e){ if(e.auth) syncState(e.message, 'bad'); }
+  finally{ FLUSHING = false; OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); if(TAB==='scout') renderScList(); if(TAB==='map' && MAPV.map) drawScoutPins(); }
+}
+window.addEventListener('online', () => flushScouts());
+setInterval(() => { if(OUTQ.length && navigator.onLine) flushScouts(); }, 60000);
+function renderScQueue(){ const q = $('#sc-queue'); if(q) q.textContent = OUTQ.length ? 'Очікують відправки: '+OUTQ.length+' огляд(и) — відправляться, щойно з’явиться зв’язок' : ''; }
+
+// --- фото з приватного сховища (через ключ доступу)
+const IMGC = {};
+async function photoUrl(path){
+  if(IMGC[path]) return IMGC[path];
+  const r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+'/contents/'+enc(path)+'?ref='+GH.branch, {headers:{'Authorization':'Bearer '+TOKEN, 'Accept':'application/vnd.github.raw+json'}});
+  if(!r.ok) throw new Error('фото '+r.status); return IMGC[path] = URL.createObjectURL(await r.blob()); }
+function photoImg(path, cls='sc-th', onload=null){ const im = el('img', {class:cls, alt:'фото огляду', loading:'lazy'}); if(onload) im.addEventListener('load', onload); photoUrl(path).then(u => im.src = u).catch(() => im.classList.add('err')); im.addEventListener('click', () => photoUrl(path).then(u => openPhoto(u))); return im; }
+function openPhoto(u){ const d = el('dialog', {class:'sc-full', onclick:() => { d.close(); d.remove(); }}, el('img', {src:u, alt:'фото'})); document.body.append(d); d.showModal(); }
+
+// --- сезон «під урожай року» і культура поля
+function scSeason(f, date){ const y = +date.slice(0,4), m = +date.slice(5,7); return m >= 8 && (REF.prl || []).some(r => r.y===y+1 && (r.f===f || r.f===LEGACY[f])) ? y+1 : y; }
+function scCrop(f, y){ return cropsOfField(f, y).map(r => r.c).join(' / '); }
+
+// --- форма
+async function newScout(){
+  const date = isoNow().slice(0,10);
+  SC = {id: date.replace(/-/g,'')+'-'+isoNow().slice(11,19).replace(/:/g,'')+'-'+Math.random().toString(36).slice(2,6), date, field:'', season:+date.slice(0,4), crop:'', phase:'', state:'', problems:{}, density:'', forecast:'', comment:'',
+    author: LS.get('dl_name') || '', gps:null, gpsMsg:'Визначаю місце…', photos:[]};
+  renderScForm(); $('#sc-form').scrollIntoView({behavior:'smooth', block:'start'});
+  try{ await ensureGeo(); }catch(e){}
+  locateScout();
+}
+async function locateScout(){
+  SC.gpsMsg = 'Визначаю місце…'; renderScForm();
+  try{ const g = posObj(await bestPos()); SC.gps = g; const r = fieldOfPoint(g);
+    if(r){ SC.gps.auto = r.field; SC.gps.inside = r.inside; SC.gps.m = r.m;
+      if(r.inside || r.m <= 150){ if(!SC.field || SC.fieldAuto){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); } }
+      SC.gpsMsg = r.inside ? 'Ви на полі «'+r.field+'» (±'+g.acc+' м)' : 'Поза контурами: найближче «'+r.field+'», '+r.m+' м від межі (±'+g.acc+' м)'+(r.m > 150 ? ' — виберіть поле' : ' — перевірте поле'); }
+    else SC.gpsMsg = 'Координати є (±'+g.acc+' м), контури полів не завантажились — виберіть поле';
+  }catch(e){ SC.gpsMsg = e.message+' — виберіть поле вручну'; }
+  if(SC) renderScForm();
+}
+function scFieldChanged(){ SC.season = scSeason(SC.field, SC.date); SC.crop = scCrop(SC.field, SC.season); if(!scPhases(SC.crop.split(' / ')[0]).includes(SC.phase)) SC.phase = ''; }
+async function addPhotos(files, fromCamera){
+  for(const file of files){
+    const ph = {k:SC.photos.length, at:isoNow(), status:'обробляю…'}; SC.photos.push(ph); renderScForm();
+    try{
+      const ex = await exifGps(file); let g = ex, src = ex ? 'exif' : null;
+      if(!g && (fromCamera || Date.now() - file.lastModified < 10*60e3)){ try{ g = posObj(await bestPos(6000, 25)); src = 'phone'; }catch(e){} }
+      const {blob, w, h} = await shrink(file);
+      Object.assign(ph, {blob, w, h, bytes:blob.size, url:URL.createObjectURL(blob), lat:g ? g.lat : null, lon:g ? g.lon : null, acc:g ? g.acc : null, src});
+      const r = g && fieldOfPoint(g); ph.field = r ? r.field : null; ph.inside = r ? r.inside : false; ph.m = r ? r.m : null;
+      ph.status = !g ? 'без координат — прив’яжеться до вибраного поля' : r && r.inside ? 'GPS: «'+r.field+'»' : r ? 'GPS: '+r.m+' м від «'+r.field+'»' : 'GPS є';
+      if(!SC.field && r && (r.inside || r.m <= 150)){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); }
+    }catch(e){ ph.status = e.message; ph.bad = true; }
+    renderScForm();
+  }
+}
+function renderScForm(){
+  const box = $('#sc-form'); if(!box) return; box.replaceChildren(); if(!SC) return;
+  const c1 = SC.crop.split(' / ')[0];
+  const sel = (id, opts, cur, on) => el('select', {id, on:{change: ev => on(ev.target.value)}}, opts.map(([v, t]) => el('option', v===cur ? {value:v, selected:''} : {value:v}, t)));
+  const fopts = [['', '— виберіть поле —'], ...REF.fields.map(f => [f.n, f.n])];
+  const yrs = [SC.season-1, SC.season, SC.season+1].filter((v, i, a) => a.indexOf(v)===i);
+  const stateBtns = SC_STATE.map(([v, t, cls]) => el('button', {class:'chip', 'aria-pressed':String(SC.state===v), onclick:() => { SC.state = SC.state===v ? '' : v; renderScForm(); }}, t));
+  const tagBtns = SC_TAGS.map(t => el('button', {class:'chip', 'aria-pressed':String(!!SC.problems[t]), onclick:() => { if(SC.problems[t]) delete SC.problems[t]; else SC.problems[t] = {pct:'', note:''}; renderScForm(); }}, t));
+  const probRows = Object.entries(SC.problems).map(([t, p]) => el('div', {class:'sc-prob'}, el('b', {}, t),
+    el('input', {type:'number', inputmode:'decimal', min:0, max:100, placeholder:'% ураження', value:p.pct, on:{input: ev => p.pct = ev.target.value}}),
+    el('input', {placeholder:'уточнення (вид, де саме)', value:p.note, on:{input: ev => p.note = ev.target.value}})));
+  const thumbs = SC.photos.map(ph => el('figure', {class:'sc-ph'+(ph.bad ? ' bad' : '')}, ph.url ? el('img', {src:ph.url, alt:'фото'}) : el('div', {class:'sc-ph-wait'}, '…'),
+    el('figcaption', {}, ph.status), el('button', {class:'btn small ghost', 'aria-label':'прибрати фото', onclick:() => { SC.photos = SC.photos.filter(x => x!==ph); renderScForm(); }}, '✕')));
+  const cam = el('input', {type:'file', accept:'image/*', capture:'environment', multiple:'', hidden:'', on:{change: ev => { addPhotos([...ev.target.files], true); ev.target.value = ''; }}});
+  const gal = el('input', {type:'file', accept:'image/*', multiple:'', hidden:'', on:{change: ev => { addPhotos([...ev.target.files], false); ev.target.value = ''; }}});
+  const num = (lbl, key, ph) => el('label', {class:'sc-f'}, el('span', {class:'note'}, lbl), el('input', {type:'number', inputmode:'decimal', placeholder:ph, value:SC[key], on:{input: ev => SC[key] = ev.target.value}}));
+  box.append(el('div', {class:'card sc-form'},
+    el('div', {class:'toolbar', style:'margin:0'}, el('h3', {style:'margin:0'}, 'Новий огляд · '+SC.date), el('span', {class:'note'}, SC.gpsMsg), el('button', {class:'btn small', onclick:locateScout}, 'Оновити місце')),
+    el('div', {class:'sc-grid'},
+      el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Поле'), sel('sc-f-field', fopts, SC.field, v => { SC.field = v; SC.fieldAuto = false; scFieldChanged(); renderScForm(); })),
+      el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Сезон'), sel('sc-f-season', yrs.map(y => [String(y), 'урожай '+y]), String(SC.season), v => { SC.season = +v; SC.crop = scCrop(SC.field, SC.season); renderScForm(); })),
+      el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Культура'), el('input', {list:'dl-crops-sc', value:SC.crop, placeholder:'з сівозміни', on:{change: ev => { SC.crop = ev.target.value; renderScForm(); }}})),
+      el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Фаза'), sel('sc-f-phase', [['', '—'], ...scPhases(c1).map(p => [p, p])], SC.phase, v => SC.phase = v))),
+    el('div', {}, el('span', {class:'note'}, 'Стан посіву '), el('span', {class:'chips', style:'display:inline-flex'}, stateBtns)),
+    el('div', {}, el('div', {class:'note'}, 'Проблеми'), el('div', {class:'chips'}, tagBtns), probRows),
+    el('div', {class:'sc-grid'}, num('Густота, тис. рослин/га', 'density', 'напр. 55'), num('Прогноз урожаю, ц/га', 'forecast', 'напр. 30'),
+      el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Хто оглядає'), el('input', {value:SC.author, placeholder:'ім’я', on:{input: ev => SC.author = ev.target.value}}))),
+    el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Коментар'), el('textarea', {rows:3, placeholder:'що бачите, що рекомендуєте', on:{input: ev => SC.comment = ev.target.value}}, SC.comment)),
+    el('div', {class:'toolbar', style:'margin:0'}, el('button', {class:'btn', onclick:() => cam.click()}, '📷 Сфотографувати'), el('button', {class:'btn ghost', onclick:() => gal.click()}, 'З галереї'), cam, gal,
+      el('span', {class:'note'}, SC.photos.length ? SC.photos.length+' фото' : 'Фото з камери отримують точку на карті автоматично')),
+    thumbs.length ? el('div', {class:'sc-phs'}, thumbs) : '',
+    el('div', {class:'toolbar', style:'margin:0'}, el('button', {class:'btn primary', id:'sc-save', onclick:saveScout}, 'Зберегти огляд'), el('button', {class:'btn ghost', onclick:() => { if(SC.photos.length && !confirm('Скасувати огляд з фото?')) return; SC = null; renderScForm(); }}, 'Скасувати'),
+      el('span', {class:'note', id:'sc-msg'}))));
+  if(!$('#dl-crops-sc')) document.body.append(el('datalist', {id:'dl-crops-sc'}, (REF.crops || []).map(c => el('option', {value:c}))));
+}
+async function saveScout(){
+  const msg = $('#sc-msg');
+  if(!SC.field){ msg.textContent = 'Виберіть поле.'; return; }
+  if(SC.photos.some(p => !p.blob && !p.bad)){ msg.textContent = 'Зачекайте — фото ще обробляються.'; return; }
+  if(!SC.state && !SC.phase && !SC.comment.trim() && !SC.photos.length && !Object.keys(SC.problems).length){ msg.textContent = 'Порожній огляд: додайте фото, стан, фазу або коментар.'; return; }
+  if(SC.author) LS.set('dl_name', SC.author);
+  const y = SC.date.slice(0,4), photos = SC.photos.filter(p => p.blob);
+  const doc = {kind:'scout', v:1, id:SC.id, date:SC.date, at:isoNow(), by:ROLE_NAMES[ROLE] || ROLE, author:SC.author || ROLE_NAMES[ROLE], field:SC.field, season:SC.season, crop:SC.crop, phase:SC.phase, state:SC.state,
+    problems:Object.entries(SC.problems).map(([t, p]) => ({t, pct: p.pct==='' ? null : +p.pct, note:p.note || ''})),
+    density: SC.density==='' ? null : +SC.density, forecast: SC.forecast==='' ? null : +SC.forecast, comment:SC.comment.trim(), gps:SC.gps ? {lat:SC.gps.lat, lon:SC.gps.lon, acc:SC.gps.acc, auto:SC.gps.auto || null, inside:!!SC.gps.inside, m:SC.gps.m ?? null} : null,
+    photos: photos.map((p, i) => ({k:i, path:'media/'+y+'/'+SC.id+'-'+(i+1)+'.jpg', lat:p.lat, lon:p.lon, acc:p.acc, src:p.src, field:p.field, at:p.at, w:p.w, h:p.h, bytes:p.bytes}))};
+  const item = {id:SC.id, path:'scouts/'+y+'/'+SC.id+'.json', doc, blobs:photos.map(p => p.blob), urls:photos.map((p, i) => ({path:doc.photos[i].path, url:p.url}))};
+  try{ await OUTBOX.put(item); }catch(e){ msg.textContent = 'Не вдалось зберегти на телефоні: '+e.message; return; }
+  photos.forEach((p, i) => IMGC[doc.photos[i].path] = p.url);
+  SC = null; renderScForm(); OUTQ = await OUTBOX.all().catch(() => [item]); renderScQueue(); renderScList();
+  toast(navigator.onLine ? 'Огляд збережено, відправляю…' : 'Огляд збережено на телефоні — відправиться, щойно з’явиться зв’язок');
+  flushScouts();
+}
+
+// --- список оглядів
+function allScouts(){ const sent = Object.entries(SCOUTS).map(([path, d]) => ({...d, path, pending:false}));
+  const pend = OUTQ.map(it => ({...it.doc, path:it.path, pending:true, localUrls:it.urls}));
+  const ids = new Set(sent.map(d => d.id)); return [...sent, ...pend.filter(d => !ids.has(d.id))].sort((a, b) => (b.at || '').localeCompare(a.at || '')); }
+function scoutCard(d){
+  const st = SC_STATE.find(s => s[0]===d.state);
+  const imgs = d.photos.map((p, i) => d.pending && d.localUrls && d.localUrls[i] ? el('img', {class:'sc-th', src:d.localUrls[i].url, alt:'фото', onclick:() => openPhoto(d.localUrls[i].url)}) : photoImg(p.path));
+  return el('article', {class:'sc-card'},
+    el('div', {class:'sc-head'}, el('b', {}, d.field), el('span', {class:'note'}, ddmm(dt(toSerial(d.date)))+' · '+d.author+(d.author!==d.by ? ' ('+d.by+')' : '')),
+      st ? el('span', {class:'pill '+st[2]}, st[1]) : '', d.pending ? el('span', {class:'pill'}, 'очікує відправки') : ''),
+    el('div', {class:'note'}, ['урожай '+d.season, d.crop, d.phase, d.density!=null ? nf(d.density)+' тис./га' : '', d.forecast!=null ? 'прогноз '+nf(d.forecast)+' ц/га' : ''].filter(Boolean).join(' · ')),
+    d.problems.length ? el('div', {class:'chips'}, d.problems.map(p => el('span', {class:'pill bad'}, p.t+(p.pct!=null ? ' '+p.pct+'%' : '')+(p.note ? ' — '+p.note : '')))) : '',
+    d.comment ? el('p', {style:'margin:0'}, d.comment) : '',
+    imgs.length ? el('div', {class:'sc-thumbs'}, imgs) : '',
+    (d.gps || d.photos.some(p => p.lat)) ? el('button', {class:'btn small ghost', style:'justify-self:start', onclick:() => { MAPV.focus = d.id; location.hash = 'map'; }}, 'На карті') : '');
+}
+function renderScList(){
+  const box = $('#sc-list'); if(!box) return; box.replaceChildren();
+  const list = allScouts().filter(d => d.season===YEAR && (!SCF || d.field===SCF));
+  const fsel = $('#sc-field'); fsel.replaceChildren(el('option', {value:''}, 'усі'), ...REF.allFields.map(f => el('option', f.n===SCF ? {value:f.n, selected:''} : {value:f.n}, f.n)));
+  if(!list.length){ box.append(el('p', {class:'note'}, 'За сезон «урожай '+YEAR+'»'+(SCF ? ' по полю «'+SCF+'»' : '')+' оглядів ще немає. Натисніть «+ Новий огляд» прямо в полі — місце і поле визначаться за GPS.')); return; }
+  box.append(el('div', {class:'note'}, list.length+' огляд(и) · урожай '+YEAR), ...list.slice(0, 60).map(scoutCard));
+}
+async function renderScouts(){ OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); renderScForm(); renderScList(); ensureGeo().catch(() => {}); if(OUTQ.length) flushScouts(); }
+$('#sc-new').addEventListener('click', newScout);
+$('#sc-field').addEventListener('change', ev => { SCF = ev.target.value; renderScList(); });
+
+// --- огляди на карті: точка кожного фото (або місце огляду), колір — стан
+const SC_COL = {good:'#2e7d4f', mid:'#d4a72c', bad:'#b3372e'};
+function drawScoutPins(){
+  if(!MAPV.map) return; if(MAPV.scL) MAPV.scL.remove(); if(!MAPV.showSc) return;
+  const g = L.layerGroup(); let focus = null;
+  allScouts().filter(d => d.season===YEAR).forEach(d => {
+    const pts = d.photos.map((p, i) => p.lat ? {lat:p.lat, lon:p.lon, i} : null).filter(Boolean); if(!pts.length && d.gps) pts.push({lat:d.gps.lat, lon:d.gps.lon, i:null});
+    pts.forEach(p => {
+      const m = L.circleMarker([p.lat, p.lon], {radius:p.i==null ? 6 : 8, weight:2, color:'#fff', fillColor:SC_COL[d.state] || '#2f5d8a', fillOpacity:1});
+      m.bindPopup(() => { const b = el('div', {class:'mpop'}, el('b', {}, d.field+' · '+ddmm(dt(toSerial(d.date)))), el('div', {class:'note'}, [d.author, d.phase, (SC_STATE.find(s => s[0]===d.state) || [,''])[1]].filter(Boolean).join(' · ')));
+        if(d.problems.length) b.append(el('div', {class:'note', style:'color:var(--bad)'}, d.problems.map(x => x.t+(x.pct!=null ? ' '+x.pct+'%' : '')).join(', ')));
+        if(d.comment) b.append(el('div', {}, d.comment));
+        const upd = () => { const pp = m.getPopup(); if(pp && pp.isOpen()) pp.update(); };
+        if(p.i!=null) b.append(d.pending && d.localUrls ? el('img', {class:'sc-pop', src:d.localUrls[p.i].url, alt:'фото', on:{load:upd}}) : photoImg(d.photos[p.i].path, 'sc-pop', upd));
+        return b; }, {maxWidth:260, autoPanPadding:[20, 20]});
+      g.addLayer(m); if(MAPV.focus===d.id && !focus) focus = m;
+    });
+  });
+  MAPV.scL = g.addTo(MAPV.map);
+  if(focus){ MAPV.map.setView(focus.getLatLng(), 16, {animate:false}); setTimeout(() => focus.openPopup(), 50); MAPV.focus = null; }
+}
+
 // ======= вхід
 function showLogin(msg){ $('#login').hidden = false; $('#login-msg').textContent = msg || ''; }
 $('#login-go').addEventListener('click', async () => {
@@ -2207,7 +2466,7 @@ $('#btn-logout').addEventListener('click', () => { LS.del('dl_token'); TOKEN = n
 $('#btn-xlsx').addEventListener('click', () => { if(!RAW){ toast('Дані ще не завантажені'); return; } exportExcel(); });
 async function start(){
   ROLE = LS.get('dl_role') || 'b';
-  $('#role-name').textContent = ROLE==='o' ? 'Власник' : 'Бригадир';
+  $('#role-name').textContent = ({o:'Власник', a:'Агроном'})[ROLE] || 'Бригадир';
   try{ await loadAll(); }
   catch(e){ syncState(e.message, 'bad'); if(e.auth){ LS.del('dl_token'); showLogin(e.message); } return; }
   const today = new Date(); DAY = new Date(today.getTime() - today.getTimezoneOffset()*6e4).toISOString().slice(0,10);
