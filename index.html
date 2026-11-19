@@ -952,7 +952,7 @@ let HF = null, HY = null, HG = '';
 const ddmm = d => String(d.d).padStart(2,'0')+'.'+String(d.m).padStart(2,'0')+'.'+String(d.y).slice(2);
 function renderHistory(){
   const M = MODEL, body = $('#h-body'); body.replaceChildren();
-  const names = [...new Set([...REF.fields.map(f => f.n), ...M.fields.map(f => f.f)])];
+  const names = [...new Set([...REF.allFields.map(f => f.n), ...M.fields.map(f => f.f)])];
   if(!names.includes(HF)) HF = names[0];
   const fs = $('#h-field'); fs.replaceChildren(...names.map(n => el('option', n===HF ? {value:n, selected:''} : {value:n}, n+(FIELD[n] ? ' · '+FIELD[n].ha+' га' : ''))));
   fs.onchange = ev => { HF = ev.target.value; renderHistory(); };
@@ -1137,7 +1137,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 карта';
+const APP_VER = '19.11 Молоківка';
 const TABS = [['day','День'],['map','Карта'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1176,7 +1176,7 @@ let DS = null;
 function newDay(){ DS = {rows: REF.people.map(p => blankRow(p)), appl:[], own:[], ship:[], gm:[], zav:[]}; ['zav-dp','zav-bz','dip1','dip2','dip3','dipb'].forEach(id => $('#'+id).value = ''); }
 function dl(id, items){ return el('datalist', {id}, items.map(v => el('option', {value:v}))); }
 function initRef(){
-  OP = Object.fromEntries(REF.ops.map(o => [o.n, o])); FIELD = Object.fromEntries(REF.fields.map(f => [f.n, f]));
+  OP = Object.fromEntries(REF.ops.map(o => [o.n, o])); FIELD = Object.fromEntries(REF.allFields.map(f => [f.n, f]));
   MACH = Object.fromEntries(REF.mach.map(m => [m.n, m])); MAT = Object.fromEntries(REF.mats.map(m => [m.n, m]));
   document.querySelectorAll('datalist.dl').forEach(x => x.remove());
   [dl('dl-ops', REF.ops.map(o => o.n)), dl('dl-fields', REF.fields.map(f => f.n)), dl('dl-mach', REF.mach.map(m => m.n)), dl('dl-oils', REF.oils), dl('dl-people', REF.people),
@@ -1910,7 +1910,8 @@ function deriveRef(raw, templates){
   const pr = rowsOf(raw, 'Д_Поле-рік');
   const cropsOf = (f, y) => pr.filter(r => num(r['Рік урожаю'])===y && str(r['Поле'])===f).map(r => str(r['Культура'])).join(' / ');
   const cy = new Date().getFullYear();
-  const fields = rowsOf(raw, 'Д_Поля').map(r => { const n = str(r['Поле (робоча назва)']); return {n, ha:num(r['Площа, га'])||0, c26: cropsOf(n, cy) || '', cNext: cropsOf(n, cy+1) || ''}; }).filter(f => f.n);
+  const fields = rowsOf(raw, 'Д_Поля').map(r => { const n = str(r['Поле (робоча назва)']); return {n, ha:num(r['Площа, га'])||0, act: str(r['Активне (так/ні)'])!=='ні', c26: cropsOf(n, cy) || '', cNext: cropsOf(n, cy+1) || ''}; }).filter(f => f.n);
+  const allFields = fields, actFields = fields.filter(f => f.act);   // неактивні (напр. «Малаківка (до розділу)») — лише для історії
   const mach = rowsOf(raw, 'Д_Техніка').map(r => ({n:str(r['Техніка']), t:str(r['Тип']), fuel:str(r['Паливо']), mh:str(r['Лічильник мотогодин'])})).filter(m => m.n && !/^(Власне авто|Різне)/.test(m.n));
   const appl = rowsOf(raw, 'Внесення').map(r => ({m:str(r['Матеріал']), ha:num(r['Оброблено, га']), q:num(r['Кількість всього'])})).filter(a => a.m && a.ha && a.q);
   const norm = d3.rollup(appl, v => d3.median(v, a => a.q/a.ha), a => a.m);
@@ -1923,7 +1924,7 @@ function deriveRef(raw, templates){
   const shp = rowsOf(raw, 'Відвантаження'), trucks = {};
   shp.forEach(r => { const t = str(r['Марка авто']); if(t) trucks[t.toUpperCase()] = {t, n:str(r['№ авто / причепа']), dr:str(r['Водій']), ow:str(r['Власник авто']), b:str(r['Покупець'])}; });   // останній запис по авто
   const uniq = k => [...new Set(shp.map(r => str(r[k])).filter(Boolean))].sort();
-  return {people, hab, ops, fields, mach, mats, templates, prl, crops, trucks, drivers:uniq('Водій'), owners:uniq('Власник авто'), oils: matsAll.filter(m => m.cat==='Масла').map(m => m.n), own, lha,
+  return {people, hab, ops, fields:actFields, allFields, mach, mats, templates, prl, crops, trucks, drivers:uniq('Водій'), owners:uniq('Власник авто'), oils: matsAll.filter(m => m.cat==='Масла').map(m => m.n), own, lha,
     buyers: [...new Set(rowsOf(raw, 'Відвантаження').map(r => str(r['Покупець'])).filter(b => b && b!=='(не вказано)'))],
     grain: rowsOf(raw, 'Д_Зерно').map(r => str(r['Продукт на складі'])).filter(Boolean)};
 }
@@ -1982,9 +1983,10 @@ function fieldAt(lat, lon){ if(!MAPV.geo) return null; const pt = [lon, lat];
   let best = null; MAPV.geo.features.forEach(f => { const m = distToGeom(pt, f.geometry); if(!best || m < best.m) best = {f, inside:false, m}; }); return best; }
 
 const fieldsOf = f => f.properties.covers || [f.properties.n];
-function cropsOfField(n, y){ return (REF.prl || []).filter(r => r.y===y && r.f===n); }
+const LEGACY = {};   // поле після розділу → назва спільного поля до розділу (з geo/fields.json)
+function cropsOfField(n, y){ const own = (REF.prl || []).filter(r => r.y===y && r.f===n); return own.length || !LEGACY[n] ? own : (REF.prl || []).filter(r => r.y===y && r.f===LEGACY[n]); }
 function yieldClass(n, y){   // урожайність відносно середньої по культурі цього року
-  const mine = MODEL.fields.filter(x => x.f===n && x.y===y && x.ycut); if(!mine.length) return null;
+  let mine = MODEL.fields.filter(x => x.f===n && x.y===y && x.ycut); if(!mine.length && LEGACY[n]) mine = MODEL.fields.filter(x => x.f===LEGACY[n] && x.y===y && x.ycut); if(!mine.length) return null;
   const x = mine[0], peers = MODEL.fields.filter(z => z.y===y && z.c===x.c && z.ycut), avg = d3.mean(peers, z => z.ycut);
   return {c:x.c, v:x.ycut, avg, d: avg ? x.ycut/avg-1 : 0};
 }
@@ -1999,12 +2001,13 @@ function fieldPopup(f){
   box.append(el('b', {}, fieldsOf(f).join(' + ')));
   fieldsOf(f).forEach(n => {
     const cs = cropsOfField(n, YEAR), yc = yieldClass(n, YEAR), fr = FIELD[n];
-    box.append(el('div', {class:'note'}, (fieldsOf(f).length > 1 ? n+': ' : '')+(fr ? nf(fr.ha)+' га в довіднику' : '')+' · урожай '+YEAR+': '+(cs.length ? cs.map(c => c.c).join(' / ') : 'немає даних')+(yc ? ' · '+nf(yc.v)+' ц/га' : '')));
+    const lg = LEGACY[n] && !(REF.prl || []).some(r => r.y===YEAR && r.f===n);
+    box.append(el('div', {class:'note'}, (fieldsOf(f).length > 1 ? n+': ' : '')+(fr ? nf(fr.ha)+' га в довіднику' : '')+' · урожай '+YEAR+': '+(cs.length ? cs.map(c => c.c).join(' / ') : 'немає даних')+(yc ? ' · '+nf(yc.v)+' ц/га' : '')+(lg && cs.length ? ' (дані спільного поля «'+LEGACY[n]+'»)' : '')));
     box.append(el('div', {class:'acts', style:'justify-content:flex-start;margin:4px 0'},
       el('button', {class:'btn small', onclick:() => { SELFIELD = n; location.hash = 'fields'; }}, 'Картка поля'),
       el('button', {class:'btn small', onclick:() => { HF = n; location.hash = 'history'; }}, 'Історія')));
   });
-  box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га (GPS '+nf(p.ha_gps)+' га) · '+(p.source || '')));
+  box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га'+(p.ha_gps ? ' (GPS '+nf(p.ha_gps)+' га)' : '')+' · '+(p.source || '')));
   if(p.flag) box.append(el('div', {class:'note', style:'color:var(--warn)'}, '⚠ '+p.flag));
   return box;
 }
@@ -2031,6 +2034,7 @@ async function renderMap(){
   try{
     if(!window.L){ info.textContent = 'Завантажую карту…'; loadCss(LEAF+'.css'); await loadScript(LEAF+'.js'); }
     if(!MAPV.geo){ MAPV.geo = await getJSON('geo/fields.json'); if(!MAPV.geo){ info.textContent = 'У сховищі ще немає geo/fields.json'; return; } }
+    MAPV.geo.features.forEach(x => { if(x.properties.legacy) LEGACY[x.properties.n] = x.properties.legacy; });
   }catch(e){ info.textContent = e.message; return; }
   if(!MAPV.map){
     MAPV.map = L.map('map', {zoomControl:true});
