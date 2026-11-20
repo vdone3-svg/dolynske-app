@@ -1195,7 +1195,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '20.11 перший прохід і межі';
+const APP_VER = '20.11 масиви по черзі';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2376,6 +2376,8 @@ const zLocal = g => { const all = zPolys(g).flatMap(p => p[0]), c = [d3.mean(all
   return p => [(p[0]-c[0])*kx, (p[1]-c[1])*ky]; };
 // pass = [[lon,lat] де почали перший прохід, [lon,lat] де його закінчили] → проходи просуваються від цієї лінії вглиб поля
 function zPassDir(g, pass){
+  const P = zPolys(g), mid = [(pass[0][0]+pass[1][0])/2, (pass[0][1]+pass[1][1])/2];
+  if(P.length > 1) g = {type:'Polygon', coordinates: d3.least(P, p => d3.min(p[0], q => (q[0]-mid[0])**2*0.44 + (q[1]-mid[1])**2))};   // масив, біля якого перший прохід
   const xy = zLocal(g), a = xy(pass[0]), b = xy(pass[1]), len = Math.hypot(b[0]-a[0], b[1]-a[1]), th = Math.atan2(b[1]-a[1], b[0]-a[0]);
   let phi = th + Math.PI/2; if(Math.cos(phi)*(-a[0]) + Math.sin(phi)*(-a[1]) < 0) phi = th - Math.PI/2;   // у бік центру поля
   return {phi, len, label:'Перший прохід на карті ('+Math.round(len)+' м) — сіяли від '+zSide(phi+Math.PI)+' краю'};
@@ -2387,6 +2389,20 @@ function zHalf(g, line, phi){
   const F = zFrame(g, nphi), x0 = (F.fw(line[0])[0] + F.fw(line[1])[0])/2, lp = zPolys(g).map(p => p.map(r => r.map(F.fw)));
   const back = st => ({type:'MultiPolygon', coordinates: st.map(p => p.map(r => r.map(F.bw))).filter(p => zArea(p[0].map(F.fw)) > 1)});
   return {parts:[back(zStrip(lp, -1e9, x0)), back(zStrip(lp, x0, 1e9))], cos:Math.abs(Math.cos(nphi-phi))};
+}
+// поле з кількох масивів: сіяли масив за масивом (parts — порядок індексів), у кожному — від свого краю в напрямку phi
+const ZPART = ['східний', 'північно-східний', 'північний', 'північно-західний', 'західний', 'південно-західний', 'південний', 'південно-східний'];
+function zPartsInfo(g){ const P = zPolys(g), all = P.flatMap(p => p[0]), c = [d3.mean(all, q => q[0]), d3.mean(all, q => q[1])], k = Math.cos(c[1]*Math.PI/180);
+  return P.map((p, i) => { const m = [d3.mean(p[0], q => q[0]), d3.mean(p[0], q => q[1])];
+    return {i, ha:+(turf.area({type:'Polygon', coordinates:p})/1e4).toFixed(2), name: ZPART[((Math.round(Math.atan2(m[1]-c[1], (m[0]-c[0])*k)/(Math.PI/4)) % 8) + 8) % 8]+' масив'}; }); }
+function zCutSeq(geoms, phi, shares){   // geoms — масиви в порядку сівби; shares — частки гібридів у порядку сівби
+  const A = geoms.map(x => turf.area(x)), T = d3.sum(A) || 1, out = shares.map(() => zEmpty()); let c = 0, s0 = 0;
+  const iv = shares.map(sh => { const r = [s0, s0 + sh*T]; s0 = r[1]; return r; }); iv[iv.length-1][1] = T + 1;
+  geoms.forEach((g, p) => { const a = c, b = c + A[p]; c = b; if(A[p] < 1) return;
+    const ks = [], fr = []; iv.forEach((r, k) => { const o = Math.min(r[1], b) - Math.max(r[0], a); if(o > 0.5){ ks.push(k); fr.push(o); } });
+    if(!ks.length) return; const fs = d3.sum(fr), gs = ks.length===1 ? [g] : zCut(g, phi, fr.map(f => f/fs));
+    ks.forEach((k, j) => { if(gs[j] && gs[j].coordinates.length) out[k].coordinates.push(...zPolys(gs[j])); }); });
+  return out;
 }
 const zEmpty = () => ({type:'MultiPolygon', coordinates:[]});
 const zHas = g => g && g.coordinates && g.coordinates.length;
@@ -2410,6 +2426,7 @@ async function zoneEditor(n){
   let pass = src0.pass || (tpl && tpl.pass) || null, dsel = src0.src==='pass' && pass ? 'pass' : String(src0.vi || 0);
   let mode = (old && old.mode) || (tpl && tpl.mode) || 'shuttle';
   const bounds = {}; ((old && old.bounds) || []).forEach(b => bounds[b.after] = b.line);
+  const PI = zPartsInfo(g); let order = (old && old.parts) || (tpl && tpl.parts) || PI.map(x => x.i); if(order.length!==PI.length) order = PI.map(x => x.i);
   let prev = null, res = [], warn = [], saveTpl = null;
   const fills = fillsOf(n, YEAR);
   const curDir = () => dsel==='pass' && pass ? {src:'pass', pass, ...zPassDir(g, pass)} : {src:'list', vi:+dsel, ...V[+dsel]};
@@ -2432,7 +2449,8 @@ async function zoneEditor(n){
       segs.forEach(s => {
         if(!zHas(s.g)){ s.items.forEach(i => res.push({h:i.h, geometry:zEmpty(), manual:false})); warn.push('Зона «'+s.items.map(i => i.h).join(', ')+'» порожня — межа не перетинає поле або стоїть за його краєм.'); return; }
         if(s.items.length===1){ res.push({h:s.items[0].h, geometry:s.g, manual:false, bounded:anyB}); return; }
-        const sw = d3.sum(s.items, i => +i.share||0) || 1, gs = zCut(s.g, D.phi, s.items.map(i => (+i.share||0)/sw));
+        const sw = d3.sum(s.items, i => +i.share||0) || 1, sh = s.items.map(i => (+i.share||0)/sw);
+        const gs = PI.length > 1 ? zCutSeq(order.map(k => { const x = turf.intersect(turf.featureCollection([{type:'Feature', properties:{}, geometry:s.g}, {type:'Feature', properties:{}, geometry:{type:'Polygon', coordinates:zPolys(g)[k]}}])); return x ? x.geometry : zEmpty(); }).filter(zHas), D.phi, sh) : zCut(s.g, D.phi, sh);
         s.items.forEach((i, k) => res.push({h:i.h, geometry:gs[k], manual:false, bounded:false, prop:true, approx: mode==='block'}));
       });
       if(mode==='block' && res.some(r => r.approx)) warn.push('Загінний спосіб: пропорційний поділ від краю не відповідає дійсності. Проведіть «межу після» між гібридами або обведіть зони вручну — інакше Claude писатиме лише «ймовірно».');
@@ -2456,15 +2474,15 @@ async function zoneEditor(n){
     const on = items.filter(i => i.on), D = curDir(), bl = on.filter(i => !i.manual && bounds[i.h] && i!==on.filter(x => !x.manual).slice(-1)[0]).map(i => ({after:i.h, line:bounds[i.h]}));
     const how = [res.some(r => r.manual) ? 'ручні зони' : '', bl.length ? 'межі гібридів лініями' : '', res.some(r => r.prop) ? 'пропорційно п.о. у напрямку проходів' : ''].filter(Boolean).join(' + ') || 'одна зона';
     doc.zones[zKey(YEAR, n)] = {y:YEAR, f:n, status, mode, method: how+'; '+(mode==='block' ? 'загінний' : 'човниковий'),
-      variant:D.label, dir: D.src==='pass' ? {src:'pass', pass} : {src:'list', vi:D.vi}, bounds:bl,
+      variant:D.label, dir: D.src==='pass' ? {src:'pass', pass} : {src:'list', vi:D.vi}, bounds:bl, ...(PI.length > 1 ? {parts:order, parts_names:order.map(k => PI[k].name)} : {}),
       items: res.map(r => ({h:r.h, share: r.prop ? +(on.find(i => i.h===r.h).share) : null, ha:r.ha, manual:!!r.manual, bounded:!!r.bounded, approx:!!r.approx, geometry:r.geometry})),
       by: ROLE_NAMES[ROLE] || '', at: new Date().toISOString()};
     doc.updated_at = new Date().toISOString();
     try{ await putJSON(ZONES_PATH, doc, 'Зони гібридів: '+n+' ('+YEAR+') — '+(status==='confirmed' ? 'підтверджено' : 'пропозиція')); MAPV.zones = doc; }
     catch(e){ toast('Не збережено: '+e.message); return; }
-    if(saveTpl && saveTpl.checked){   // шаблон «як сіємо на цьому полі» — у довідник полів (geo/fields.json)
+    if(status==='confirmed' && saveTpl && saveTpl.checked){   // шаблон «як сіємо на цьому полі» — у довідник полів (geo/fields.json)
       try{ const geo = await getJSON('geo/fields.json'), f = geo && geo.features.find(x => fieldsOf(x).includes(n));
-        if(f){ f.properties.sow = {pass: D.src==='pass' ? pass : null, phi:+D.phi.toFixed(4), label: D.src==='pass' ? 'сіяли від '+zSide(D.phi+Math.PI)+' краю (перший прохід на карті)' : D.label, mode, by: ROLE_NAMES[ROLE] || '', at:new Date().toISOString()};
+        if(f){ f.properties.sow = {pass: D.src==='pass' ? pass : null, phi:+D.phi.toFixed(4), label: D.src==='pass' ? 'сіяли від '+zSide(D.phi+Math.PI)+' краю (перший прохід на карті)'+(PI.length > 1 ? ', масиви: '+order.map(k => PI[k].name).join(' → ') : '') : D.label, mode, ...(PI.length > 1 ? {parts:order} : {}), by: ROLE_NAMES[ROLE] || '', at:new Date().toISOString()};
           await putJSON('geo/fields.json', geo, 'Довідник полів: напрям сівби «'+n+'»'); MAPV.geo = geo; geo.features.forEach(x => { if(x.properties.legacy) LEGACY[x.properties.n] = x.properties.legacy; }); } }
       catch(e){ toast('Зони збережено, шаблон поля — ні: '+e.message); }
     }
@@ -2515,9 +2533,12 @@ async function zoneEditor(n){
       fills.length ? el('div', {class:'note'}, 'Точки засипки на карті: '+fills.length) : '',
       el('div', {class:'toolbar'}, el('span', {class:'note'}, 'Напрям:'), vs, el('button', {class:'btn small', onclick:pickPass}, pass ? 'Перепоставити перший прохід' : 'Поставити перший прохід')),
       el('div', {class:'toolbar'}, el('span', {class:'note'}, 'Спосіб:'), ms),
+      PI.length > 1 ? el('div', {class:'toolbar', style:'gap:6px'}, el('span', {class:'note'}, 'Поле з '+PI.length+' масивів, порядок сівби:'),
+        order.map((k, j) => el('span', {class:'toolbar', style:'gap:2px'}, el('b', {}, (j+1)+'. '+PI[k].name+' '+nf(PI[k].ha)+' га'),
+          j ? el('button', {class:'btn small ghost', title:'раніше', onclick:() => { [order[j-1], order[j]] = [order[j], order[j-1]]; render(); }}, '↑') : ''))) : '',
       ...rows,
       ...warn.map(w => el('div', {class:'note', style:'color:#ffb02e'}, '⚠ '+w)),
-      el('label', {class:'note', style:'display:flex;gap:8px;align-items:center'}, saveTpl, ' Запам’ятати напрям і спосіб як шаблон поля «'+n+'» (наступного року підставиться сам)'),
+      el('label', {class:'note', style:'display:flex;gap:8px;align-items:center'}, saveTpl, ' Запам’ятати напрям і спосіб як шаблон поля «'+n+'» (при підтвердженні; наступного року підставиться сам)'),
       el('div', {class:'toolbar'},
         el('button', {class:'btn primary small', onclick:() => save('confirmed')}, 'Підтвердити: так сіяли'),
         el('button', {class:'btn small', onclick:() => save('proposed')}, 'Зберегти як пропозицію'),
