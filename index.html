@@ -465,6 +465,8 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
         <button class="btn small" id="map-off">Зберегти карту офлайн</button>
         <button class="chip" id="map-sc" aria-pressed="true">Огляди</button>
         <button class="chip" id="map-pai" aria-pressed="false" hidden>Паї</button>
+        <button class="chip" id="map-hyb" aria-pressed="false">Гібриди</button>
+        <button class="btn small" id="map-fill">Засипка насіння</button>
         <button class="btn small" id="map-split" hidden>Розділити Малаківку</button></div>
       <div id="map-owner"></div>
       <div id="map"></div>
@@ -1193,7 +1195,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '19.11 відео';
+const APP_VER = '20.11 зони гібридів';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2096,6 +2098,7 @@ function fieldPopup(f){
       el('button', {class:'btn small', onclick:() => { HF = n; location.hash = 'history'; }}, 'Історія')));
   });
   box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га'+(p.ha_gps ? ' (GPS '+nf(p.ha_gps)+' га)' : '')+' · '+(p.source || '')));
+  fieldsOf(f).forEach(n => box.append(...zonePopupPart(n)));
   if(p.flag) box.append(el('div', {class:'note', style:'color:var(--warn)'}, '⚠ '+p.flag));
   return box;
 }
@@ -2105,6 +2108,7 @@ function drawFields(){
     l.bindTooltip(fieldsOf(f).join(' + '), {permanent:true, direction:'center', className:'map-lbl'});
     l.bindPopup(() => fieldPopup(f), {maxWidth:320});
   }}).addTo(MAPV.map);
+  drawZones();
   if(MAPV.paiL) MAPV.paiL.bringToFront();
   renderMapLegend();
 }
@@ -2123,6 +2127,7 @@ async function renderMap(){
     if(!window.L){ info.textContent = 'Завантажую карту…'; loadCss(LEAF+'.css'); await loadScript(LEAF+'.js'); }
     if(!await ensureGeo()){ info.textContent = 'У сховищі ще немає geo/fields.json'; return; }
     OUTQ = await OUTBOX.all().catch(() => []);
+    await ensureZones();
   }catch(e){ info.textContent = e.message; return; }
   if(!MAPV.map){
     MAPV.map = L.map('map', {zoomControl:true});
@@ -2284,6 +2289,188 @@ $('#map-split').addEventListener('click', () => {
     el('button', {class:'btn primary small', onclick:done}, 'Готово'), el('button', {class:'btn small', onclick:stop}, 'Скасувати'), msg));
 });
 
+// ======= ЗОНИ ГІБРИДІВ: де на полі який гібрид (geo/zones.json)
+// 2026: пропорційно посівним одиницям від краю, з якого почали сіяти (власник/агроном підтверджує на карті);
+// з 2027: точки «Засипали гібрид» з телефона (+ трек Fort Monitor, коли буде API)
+const ZONES_PATH = 'geo/zones.json', ZCOL = ['#ff5c8a', '#33b8ff', '#ffb02e', '#9b6bff', '#2ee6a8', '#ff7a2e', '#d4ff3d', '#ff3df2'];
+const zKey = (y, f) => y+'|'+f;
+async function ensureZones(){ if(MAPV.zones===undefined){ try{ MAPV.zones = await getJSON(ZONES_PATH); }catch(e){ MAPV.zones = null; } if(!MAPV.zones) MAPV.zones = {kind:'hybrid-zones', v:1, zones:{}}; } return MAPV.zones; }
+const zoneOf = (n, y) => MAPV.zones && MAPV.zones.zones ? MAPV.zones.zones[zKey(y, n)] : null;
+// гібриди поля в сезоні: [{h, q, ha, d0, d1}] — з власних записів поля, інакше зі спільного поля до розділу
+function seedMix(n, y){
+  const pick = nm => MODEL.fields.filter(x => x.f===nm && x.y===y).flatMap(x => x.appl.filter(a => a.cat==='Насіння'));
+  let ap = pick(n), legacy = false; if(!ap.length && LEGACY[n]){ ap = pick(LEGACY[n]); legacy = true; }
+  const mix = d3.rollups(ap, v => ({q:d3.sum(v, a => +a.q||0), ha:d3.sum(v, a => +a.ha||0), u:v[0].u, d0:d3.min(v, a => a.d.n), d1:d3.max(v, a => a.d.n)}), a => a.mat)
+    .map(([h, s]) => ({h, ...s})).sort((a, b) => a.d0-b.d0 || b.q-a.q);
+  mix.legacy = legacy; return mix;
+}
+const fillsOf = (n, y) => Object.values(DOCS).filter(d => d && d.kind==='event' && d.fill && d.fill.f===n && +d.fill.y===+y).map(d => d.fill);
+// --- геометрія в метрах навколо центру поля
+const zPolys = g => g.type==='Polygon' ? [g.coordinates] : g.type==='MultiPolygon' ? g.coordinates : [];
+function zFrame(g, phi){   // phi — напрям, у якому просувались проходи (рад., від сходу проти год. стрілки)
+  const all = zPolys(g).flatMap(p => p[0]); const c = [d3.mean(all, p => p[0]), d3.mean(all, p => p[1])];
+  const kx = Math.cos(c[1]*Math.PI/180)*111320, ky = 110540, cs = Math.cos(-phi), sn = Math.sin(-phi), cb = Math.cos(phi), sb = Math.sin(phi);
+  return {fw: p => { const x = (p[0]-c[0])*kx, y = (p[1]-c[1])*ky; return [x*cs - y*sn, x*sn + y*cs]; },
+          bw: p => { const x = p[0]*cb - p[1]*sb, y = p[0]*sb + p[1]*cb; return [+(x/kx + c[0]).toFixed(7), +(y/ky + c[1]).toFixed(7)]; }};
+}
+function zAxis(g){   // головна вісь поля (кут довгої сторони), PCA по вершинах
+  const all = zPolys(g).flatMap(p => p[0]), c = [d3.mean(all, p => p[0]), d3.mean(all, p => p[1])], kx = Math.cos(c[1]*Math.PI/180)*111320, ky = 110540;
+  let sxx = 0, syy = 0, sxy = 0; all.forEach(p => { const x = (p[0]-c[0])*kx, y = (p[1]-c[1])*ky; sxx += x*x; syy += y*y; sxy += x*y; });
+  return 0.5*Math.atan2(2*sxy, sxx-syy);
+}
+function zClip(ring, x0, less){   // Сазерленд—Ходжмен: півплощина x<=x0 (less) або x>=x0
+  const ins = p => less ? p[0] <= x0 : p[0] >= x0, out = [];
+  for(let i = 0; i < ring.length-1; i++){ const a = ring[i], b = ring[i+1], ia = ins(a), ib = ins(b);
+    if(ia) out.push(a);
+    if(ia!==ib){ const t = (x0-a[0])/(b[0]-a[0]); out.push([x0, a[1]+t*(b[1]-a[1])]); } }
+  if(out.length) out.push(out[0]); return out;
+}
+const zArea = r => { let s = 0; for(let i = 0; i < r.length-1; i++) s += r[i][0]*r[i+1][1] - r[i+1][0]*r[i][1]; return Math.abs(s)/2; };
+function zStrip(lp, a, b){ return lp.map(p => p.map(r => zClip(zClip(r, a, false), b, true))).filter(p => p[0].length > 3); }
+const zPolyArea = lp => d3.sum(lp, p => zArea(p[0]) - d3.sum(p.slice(1), zArea));
+// поділ геометрії g на смуги з частками shares (сума 1) у напрямку phi
+function zCut(g, phi, shares){
+  const F = zFrame(g, phi), lp = zPolys(g).map(p => p.map(r => r.map(F.fw)));
+  const xs = lp.flatMap(p => p[0].map(q => q[0])), x0 = d3.min(xs)-1, x1 = d3.max(xs)+1, tot = zPolyArea(lp);
+  const cutAt = s => { let lo = x0, hi = x1; for(let i = 0; i < 50; i++){ const m = (lo+hi)/2; if(zPolyArea(zStrip(lp, x0, m)) < s*tot) lo = m; else hi = m; } return (lo+hi)/2; };
+  let acc = 0, prev = x0; return shares.map((s, i) => { acc += s; const nx = i===shares.length-1 ? x1 : cutAt(acc), st = zStrip(lp, prev, nx); prev = nx;
+    const coords = st.map(p => p.map(r => r.map(F.bw))).filter(p => zArea(p[0].map(F.fw)) > 1);
+    return {type:'MultiPolygon', coordinates:coords}; });
+}
+const ZSIDE = ['східного', 'північно-східного', 'північного', 'північно-західного', 'західного', 'південно-західного', 'південного', 'південно-східного'];
+const zSide = a => ZSIDE[((Math.round(a/(Math.PI/4)) % 8) + 8) % 8];
+function zVariants(g){ const t = zAxis(g); const out = [];
+  [['вздовж', t+Math.PI/2], ['поперек', t]].forEach(([w, p]) => [0, Math.PI].forEach(r => { const phi = p+r;
+    out.push({w, phi, start:zSide(phi+Math.PI), label:'Проходи '+w+' поля, почали від '+zSide(phi+Math.PI)+' краю'}); }));
+  return out; }
+const haOf = g => +(turf.area(g)/1e4).toFixed(2);
+// гібрид у точці: {h, sure, m (до межі з іншою зоною), status}
+function hybridAt(n, y, lat, lon){
+  const z = zoneOf(n, y), pt = [lon, lat]; if(!z || !z.items) return null;
+  const it = z.items.find(i => i.geometry && inGeom(pt, i.geometry)); if(!it) return null;
+  const m = d3.min(z.items.filter(i => i!==it && i.geometry && i.geometry.coordinates.length), i => distToGeom(pt, i.geometry));
+  return {h:it.h, m: m==null ? null : Math.round(m), confirmed: z.status==='confirmed', sure: z.status==='confirmed' && (m==null || m > 30)};
+}
+function drawZones(){
+  if(MAPV.zl){ MAPV.zl.remove(); MAPV.zl = null; } if(!MAPV.showZ || !MAPV.zones) return;
+  const lay = L.layerGroup();
+  Object.values(MAPV.zones.zones || {}).filter(z => +z.y===+YEAR).forEach(z => z.items.forEach((it, i) => { if(!it.geometry || !it.geometry.coordinates.length) return;
+    L.geoJSON(it.geometry, {style:{color:'#000', weight:1, fillColor:ZCOL[i % ZCOL.length], fillOpacity:.5, dashArray: z.status==='confirmed' ? null : '5 4'}, interactive:false})
+      .bindTooltip(it.h, {permanent:true, direction:'center', className:'map-lbl small'}).addTo(lay); }));
+  MAPV.geo.features.forEach(f => fieldsOf(f).forEach(n => fillsOf(n, YEAR).forEach(p => L.circleMarker([p.lat, p.lon], {radius:6, color:'#000', weight:1, fillColor:'#fff', fillOpacity:1})
+    .bindTooltip('Засипали '+p.h+(p.q ? ' · '+p.q+' п.о.' : '')+' · '+new Date(p.at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})).addTo(lay))));
+  MAPV.zl = lay.addTo(MAPV.map);
+}
+function zonePopupPart(n){
+  const mix = seedMix(n, YEAR), z = zoneOf(n, YEAR), out = [];
+  if(mix.length > 1 || z){
+    out.push(el('div', {class:'note'}, z ? 'Зони гібридів: '+z.items.map(i => i.h+' '+nf(i.ha)+' га').join(' · ')+(z.status==='confirmed' ? ' ✓ підтверджено' : ' — пропозиція, не підтверджено')
+      : '⚠ Гібридів '+mix.length+', зони не задані — Claude не знає, що росте в точці огляду'));
+    if(ROLE==='o' || ROLE==='a') out.push(el('button', {class:'btn small', onclick:() => { MAPV.map.closePopup(); zoneEditor(n); }}, z ? 'Змінити зони гібридів' : 'Задати зони гібридів'));
+  }
+  return out;
+}
+// --- редактор зон: порядок, частки, край старту, ручна зона; попередній перегляд на карті
+async function zoneEditor(n){
+  if(!window.turf) await loadScript(TURF); await ensureZones();
+  const feat = MAPV.geo.features.find(f => fieldsOf(f).includes(n)); if(!feat) return;
+  const g = feat.geometry, total = haOf(g), mix = seedMix(n, YEAR), old = zoneOf(n, YEAR), V = zVariants(g), box = $('#map-owner');
+  const fieldHa = feat.properties.ha_geom || total;
+  // частки: за п.о. (норма висіву однакова), для поля після розділу — гібрид, площа якого збігається з полем
+  let items = mix.map(m => ({h:m.h, q:m.q, u:m.u, on:true, share:null, manual:null}));
+  if(mix.legacy){ const hit = mix.find(m => m.ha && Math.abs(m.ha-fieldHa)/fieldHa < 0.15); if(hit) items.forEach(i => i.on = i.h===hit.h); }
+  if(old){ const ord = old.items.map(i => i.h); items.sort((a, b) => (ord.indexOf(a.h)+1 || 99) - (ord.indexOf(b.h)+1 || 99));
+    items.forEach(i => { const o = old.items.find(x => x.h===i.h); i.on = !!o; if(o){ i.share = o.share; if(o.manual) i.manual = o.geometry; } }); }
+  const qsum = () => d3.sum(items.filter(i => i.on), i => i.q) || 1;
+  items.forEach(i => { if(i.share==null) i.share = +(100*i.q/qsum()).toFixed(1); });
+  let vi = old && old.variant ? Math.max(0, V.findIndex(v => v.label===old.variant)) : 0, prev = null, res = [];
+  const fills = fillsOf(n, YEAR);
+  const compute = () => {
+    const on = items.filter(i => i.on); res = [];
+    let rest = {type:'Feature', properties:{}, geometry:g};
+    on.filter(i => i.manual).forEach(i => { const part = turf.intersect(turf.featureCollection([rest, {type:'Feature', properties:{}, geometry:i.manual}]));
+      if(part){ res.push({h:i.h, geometry:part.geometry, manual:true}); rest = turf.difference(turf.featureCollection([rest, part])) || null; } });
+    const auto = on.filter(i => !i.manual), sw = d3.sum(auto, i => +i.share||0) || 1;
+    if(auto.length && rest){ const geoms = zCut(rest.geometry, V[vi].phi, auto.map(i => (+i.share||0)/sw)); auto.forEach((i, k) => res.push({h:i.h, geometry:geoms[k], manual:false})); }
+    res.sort((a, b) => on.findIndex(i => i.h===a.h) - on.findIndex(i => i.h===b.h));
+    res.forEach(r => r.ha = r.geometry && r.geometry.coordinates.length ? haOf(r.geometry) : 0);
+  };
+  const preview = () => { if(prev) prev.remove(); prev = L.layerGroup().addTo(MAPV.map);
+    res.forEach(r => { if(!r.geometry || !r.geometry.coordinates.length) return; const k = items.findIndex(i => i.h===r.h);
+      L.geoJSON(r.geometry, {style:{color:'#000', weight:2, fillColor:ZCOL[k % ZCOL.length], fillOpacity:.6}, interactive:false}).bindTooltip(r.h+' · '+nf(r.ha)+' га', {permanent:true, direction:'center', className:'map-lbl'}).addTo(prev); });
+    fills.forEach(p => L.circleMarker([p.lat, p.lon], {radius:7, color:'#000', weight:2, fillColor:'#fff', fillOpacity:1}).bindTooltip('Засипали '+p.h).addTo(prev));
+  };
+  const stop = () => { if(prev) prev.remove(); box.replaceChildren(); drawZones(); };
+  const save = async status => {
+    const doc = await (async () => { try{ return await getJSON(ZONES_PATH); }catch(e){ return null; } })() || {kind:'hybrid-zones', v:1, zones:{}};
+    const on = items.filter(i => i.on);
+    doc.zones[zKey(YEAR, n)] = {y:YEAR, f:n, status, method: on.some(i => i.manual) ? 'пропорційно п.о. + ручні зони' : 'пропорційно п.о. від краю старту', variant:V[vi].label,
+      items: res.map(r => ({h:r.h, share: r.manual ? null : +(on.find(i => i.h===r.h).share), ha:r.ha, manual:r.manual, geometry:r.geometry})),
+      by: ROLE_NAMES[ROLE] || '', at: new Date().toISOString()};
+    doc.updated_at = new Date().toISOString();
+    try{ await putJSON(ZONES_PATH, doc, 'Зони гібридів: '+n+' ('+YEAR+') — '+(status==='confirmed' ? 'підтверджено' : 'пропозиція')); MAPV.zones = doc; MAPV.showZ = true; $('#map-hyb').setAttribute('aria-pressed', 'true'); stop();
+      toast(status==='confirmed' ? 'Зони «'+n+'» підтверджено' : 'Пропозицію збережено'); }
+    catch(e){ toast('Не збережено: '+e.message); }
+  };
+  const drawManual = i => {
+    const pts = [], line = L.polygon([], {color:'#ffe14d', weight:3, dashArray:'4 4', fillOpacity:.15, interactive:false}).addTo(MAPV.map);
+    const onClick = e => { pts.push(e.latlng); line.setLatLngs(pts); };
+    const fin = ok => { MAPV.map.off('click', onClick); line.remove(); $('#map').classList.remove('drawing');
+      if(ok && pts.length >= 3){ const ring = pts.map(p => [p.lng, p.lat]); ring.push(ring[0]); i.manual = {type:'Polygon', coordinates:[ring]}; } render(); };
+    $('#map').classList.add('drawing'); MAPV.map.on('click', onClick);
+    box.replaceChildren(el('div', {class:'toolbar'}, el('b', {}, 'Обведіть зону «'+i.h+'»'), el('span', {class:'note'}, 'Ставте точки по межі; за краєм поля зайве обріжеться.'),
+      el('button', {class:'btn small', onclick:() => { pts.pop(); line.setLatLngs(pts); }}, 'Прибрати точку'),
+      el('button', {class:'btn primary small', onclick:() => fin(true)}, 'Готово'), el('button', {class:'btn small', onclick:() => fin(false)}, 'Скасувати')));
+  };
+  const render = () => {
+    compute(); preview();
+    const rows = items.map((i, k) => el('div', {class:'toolbar', style:'gap:6px'},
+      el('span', {style:'display:inline-block;width:14px;height:14px;border-radius:3px;background:'+ZCOL[k % ZCOL.length]}),
+      el('label', {}, el('input', {type:'checkbox', ...(i.on ? {checked:''} : {}), on:{change: ev => { i.on = ev.target.checked; render(); }}}), ' '+i.h),
+      el('span', {class:'note'}, nf(i.q)+' '+(i.u || 'п.о.')),
+      i.manual ? el('span', {class:'note'}, 'зона обведена вручну') :
+        el('input', {type:'number', min:'0', step:'0.1', value:i.share, style:'width:72px', ...(i.on ? {} : {disabled:''}), on:{change: ev => { i.share = +ev.target.value; render(); }}}), i.manual ? '' : el('span', {class:'note'}, '%'),
+      el('b', {}, (res.find(r => r.h===i.h) ? nf(res.find(r => r.h===i.h).ha)+' га' : '')),
+      el('button', {class:'btn small ghost', title:'раніше', ...(k ? {} : {disabled:''}), onclick:() => { [items[k-1], items[k]] = [items[k], items[k-1]]; render(); }}, '↑'),
+      el('button', {class:'btn small ghost', title:'пізніше', ...(k < items.length-1 ? {} : {disabled:''}), onclick:() => { [items[k+1], items[k]] = [items[k], items[k+1]]; render(); }}, '↓'),
+      i.on ? el('button', {class:'btn small ghost', onclick:() => { if(i.manual){ i.manual = null; render(); } else drawManual(i); }}, i.manual ? 'прибрати ручну зону' : 'обвести вручну') : ''));
+    const vs = el('select', {on:{change: ev => { vi = +ev.target.value; render(); }}}, V.map((v, k) => el('option', k===vi ? {value:k, selected:''} : {value:k}, v.label)));
+    box.replaceChildren(el('div', {class:'card', style:'display:grid;gap:8px'},
+      el('b', {}, 'Зони гібридів · '+n+' · урожай '+YEAR+' · контур '+nf(total)+' га'),
+      el('div', {class:'note'}, 'Порядок — як сіяли (перший від краю старту). Частки — за посівними одиницями (при однаковій нормі висіву); змініть, якщо норма різна. Зону, межу якої знаєте, обведіть вручну — решта поділиться пропорційно.'+(mix.legacy ? ' Дані посіву — зі спільного поля «'+LEGACY[n]+'»: залиште лише гібриди цього поля.' : '')),
+      fills.length ? el('div', {class:'note'}, 'Точки засипки на карті: '+fills.length) : '',
+      ...rows, el('div', {class:'toolbar'}, vs),
+      el('div', {class:'toolbar'},
+        el('button', {class:'btn primary small', onclick:() => save('confirmed')}, 'Підтвердити: так сіяли'),
+        el('button', {class:'btn small', onclick:() => save('proposed')}, 'Зберегти як пропозицію'),
+        el('button', {class:'btn small', onclick:stop}, 'Скасувати'))));
+  };
+  MAPV.map.closePopup(); MAPV.map.fitBounds(L.geoJSON(g).getBounds(), {padding:[20, 20]});
+  render(); box.scrollIntoView({behavior:'smooth', block:'start'});
+}
+// --- «Засипали гібрид»: точка й час з телефона → події (з 2027 — основа зон)
+async function seedFill(){
+  const box = $('#map-owner'), msg = el('span', {class:'note'}, 'Визначаю місце…');
+  box.replaceChildren(el('div', {class:'card', style:'display:grid;gap:8px'}, el('b', {}, 'Засипка насіння'), msg));
+  let g = null; try{ g = posObj(await bestPos()); }catch(e){ msg.textContent = e.message+' — без точки засипку записати не можна'; return; }
+  const r = fieldAt(g.lat, g.lon), f0 = r && (r.inside || r.m <= 150) ? fieldsOf(r.f)[0] : '';
+  const now = new Date(), y = now.getFullYear() + (now.getMonth() >= 7 ? 1 : 0);
+  const fs = el('select', {}, el('option', {value:''}, '— поле —'), MAPV.geo.features.flatMap(fieldsOf).map(x => el('option', x===f0 ? {value:x, selected:''} : {value:x}, x)));
+  const hs = el('select', {}, el('option', {value:''}, '— гібрид / сорт —'), REF.mats.filter(m => m.cat==='Насіння').map(m => el('option', {value:m.n}, m.n)));
+  const q = el('input', {type:'number', min:'0', step:'0.5', placeholder:'скільки засипали (необов’язково)', style:'max-width:220px'});
+  const go = async () => { if(!fs.value || !hs.value){ toast('Виберіть поле й гібрид'); return; }
+    const fill = {f:fs.value, y, h:hs.value, q: q.value ? +q.value : null, lat:g.lat, lon:g.lon, acc:g.acc, at:new Date().toISOString()};
+    await saveEvent({}, 'Засипка насіння: '+fill.h+' · '+fill.f, {fill}); box.replaceChildren(); MAPV.showZ = true; $('#map-hyb').setAttribute('aria-pressed', 'true'); drawZones(); toast('Записано: '+fill.h+' · '+fill.f); };
+  box.replaceChildren(el('div', {class:'card', style:'display:grid;gap:8px;max-width:520px'},
+    el('b', {}, 'Засипка насіння · урожай '+y),
+    el('div', {class:'note'}, (r ? (r.inside ? 'Ви на полі «'+f0+'»' : 'Поза контуром, найближче «'+fieldsOf(r.f)[0]+'» — '+Math.round(r.m)+' м') : 'Контури не завантажені')+' · точність ±'+g.acc+' м. Тисніть при КОЖНІЙ засипці або зміні гібриду — з цих точок будуються зони гібридів на полі.'),
+    fs, hs, q, el('div', {class:'toolbar'}, el('button', {class:'btn primary', onclick:go}, 'Записати засипку'), el('button', {class:'btn small', onclick:() => box.replaceChildren()}, 'Скасувати'))));
+}
+$('#map-fill').addEventListener('click', seedFill);
+$('#map-hyb').addEventListener('click', async ev => { MAPV.showZ = ev.target.getAttribute('aria-pressed')!=='true'; ev.target.setAttribute('aria-pressed', String(MAPV.showZ)); await ensureZones(); drawZones();
+  if(MAPV.showZ){ const need = MAPV.geo.features.flatMap(fieldsOf).filter(n => seedMix(n, YEAR).length > 1 && !zoneOf(n, YEAR));
+    $('#map-info').textContent = 'Зони гібридів · урожай '+YEAR+(need.length ? ' · без зон (кілька гібридів): '+need.join(', ')+' — відкрийте поле на карті → «Задати зони гібридів»' : ' · усі поля з кількома гібридами мають зони'); } });
+
 // ======= ОГЛЯДИ ПОЛІВ (агроном, власник, бригадир): нотатка + фото з GPS-міткою → поле визначається за контуром
 // документи: scouts/РРРР/…json; фото: media/РРРР/<id>-<n>.jpg (стиснені ~1600 px); без зв'язку — черга в IndexedDB
 const ROLE_NAMES = {o:'власник', b:'бригадир', a:'агроном'};
@@ -2436,7 +2623,7 @@ async function newScout(){
   SC = {id: date.replace(/-/g,'')+'-'+isoNow().slice(11,19).replace(/:/g,'')+'-'+Math.random().toString(36).slice(2,6), date, field:'', season:+date.slice(0,4), crop:'', phase:'', state:'', problems:{}, density:'', forecast:'', comment:'', voice:[], videos:[], sowOn:false, sow:{}, dc:{on:false, row:'', len:'10', counts:['', '', '']},
     author: LS.get('dl_name') || '', gps:null, gpsMsg:'Визначаю місце…', photos:[]};
   renderScForm(); $('#sc-form').scrollIntoView({behavior:'smooth', block:'start'});
-  try{ await ensureGeo(); }catch(e){}
+  try{ await ensureGeo(); await ensureZones(); }catch(e){}
   locateScout();
 }
 async function locateScout(){
@@ -2566,7 +2753,10 @@ function renderScForm(){
                 el('button', {class:'btn small ghost', onclick:() => { SC.pick = !SC.pick; renderScForm(); }}, 'інше поле')]
              : el('span', {class:'note'}, SC.gpsMsg || 'Визначаю місце…'),
     SC.pick || (SC.gpsState==='ok' && !SC.field) ? fieldSel('Вибрати поле…') : '');
-  const auto = SC.field ? el('div', {class:'note'}, 'Урожай '+SC.season+(SC.crop ? ' · '+SC.crop : '')+' — з даних господарства') : '';
+  const hybNote = (() => { if(!SC.field || !MODEL) return ''; const mix = seedMix(SC.field, SC.season); if(mix.length < 2) return mix.length ? ' · '+mix[0].h : '';
+    const h = SC.gps ? hybridAt(SC.field, SC.season, SC.gps.lat, SC.gps.lon) : null;
+    return h ? ' · гібрид тут: '+h.h+(h.sure ? '' : ' (ймовірно'+(h.m!=null && h.m <= 30 ? ', '+h.m+' м до межі зон' : h.confirmed ? '' : ', зони не підтверджені')+')') : ' · на полі '+mix.length+' гібриди, зони не задані'; })();
+  const auto = SC.field ? el('div', {class:'note'}, 'Урожай '+SC.season+(SC.crop ? ' · '+SC.crop : '')+hybNote+' — з даних господарства') : '';
   const thumbs = SC.photos.map(ph => el('figure', {class:'sc-ph'+(ph.bad ? ' bad' : '')}, ph.url ? el('img', {src:ph.url, alt:'фото'}) : el('div', {class:'sc-ph-wait'}, '…'),
     el('figcaption', {}, ph.status || (ph.blob ? (SC.field ? 'без GPS-точки → «'+SC.field+'»' : 'без GPS-точки') : '')),
     el('button', {class:'btn small ghost', 'aria-label':'прибрати фото', onclick:() => { SC.photos = SC.photos.filter(x => x!==ph); renderScForm(); }}, '✕')));
