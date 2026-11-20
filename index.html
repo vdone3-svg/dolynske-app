@@ -216,6 +216,8 @@ dialog::backdrop{background:rgb(0 0 0 / .4)}
 .check .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:12px;color:#fff}
 .ic.ok{background:var(--good)}.ic.warn{background:var(--warn)}.ic.bad{background:var(--bad)}.ic.block{background:var(--bad)}
 .toast{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;z-index:9;max-width:90vw}
+#data-upd{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:50;background:var(--warn);color:#000;padding:10px 14px;border-radius:10px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:13px;font-weight:600;white-space:nowrap}
+#data-upd .btn{background:#000;color:var(--warn);font-weight:700}
 table.dense th,table.dense td{padding:5px 6px;font-size:12px}
 table.dense th{position:sticky;top:0;background:var(--surface)}
 tr.total td{font-weight:700;background:var(--accent-soft)}
@@ -3146,7 +3148,25 @@ async function checkVersion(){
   }catch(e){}
 }
 setTimeout(checkVersion, 3000); setInterval(checkVersion, 5*60e3);
-document.addEventListener('visibilitychange', () => { if(document.visibilityState==='visible') checkVersion(); });
+document.addEventListener('visibilitychange', () => { if(document.visibilityState==='visible') { checkVersion(); checkDataUpdate(); } });
+
+// ---------- свіжість даних: коли dolynske-data оновлено — плашка «Оновити дані»
+let DATA_SHA = null;
+async function checkDataUpdate(){
+  if(!TOKEN || $('#data-upd')) return;
+  try{
+    const r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+'/commits?sha='+GH.branch+'&per_page=1', {cache:'no-store', headers:{'Authorization':'Bearer '+TOKEN}});
+    if(!r.ok) return;
+    const j = await r.json(); const sha = j[0] && j[0].sha;
+    if(!sha) return;
+    if(!DATA_SHA){ DATA_SHA = sha; return; }
+    if(sha === DATA_SHA) return;
+    document.body.append(el('div', {id:'data-upd', role:'alert'},
+      '📦 Дані оновлено — перезавантажте',
+      el('button', {class:'btn small', type:'button', onclick:() => location.reload()}, 'Оновити дані')));
+  }catch(e){}
+}
+setTimeout(checkDataUpdate, 5000); setInterval(checkDataUpdate, 2*60e3);
 
 </script>
 </body>
