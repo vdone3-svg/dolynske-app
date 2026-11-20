@@ -2399,7 +2399,7 @@ function zCutSeq(geoms, phi, shares){   // geoms — масиви в поряд�
   const A = geoms.map(x => turf.area(x)), T = d3.sum(A) || 1, out = shares.map(() => zEmpty()); let c = 0, s0 = 0;
   const iv = shares.map(sh => { const r = [s0, s0 + sh*T]; s0 = r[1]; return r; }); iv[iv.length-1][1] = T + 1;
   geoms.forEach((g, p) => { const a = c, b = c + A[p]; c = b; if(A[p] < 1) return;
-    const ks = [], fr = []; iv.forEach((r, k) => { const o = Math.min(r[1], b) - Math.max(r[0], a); if(o > 0.5){ ks.push(k); fr.push(o); } });
+    const ks = [], fr = []; iv.forEach((r, k) => { const o = Math.min(r[1], b) - Math.max(r[0], a); if(o > 500){ ks.push(k); fr.push(o); } });
     if(!ks.length) return; const fs = d3.sum(fr), gs = ks.length===1 ? [g] : zCut(g, phi, fr.map(f => f/fs));
     ks.forEach((k, j) => { if(gs[j] && gs[j].coordinates.length) out[k].coordinates.push(...zPolys(gs[j])); }); });
   return out;
