@@ -1195,7 +1195,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '20.11 зони гібридів';
+const APP_VER = '20.11 перший прохід і межі';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2349,7 +2349,7 @@ function hybridAt(n, y, lat, lon){
   const z = zoneOf(n, y), pt = [lon, lat]; if(!z || !z.items) return null;
   const it = z.items.find(i => i.geometry && inGeom(pt, i.geometry)); if(!it) return null;
   const m = d3.min(z.items.filter(i => i!==it && i.geometry && i.geometry.coordinates.length), i => distToGeom(pt, i.geometry));
-  return {h:it.h, m: m==null ? null : Math.round(m), confirmed: z.status==='confirmed', sure: z.status==='confirmed' && (m==null || m > 30)};
+  return {h:it.h, m: m==null ? null : Math.round(m), confirmed: z.status==='confirmed', approx: !!it.approx, sure: z.status==='confirmed' && !it.approx && (m==null || m > 30)};
 }
 function drawZones(){
   if(MAPV.zl){ MAPV.zl.remove(); MAPV.zl = null; } if(!MAPV.showZ || !MAPV.zones) return;
@@ -2368,49 +2368,160 @@ function zonePopupPart(n){
       : '⚠ Гібридів '+mix.length+', зони не задані — Claude не знає, що росте в точці огляду'));
     if(ROLE==='o' || ROLE==='a') out.push(el('button', {class:'btn small', onclick:() => { MAPV.map.closePopup(); zoneEditor(n); }}, z ? 'Змінити зони гібридів' : 'Задати зони гібридів'));
   }
+  const t = sowTpl(n); if(t) out.push(el('div', {class:'note'}, '📐 Як сіємо: '+sowTplText(t)));
   return out;
 }
-// --- редактор зон: порядок, частки, край старту, ручна зона; попередній перегляд на карті
+// --- напрям сівби без Fort Monitor: «перший прохід» двома дотиками; межі гібридів — лініями двома дотиками
+const zLocal = g => { const all = zPolys(g).flatMap(p => p[0]), c = [d3.mean(all, p => p[0]), d3.mean(all, p => p[1])], kx = Math.cos(c[1]*Math.PI/180)*111320, ky = 110540;
+  return p => [(p[0]-c[0])*kx, (p[1]-c[1])*ky]; };
+// pass = [[lon,lat] де почали перший прохід, [lon,lat] де його закінчили] → проходи просуваються від цієї лінії вглиб поля
+function zPassDir(g, pass){
+  const xy = zLocal(g), a = xy(pass[0]), b = xy(pass[1]), len = Math.hypot(b[0]-a[0], b[1]-a[1]), th = Math.atan2(b[1]-a[1], b[0]-a[0]);
+  let phi = th + Math.PI/2; if(Math.cos(phi)*(-a[0]) + Math.sin(phi)*(-a[1]) < 0) phi = th - Math.PI/2;   // у бік центру поля
+  return {phi, len, label:'Перший прохід на карті ('+Math.round(len)+' м) — сіяли від '+zSide(phi+Math.PI)+' краю'};
+}
+// поділ g лінією межі → [частина з боку старту, частина після межі]; cos — наскільки межа поперек проходів (1 — строго поперек)
+function zHalf(g, line, phi){
+  const xy = zLocal(g), a = xy(line[0]), b = xy(line[1]), th = Math.atan2(b[1]-a[1], b[0]-a[0]);
+  let nphi = th + Math.PI/2; if(Math.cos(nphi-phi) < 0) nphi = th - Math.PI/2;
+  const F = zFrame(g, nphi), x0 = (F.fw(line[0])[0] + F.fw(line[1])[0])/2, lp = zPolys(g).map(p => p.map(r => r.map(F.fw)));
+  const back = st => ({type:'MultiPolygon', coordinates: st.map(p => p.map(r => r.map(F.bw))).filter(p => zArea(p[0].map(F.fw)) > 1)});
+  return {parts:[back(zStrip(lp, -1e9, x0)), back(zStrip(lp, x0, 1e9))], cos:Math.abs(Math.cos(nphi-phi))};
+}
+const zEmpty = () => ({type:'MultiPolygon', coordinates:[]});
+const zHas = g => g && g.coordinates && g.coordinates.length;
+const MODES = {shuttle:'Човниковий — прохід за проходом від краю', block:'Загінний — поле сіяли загонами'};
+const sowTpl = n => { const f = MAPV.geo && MAPV.geo.features.find(x => fieldsOf(x).includes(n)); return f && f.properties.sow || null; };
+const sowTplText = s => s ? (s.label || 'напрям задано')+' · '+(s.mode==='block' ? 'загінний' : 'човниковий')+(s.by ? ' · '+s.by : '')+(s.at ? ' '+new Date(s.at).toLocaleDateString('uk-UA') : '') : '';
+// --- редактор зон: порядок, частки, напрям (перший прохід / список), спосіб сівби, межі гібридів, ручні зони; попередній перегляд на карті
 async function zoneEditor(n){
   if(!window.turf) await loadScript(TURF); await ensureZones();
   const feat = MAPV.geo.features.find(f => fieldsOf(f).includes(n)); if(!feat) return;
-  const g = feat.geometry, total = haOf(g), mix = seedMix(n, YEAR), old = zoneOf(n, YEAR), V = zVariants(g), box = $('#map-owner');
+  const g = feat.geometry, total = haOf(g), mix = seedMix(n, YEAR), old = zoneOf(n, YEAR), V = zVariants(g), box = $('#map-owner'), tpl = sowTpl(n);
   const fieldHa = feat.properties.ha_geom || total;
-  // частки: за п.о. (норма висіву однакова), для поля після розділу — гібрид, площа якого збігається з полем
   let items = mix.map(m => ({h:m.h, q:m.q, u:m.u, on:true, share:null, manual:null}));
   if(mix.legacy){ const hit = mix.find(m => m.ha && Math.abs(m.ha-fieldHa)/fieldHa < 0.15); if(hit) items.forEach(i => i.on = i.h===hit.h); }
   if(old){ const ord = old.items.map(i => i.h); items.sort((a, b) => (ord.indexOf(a.h)+1 || 99) - (ord.indexOf(b.h)+1 || 99));
     items.forEach(i => { const o = old.items.find(x => x.h===i.h); i.on = !!o; if(o){ i.share = o.share; if(o.manual) i.manual = o.geometry; } }); }
   const qsum = () => d3.sum(items.filter(i => i.on), i => i.q) || 1;
   items.forEach(i => { if(i.share==null) i.share = +(100*i.q/qsum()).toFixed(1); });
-  let vi = old && old.variant ? Math.max(0, V.findIndex(v => v.label===old.variant)) : 0, prev = null, res = [];
+  // напрям: 'pass' (2 дотики) або індекс варіанта зі списку; джерело — збережені зони → шаблон поля → перший варіант
+  const src0 = old && old.dir ? old.dir : old ? {src:'list', vi: Math.max(0, V.findIndex(v => v.label===old.variant))} : tpl ? (tpl.pass ? {src:'pass', pass:tpl.pass} : {src:'list', vi: Math.max(0, V.findIndex(v => v.label===tpl.label))}) : {src:'list', vi:0};
+  let pass = src0.pass || (tpl && tpl.pass) || null, dsel = src0.src==='pass' && pass ? 'pass' : String(src0.vi || 0);
+  let mode = (old && old.mode) || (tpl && tpl.mode) || 'shuttle';
+  const bounds = {}; ((old && old.bounds) || []).forEach(b => bounds[b.after] = b.line);
+  let prev = null, res = [], warn = [], saveTpl = null;
   const fills = fillsOf(n, YEAR);
+  const curDir = () => dsel==='pass' && pass ? {src:'pass', pass, ...zPassDir(g, pass)} : {src:'list', vi:+dsel, ...V[+dsel]};
   const compute = () => {
-    const on = items.filter(i => i.on); res = [];
+    const on = items.filter(i => i.on), D = curDir(); res = []; warn = [];
+    if(D.src==='pass' && D.len < 50) warn.push('Перший прохід коротший за 50 м — поставте точки на початку й наприкінці гону.');
     let rest = {type:'Feature', properties:{}, geometry:g};
-    on.filter(i => i.manual).forEach(i => { const part = turf.intersect(turf.featureCollection([rest, {type:'Feature', properties:{}, geometry:i.manual}]));
+    on.filter(i => i.manual).forEach(i => { const part = rest && turf.intersect(turf.featureCollection([rest, {type:'Feature', properties:{}, geometry:i.manual}]));
       if(part){ res.push({h:i.h, geometry:part.geometry, manual:true}); rest = turf.difference(turf.featureCollection([rest, part])) || null; } });
-    const auto = on.filter(i => !i.manual), sw = d3.sum(auto, i => +i.share||0) || 1;
-    if(auto.length && rest){ const geoms = zCut(rest.geometry, V[vi].phi, auto.map(i => (+i.share||0)/sw)); auto.forEach((i, k) => res.push({h:i.h, geometry:geoms[k], manual:false})); }
+    const auto = on.filter(i => !i.manual);
+    if(auto.length){
+      // межі гібридів ріжуть поле на загони; всередині загону з кількома гібридами — пропорційно п.о. у напрямку проходів
+      let R = rest ? rest.geometry : zEmpty(), seg = []; const segs = [];
+      auto.forEach((i, k) => { seg.push(i); const b = bounds[i.h];
+        if(b && k < auto.length-1){ if(!zHas(R)){ segs.push({items:seg, g:zEmpty()}); seg = []; return; }
+          const hv = zHalf(R, b, D.phi); if(hv.cos < 0.35) warn.push('Межа після «'+i.h+'» майже вздовж проходів — перевірте, чи правильно поставлені перший прохід і межа.');
+          segs.push({items:seg, g:hv.parts[0], b:true}); seg = []; R = hv.parts[1]; } });
+      segs.push({items:seg, g:R});
+      const anyB = segs.length > 1;
+      segs.forEach(s => {
+        if(!zHas(s.g)){ s.items.forEach(i => res.push({h:i.h, geometry:zEmpty(), manual:false})); warn.push('Зона «'+s.items.map(i => i.h).join(', ')+'» порожня — межа не перетинає поле або стоїть за його краєм.'); return; }
+        if(s.items.length===1){ res.push({h:s.items[0].h, geometry:s.g, manual:false, bounded:anyB}); return; }
+        const sw = d3.sum(s.items, i => +i.share||0) || 1, gs = zCut(s.g, D.phi, s.items.map(i => (+i.share||0)/sw));
+        s.items.forEach((i, k) => res.push({h:i.h, geometry:gs[k], manual:false, bounded:false, prop:true, approx: mode==='block'}));
+      });
+      if(mode==='block' && res.some(r => r.approx)) warn.push('Загінний спосіб: пропорційний поділ від краю не відповідає дійсності. Проведіть «межу після» між гібридами або обведіть зони вручну — інакше Claude писатиме лише «ймовірно».');
+    }
     res.sort((a, b) => on.findIndex(i => i.h===a.h) - on.findIndex(i => i.h===b.h));
-    res.forEach(r => r.ha = r.geometry && r.geometry.coordinates.length ? haOf(r.geometry) : 0);
+    res.forEach(r => r.ha = zHas(r.geometry) ? haOf(r.geometry) : 0);
   };
   const preview = () => { if(prev) prev.remove(); prev = L.layerGroup().addTo(MAPV.map);
-    res.forEach(r => { if(!r.geometry || !r.geometry.coordinates.length) return; const k = items.findIndex(i => i.h===r.h);
-      L.geoJSON(r.geometry, {style:{color:'#000', weight:2, fillColor:ZCOL[k % ZCOL.length], fillOpacity:.6}, interactive:false}).bindTooltip(r.h+' · '+nf(r.ha)+' га', {permanent:true, direction:'center', className:'map-lbl'}).addTo(prev); });
+    res.forEach(r => { if(!zHas(r.geometry)) return; const k = items.findIndex(i => i.h===r.h);
+      L.geoJSON(r.geometry, {style:{color:'#000', weight:2, fillColor:ZCOL[k % ZCOL.length], fillOpacity:.6, dashArray: r.approx ? '6 4' : null}, interactive:false}).bindTooltip(r.h+' · '+nf(r.ha)+' га', {permanent:true, direction:'center', className:'map-lbl'}).addTo(prev); });
+    const ll = p => [p[1], p[0]];
+    if(dsel==='pass' && pass){ L.polyline(pass.map(ll), {color:'#2ee66b', weight:5, interactive:false}).addTo(prev);
+      L.circleMarker(ll(pass[0]), {radius:8, color:'#000', weight:2, fillColor:'#2ee66b', fillOpacity:1, interactive:false}).bindTooltip('старт', {permanent:true, direction:'top', className:'map-lbl small'}).addTo(prev); }
+    Object.entries(bounds).forEach(([h, line]) => { if(!items.some(i => i.on && !i.manual && i.h===h)) return;
+      L.polyline(line.map(ll), {color:'#ffe14d', weight:4, dashArray:'8 6', interactive:false}).bindTooltip('межа після '+h, {permanent:true, direction:'center', className:'map-lbl small'}).addTo(prev); });
     fills.forEach(p => L.circleMarker([p.lat, p.lon], {radius:7, color:'#000', weight:2, fillColor:'#fff', fillOpacity:1}).bindTooltip('Засипали '+p.h).addTo(prev));
   };
   const stop = () => { if(prev) prev.remove(); box.replaceChildren(); drawZones(); };
   const save = async status => {
     const doc = await (async () => { try{ return await getJSON(ZONES_PATH); }catch(e){ return null; } })() || {kind:'hybrid-zones', v:1, zones:{}};
-    const on = items.filter(i => i.on);
-    doc.zones[zKey(YEAR, n)] = {y:YEAR, f:n, status, method: on.some(i => i.manual) ? 'пропорційно п.о. + ручні зони' : 'пропорційно п.о. від краю старту', variant:V[vi].label,
-      items: res.map(r => ({h:r.h, share: r.manual ? null : +(on.find(i => i.h===r.h).share), ha:r.ha, manual:r.manual, geometry:r.geometry})),
+    const on = items.filter(i => i.on), D = curDir(), bl = on.filter(i => !i.manual && bounds[i.h] && i!==on.filter(x => !x.manual).slice(-1)[0]).map(i => ({after:i.h, line:bounds[i.h]}));
+    const how = [res.some(r => r.manual) ? 'ручні зони' : '', bl.length ? 'межі гібридів лініями' : '', res.some(r => r.prop) ? 'пропорційно п.о. у напрямку проходів' : ''].filter(Boolean).join(' + ') || 'одна зона';
+    doc.zones[zKey(YEAR, n)] = {y:YEAR, f:n, status, mode, method: how+'; '+(mode==='block' ? 'загінний' : 'човниковий'),
+      variant:D.label, dir: D.src==='pass' ? {src:'pass', pass} : {src:'list', vi:D.vi}, bounds:bl,
+      items: res.map(r => ({h:r.h, share: r.prop ? +(on.find(i => i.h===r.h).share) : null, ha:r.ha, manual:!!r.manual, bounded:!!r.bounded, approx:!!r.approx, geometry:r.geometry})),
       by: ROLE_NAMES[ROLE] || '', at: new Date().toISOString()};
     doc.updated_at = new Date().toISOString();
-    try{ await putJSON(ZONES_PATH, doc, 'Зони гібридів: '+n+' ('+YEAR+') — '+(status==='confirmed' ? 'підтверджено' : 'пропозиція')); MAPV.zones = doc; MAPV.showZ = true; $('#map-hyb').setAttribute('aria-pressed', 'true'); stop();
-      toast(status==='confirmed' ? 'Зони «'+n+'» підтверджено' : 'Пропозицію збережено'); }
-    catch(e){ toast('Не збережено: '+e.message); }
+    try{ await putJSON(ZONES_PATH, doc, 'Зони гібридів: '+n+' ('+YEAR+') — '+(status==='confirmed' ? 'підтверджено' : 'пропозиція')); MAPV.zones = doc; }
+    catch(e){ toast('Не збережено: '+e.message); return; }
+    if(saveTpl && saveTpl.checked){   // шаблон «як сіємо на цьому полі» — у довідник полів (geo/fields.json)
+      try{ const geo = await getJSON('geo/fields.json'), f = geo && geo.features.find(x => fieldsOf(x).includes(n));
+        if(f){ f.properties.sow = {pass: D.src==='pass' ? pass : null, phi:+D.phi.toFixed(4), label: D.src==='pass' ? 'сіяли від '+zSide(D.phi+Math.PI)+' краю (перший прохід на карті)' : D.label, mode, by: ROLE_NAMES[ROLE] || '', at:new Date().toISOString()};
+          await putJSON('geo/fields.json', geo, 'Довідник полів: напрям сівби «'+n+'»'); MAPV.geo = geo; geo.features.forEach(x => { if(x.properties.legacy) LEGACY[x.properties.n] = x.properties.legacy; }); } }
+      catch(e){ toast('Зони збережено, шаблон поля — ні: '+e.message); }
+    }
+    MAPV.showZ = true; $('#map-hyb').setAttribute('aria-pressed', 'true'); stop();
+    toast(status==='confirmed' ? 'Зони «'+n+'» підтверджено' : 'Пропозицію збережено');
+  };
+  // дві точки на карті → лінія (перший прохід або межа гібридів)
+  const pickLine = (title, hints, color, done) => {
+    const pts = [], lay = L.layerGroup().addTo(MAPV.map), st = el('span', {class:'note'}), okb = el('button', {class:'btn primary small', disabled:'', onclick:() => fin(true)}, 'Готово');
+    const redraw = () => { lay.clearLayers(); if(pts.length===2) L.polyline(pts, {color, weight:5, interactive:false}).addTo(lay);
+      pts.forEach((p, k) => L.circleMarker(p, {radius:8, color:'#000', weight:2, fillColor: k ? '#fff' : color, fillOpacity:1, interactive:false}).addTo(lay)); };
+    const upd = () => { st.textContent = hints[Math.min(pts.length, 2)]; if(pts.length===2) okb.removeAttribute('disabled'); else okb.setAttribute('disabled', ''); };
+    const onClick = e => { if(pts.length >= 2) return; pts.push(e.latlng); redraw(); upd(); };
+    const fin = ok => { MAPV.map.off('click', onClick); lay.remove(); $('#map').classList.remove('drawing'); if(ok && pts.length===2) done(pts.map(p => [+p.lng.toFixed(7), +p.lat.toFixed(7)])); render(); };
+    $('#map').classList.add('drawing'); MAPV.map.on('click', onClick);
+    box.replaceChildren(el('div', {class:'card', style:'display:grid;gap:8px'}, el('b', {}, title), st,
+      el('div', {class:'toolbar'}, el('button', {class:'btn small', onclick:() => { pts.length = 0; redraw(); upd(); }}, 'Заново'), okb, el('button', {class:'btn small', onclick:() => fin(false)}, 'Скасувати'))));
+    upd(); box.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+  const pickPass = () => pickLine('Перший прохід сівалки', ['1-й дотик: де сівалка ПОЧАЛА перший прохід (заїхала на поле).', '2-й дотик: де закінчила перший прохід (кінець гону).', 'Зелена лінія — перший прохід. «Готово» або «Заново».'], '#2ee66b', p => { pass = p; dsel = 'pass'; });
+  const pickBound = h => pickLine('Межа після «'+h+'»', ['1-й дотик: один кінець межі (орієнтир: лісосмуга, стовп, дорога).', '2-й дотик: другий кінець — лінію ведіть через усе поле, поперек проходів.', 'Жовта лінія — межа. Зона «'+h+'» — з боку старту.'], '#ffe14d', p => { bounds[h] = p; });
+  const render = () => {
+    compute(); preview();
+    const autoOn = items.filter(i => i.on && !i.manual), last = autoOn.slice(-1)[0];
+    const rows = items.map((i, k) => { const r = res.find(x => x.h===i.h);
+      return el('div', {class:'toolbar', style:'gap:6px'},
+      el('span', {style:'display:inline-block;width:14px;height:14px;border-radius:3px;background:'+ZCOL[k % ZCOL.length]}),
+      el('label', {}, el('input', {type:'checkbox', ...(i.on ? {checked:''} : {}), on:{change: ev => { i.on = ev.target.checked; render(); }}}), ' '+i.h),
+      el('span', {class:'note'}, nf(i.q)+' '+(i.u || 'п.о.')),
+      i.manual ? el('span', {class:'note'}, 'зона обведена вручну') : r && r.bounded ? el('span', {class:'note'}, 'за межею') :
+        [el('input', {type:'number', min:'0', step:'0.1', value:i.share, style:'width:72px', ...(i.on ? {} : {disabled:''}), on:{change: ev => { i.share = +ev.target.value; render(); }}}), el('span', {class:'note'}, '%')],
+      el('b', {}, r ? nf(r.ha)+' га' : ''),
+      el('button', {class:'btn small ghost', title:'раніше', ...(k ? {} : {disabled:''}), onclick:() => { [items[k-1], items[k]] = [items[k], items[k-1]]; render(); }}, '↑'),
+      el('button', {class:'btn small ghost', title:'пізніше', ...(k < items.length-1 ? {} : {disabled:''}), onclick:() => { [items[k+1], items[k]] = [items[k], items[k+1]]; render(); }}, '↓'),
+      i.on && !i.manual && i!==last ? (bounds[i.h] ? el('button', {class:'btn small ghost', onclick:() => { delete bounds[i.h]; render(); }}, 'прибрати межу після') : el('button', {class:'btn small ghost', onclick:() => pickBound(i.h)}, 'межа після…')) : '',
+      i.on ? el('button', {class:'btn small ghost', onclick:() => { if(i.manual){ i.manual = null; render(); } else drawManual(i); }}, i.manual ? 'прибрати ручну зону' : 'обвести вручну') : ''); });
+    const D = curDir();
+    const vs = el('select', {on:{change: ev => { if(ev.target.value==='pass' && !pass){ pickPass(); return; } dsel = ev.target.value; render(); }}},
+      el('option', dsel==='pass' ? {value:'pass', selected:''} : {value:'pass'}, pass ? 'Перший прохід на карті — від '+zSide(zPassDir(g, pass).phi+Math.PI)+' краю' : 'Перший прохід на карті (2 дотики)…'),
+      V.map((v, k) => el('option', dsel===String(k) ? {value:k, selected:''} : {value:k}, v.label)));
+    const ms = el('select', {on:{change: ev => { mode = ev.target.value; render(); }}}, Object.entries(MODES).map(([k, t]) => el('option', k===mode ? {value:k, selected:''} : {value:k}, t)));
+    const same = tpl && tpl.mode===mode && (D.src==='pass' ? JSON.stringify(tpl.pass)===JSON.stringify(pass) : !tpl.pass && tpl.label===D.label);
+    saveTpl = el('input', {type:'checkbox', style:'width:20px;height:20px;flex:none;margin:0', ...(!tpl || !same ? {checked:''} : {})});
+    box.replaceChildren(el('div', {class:'card', style:'display:grid;gap:8px'},
+      el('b', {}, 'Зони гібридів · '+n+' · урожай '+YEAR+' · контур '+nf(total)+' га'),
+      el('div', {class:'note'}, '1) Напрям: поставте перший прохід двома дотиками (де почали і де закінчили гін). 2) Порядок гібридів — як сіяли. 3) Де пам’ятаєте місце переходу на інший гібрид (лісосмуга, стовп, дорога) — «межа після…»: межа важливіша за пропорцію. Решта ділиться за посівними одиницями.'+(mix.legacy ? ' Дані посіву — зі спільного поля «'+LEGACY[n]+'»: залиште лише гібриди цього поля.' : '')),
+      tpl ? el('div', {class:'note'}, '📐 Шаблон поля: '+sowTplText(tpl)) : '',
+      fills.length ? el('div', {class:'note'}, 'Точки засипки на карті: '+fills.length) : '',
+      el('div', {class:'toolbar'}, el('span', {class:'note'}, 'Напрям:'), vs, el('button', {class:'btn small', onclick:pickPass}, pass ? 'Перепоставити перший прохід' : 'Поставити перший прохід')),
+      el('div', {class:'toolbar'}, el('span', {class:'note'}, 'Спосіб:'), ms),
+      ...rows,
+      ...warn.map(w => el('div', {class:'note', style:'color:#ffb02e'}, '⚠ '+w)),
+      el('label', {class:'note', style:'display:flex;gap:8px;align-items:center'}, saveTpl, ' Запам’ятати напрям і спосіб як шаблон поля «'+n+'» (наступного року підставиться сам)'),
+      el('div', {class:'toolbar'},
+        el('button', {class:'btn primary small', onclick:() => save('confirmed')}, 'Підтвердити: так сіяли'),
+        el('button', {class:'btn small', onclick:() => save('proposed')}, 'Зберегти як пропозицію'),
+        el('button', {class:'btn small', onclick:stop}, 'Скасувати'))));
   };
   const drawManual = i => {
     const pts = [], line = L.polygon([], {color:'#ffe14d', weight:3, dashArray:'4 4', fillOpacity:.15, interactive:false}).addTo(MAPV.map);
@@ -2421,29 +2532,6 @@ async function zoneEditor(n){
     box.replaceChildren(el('div', {class:'toolbar'}, el('b', {}, 'Обведіть зону «'+i.h+'»'), el('span', {class:'note'}, 'Ставте точки по межі; за краєм поля зайве обріжеться.'),
       el('button', {class:'btn small', onclick:() => { pts.pop(); line.setLatLngs(pts); }}, 'Прибрати точку'),
       el('button', {class:'btn primary small', onclick:() => fin(true)}, 'Готово'), el('button', {class:'btn small', onclick:() => fin(false)}, 'Скасувати')));
-  };
-  const render = () => {
-    compute(); preview();
-    const rows = items.map((i, k) => el('div', {class:'toolbar', style:'gap:6px'},
-      el('span', {style:'display:inline-block;width:14px;height:14px;border-radius:3px;background:'+ZCOL[k % ZCOL.length]}),
-      el('label', {}, el('input', {type:'checkbox', ...(i.on ? {checked:''} : {}), on:{change: ev => { i.on = ev.target.checked; render(); }}}), ' '+i.h),
-      el('span', {class:'note'}, nf(i.q)+' '+(i.u || 'п.о.')),
-      i.manual ? el('span', {class:'note'}, 'зона обведена вручну') :
-        el('input', {type:'number', min:'0', step:'0.1', value:i.share, style:'width:72px', ...(i.on ? {} : {disabled:''}), on:{change: ev => { i.share = +ev.target.value; render(); }}}), i.manual ? '' : el('span', {class:'note'}, '%'),
-      el('b', {}, (res.find(r => r.h===i.h) ? nf(res.find(r => r.h===i.h).ha)+' га' : '')),
-      el('button', {class:'btn small ghost', title:'раніше', ...(k ? {} : {disabled:''}), onclick:() => { [items[k-1], items[k]] = [items[k], items[k-1]]; render(); }}, '↑'),
-      el('button', {class:'btn small ghost', title:'пізніше', ...(k < items.length-1 ? {} : {disabled:''}), onclick:() => { [items[k+1], items[k]] = [items[k], items[k+1]]; render(); }}, '↓'),
-      i.on ? el('button', {class:'btn small ghost', onclick:() => { if(i.manual){ i.manual = null; render(); } else drawManual(i); }}, i.manual ? 'прибрати ручну зону' : 'обвести вручну') : ''));
-    const vs = el('select', {on:{change: ev => { vi = +ev.target.value; render(); }}}, V.map((v, k) => el('option', k===vi ? {value:k, selected:''} : {value:k}, v.label)));
-    box.replaceChildren(el('div', {class:'card', style:'display:grid;gap:8px'},
-      el('b', {}, 'Зони гібридів · '+n+' · урожай '+YEAR+' · контур '+nf(total)+' га'),
-      el('div', {class:'note'}, 'Порядок — як сіяли (перший від краю старту). Частки — за посівними одиницями (при однаковій нормі висіву); змініть, якщо норма різна. Зону, межу якої знаєте, обведіть вручну — решта поділиться пропорційно.'+(mix.legacy ? ' Дані посіву — зі спільного поля «'+LEGACY[n]+'»: залиште лише гібриди цього поля.' : '')),
-      fills.length ? el('div', {class:'note'}, 'Точки засипки на карті: '+fills.length) : '',
-      ...rows, el('div', {class:'toolbar'}, vs),
-      el('div', {class:'toolbar'},
-        el('button', {class:'btn primary small', onclick:() => save('confirmed')}, 'Підтвердити: так сіяли'),
-        el('button', {class:'btn small', onclick:() => save('proposed')}, 'Зберегти як пропозицію'),
-        el('button', {class:'btn small', onclick:stop}, 'Скасувати'))));
   };
   MAPV.map.closePopup(); MAPV.map.fitBounds(L.geoJSON(g).getBounds(), {padding:[20, 20]});
   render(); box.scrollIntoView({behavior:'smooth', block:'start'});
@@ -2755,7 +2843,7 @@ function renderScForm(){
     SC.pick || (SC.gpsState==='ok' && !SC.field) ? fieldSel('Вибрати поле…') : '');
   const hybNote = (() => { if(!SC.field || !MODEL) return ''; const mix = seedMix(SC.field, SC.season); if(mix.length < 2) return mix.length ? ' · '+mix[0].h : '';
     const h = SC.gps ? hybridAt(SC.field, SC.season, SC.gps.lat, SC.gps.lon) : null;
-    return h ? ' · гібрид тут: '+h.h+(h.sure ? '' : ' (ймовірно'+(h.m!=null && h.m <= 30 ? ', '+h.m+' м до межі зон' : h.confirmed ? '' : ', зони не підтверджені')+')') : ' · на полі '+mix.length+' гібриди, зони не задані'; })();
+    return h ? ' · гібрид тут: '+h.h+(h.sure ? '' : ' (ймовірно'+(h.m!=null && h.m <= 30 ? ', '+h.m+' м до межі зон' : !h.confirmed ? ', зони не підтверджені' : h.approx ? ', загінний посів — межа умовна' : '')+')') : ' · на полі '+mix.length+' гібриди, зони не задані'; })();
   const auto = SC.field ? el('div', {class:'note'}, 'Урожай '+SC.season+(SC.crop ? ' · '+SC.crop : '')+hybNote+' — з даних господарства') : '';
   const thumbs = SC.photos.map(ph => el('figure', {class:'sc-ph'+(ph.bad ? ' bad' : '')}, ph.url ? el('img', {src:ph.url, alt:'фото'}) : el('div', {class:'sc-ph-wait'}, '…'),
     el('figcaption', {}, ph.status || (ph.blob ? (SC.field ? 'без GPS-точки → «'+SC.field+'»' : 'без GPS-точки') : '')),
