@@ -1195,7 +1195,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '20.11 масиви по черзі';
+const APP_VER = '20.11 частки за га';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2420,7 +2420,10 @@ async function zoneEditor(n){
   if(old){ const ord = old.items.map(i => i.h); items.sort((a, b) => (ord.indexOf(a.h)+1 || 99) - (ord.indexOf(b.h)+1 || 99));
     items.forEach(i => { const o = old.items.find(x => x.h===i.h); i.on = !!o; if(o){ i.share = o.share; if(o.manual) i.manual = o.geometry; } }); }
   const qsum = () => d3.sum(items.filter(i => i.on), i => i.q) || 1;
-  items.forEach(i => { if(i.share==null) i.share = +(100*i.q/qsum()).toFixed(1); });
+  // частки: якщо записані га гібридів у сумі збігаються з полем (±10 %) — за га (норми висіву різні), інакше — за п.о.
+  const haSum = d3.sum(items.filter(i => i.on), i => +(mix.find(m => m.h===i.h) || {}).ha || 0), byHa = !mix.legacy && haSum && Math.abs(haSum - fieldHa)/fieldHa <= 0.1;
+  items.forEach(i => { if(i.share==null) i.share = byHa ? +(100*(mix.find(m => m.h===i.h).ha || 0)/haSum).toFixed(1) : +(100*i.q/qsum()).toFixed(1); });
+  const shareNote = old ? '' : byHa ? 'Частки — за записаними гектарами посіву (сума '+nf(haSum)+' га ≈ поле).' : haSum > fieldHa*1.1 ? '⚠ Записані га посіву ('+nf(haSum)+') більші за поле ('+nf(fieldHa)+') — частки взято за п.о.; перевірте.' : '';
   // напрям: 'pass' (2 дотики) або індекс варіанта зі списку; джерело — збережені зони → шаблон поля → перший варіант
   const src0 = old && old.dir ? old.dir : old ? {src:'list', vi: Math.max(0, V.findIndex(v => v.label===old.variant))} : tpl ? (tpl.pass ? {src:'pass', pass:tpl.pass} : {src:'list', vi: Math.max(0, V.findIndex(v => v.label===tpl.label))}) : {src:'list', vi:0};
   let pass = src0.pass || (tpl && tpl.pass) || null, dsel = src0.src==='pass' && pass ? 'pass' : String(src0.vi || 0);
@@ -2530,6 +2533,7 @@ async function zoneEditor(n){
       el('b', {}, 'Зони гібридів · '+n+' · урожай '+YEAR+' · контур '+nf(total)+' га'),
       el('div', {class:'note'}, '1) Напрям: поставте перший прохід двома дотиками (де почали і де закінчили гін). 2) Порядок гібридів — як сіяли. 3) Де пам’ятаєте місце переходу на інший гібрид (лісосмуга, стовп, дорога) — «межа після…»: межа важливіша за пропорцію. Решта ділиться за посівними одиницями.'+(mix.legacy ? ' Дані посіву — зі спільного поля «'+LEGACY[n]+'»: залиште лише гібриди цього поля.' : '')),
       tpl ? el('div', {class:'note'}, '📐 Шаблон поля: '+sowTplText(tpl)) : '',
+      shareNote ? el('div', {class:'note'}, shareNote) : '',
       fills.length ? el('div', {class:'note'}, 'Точки засипки на карті: '+fills.length) : '',
       el('div', {class:'toolbar'}, el('span', {class:'note'}, 'Напрям:'), vs, el('button', {class:'btn small', onclick:pickPass}, pass ? 'Перепоставити перший прохід' : 'Поставити перший прохід')),
       el('div', {class:'toolbar'}, el('span', {class:'note'}, 'Спосіб:'), ms),
