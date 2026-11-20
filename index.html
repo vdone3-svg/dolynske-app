@@ -2097,7 +2097,7 @@ function fieldPopup(f){
       el('button', {class:'btn small', onclick:() => { SELFIELD = n; location.hash = 'fields'; }}, 'Картка поля'),
       el('button', {class:'btn small', onclick:() => { HF = n; location.hash = 'history'; }}, 'Історія')));
   });
-  box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га'+(p.ha_gps ? ' (GPS '+nf(p.ha_gps)+' га)' : '')+' · '+(p.source || '')));
+  box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га'+(p.parts ? ' ('+p.parts+')' : '')+(p.ha_gps && p.ha_gps!==p.ha_geom ? ' · GPS '+nf(p.ha_gps)+' га' : '')+' · '+(p.source || '')));
   fieldsOf(f).forEach(n => box.append(...zonePopupPart(n)));
   if(p.flag) box.append(el('div', {class:'note', style:'color:var(--warn)'}, '⚠ '+p.flag));
   return box;
