@@ -2870,10 +2870,10 @@ async function renderPlan(){
       card.append(row);
     });
     if(bl.length) card.append(el('div', {class:'note', style:'margin-top:6px'}, 'Лишилось: '+bl.map(b => b.field+(b.crop ? ' ('+b.crop+')' : '')+' '+nf(b.left, 0)+' га'+(b.grain && b.grain.m!=null ? ' (зерно ~'+nf(b.grain.m, 0)+' %)' : '')).join(' · ')));
-    if(k==='harvest' && bl.length) card.append(grainForm(bl));
+    if(k==='harvest' && P.grain_outlook) card.append(grainOutlook(P.grain_outlook));
     out.push(card);
   });
-  out.push(el('div', {class:'note'}, 'Правила: день 07–17, ніч 18–06. Збирання: волога зерна вище межі за свіжим заміром — ні, без заміру — обмежено (заміряти); дощ ≥ 3 мм — ні; ґрунт ≥ 95 % НВ і не підмерзає — обмежено (багнюка); вночі по підмерзлому — краще. Оранка: стан з «Вікон оранки»; вночі — лише без дощу й коли ґрунт підмерзає не глибше кірки (≥ −3 °C). Виробіток — з табеля (га на людино-зміну). Техніку для робіт задає ref/plan.json.'));
+  out.push(el('div', {class:'note'}, 'Правила: день 07–17, ніч 18–06. Збирання: волога зерна за погодою — у межі так, на межі (+1 %) обмежено, вище — ні, чекає в полі; дощ ≥ 3 мм — ні; ґрунт ≥ 95 % НВ і не підмерзає — обмежено (багнюка); вночі по підмерзлому — краще. Оранка: стан з «Вікон оранки»; вночі — лише без дощу й коли ґрунт підмерзає не глибше кірки (≥ −3 °C). Виробіток — з табеля (га на людино-зміну). Техніку для робіт задає ref/plan.json.'));
   if(own){
     const acts = el('div', {class:'acts', style:'justify-content:flex-start;margin-top:10px'});
     if(X.status!=='approved'){
@@ -2888,20 +2888,20 @@ async function renderPlan(){
 function grainLine(g){
   const c = {'так':'var(--good)', 'обмежено':'var(--warn)', 'ні':'var(--bad)'}[g.st] || '';
   return el('div', {class:'note', style:'margin-top:4px;border-left:3px solid '+c+';padding-left:6px'},
-    '💧 Зерно: '+(g.m!=null ? '~'+nf(g.m, 1)+' %' : 'невідомо')+' · '+(g.how || '')+' · межа '+g.max+' %, база '+g.base+' %'+(g.shrink ? ' · усушка до бази ≈ '+nf(g.shrink, 1)+' % ваги + сушка на елеваторі' : '')+
-    (g.age==null || g.age > 3 ? ' · ⚠ заміряти перед виїздом' : '')+(g.m > g.max ? (g.ok_from ? ' · у межу за прогнозом ~'+new Date(g.ok_from+'T12:00:00').toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'}) : ' · у межу за 14 днів не ввійде') : ''));
+    '💧 Зерно: '+(g.m!=null ? '~'+nf(g.m, 1)+' %' : 'невідомо')+' · '+(g.how || '')+(g.max!=null ? ' · межа '+g.max+' %, база '+g.base+' %' : '')+(g.m > g.max ? ' · чекає в полі (на елеватор не сушимо)' : '')+
+    (g.lo!=null && Math.round(g.hi) > Math.round(g.lo) ? ' · моделі '+nf(g.lo, 0)+'–'+nf(g.hi, 0)+' %' : ''));
 }
-function grainForm(bl){
-  const f = el('select', {style:'width:auto'}, bl.map(b => el('option', {value:b.field+'|'+(b.crop || '')}, b.field+(b.crop ? ' · '+b.crop : ''))));
-  const v = el('input', {type:'number', step:'0.1', min:'5', max:'40', placeholder:'напр. 18.4', style:'width:90px', inputmode:'decimal'});
-  const who = el('input', {type:'text', value:LS.get('dl_name') || 'Зінько В.', style:'width:130px'});
-  const go = el('button', {class:'btn small', onclick:async () => { const x = +String(v.value).replace(',', '.'); if(!(x >= 5 && x <= 40)){ toast('Вкажіть вологість зерна, % (5–40)'); return; }
-    const [fl, cr] = f.value.split('|');
-    await saveEvent({'Замір вологи':[{'Дата':toSerial(isoToday()), 'Поле':fl, 'Культура':cr || null, 'Вологість, %':x, 'Хто':who.value || null, 'Прилад':'вологомір'}]}, 'замір вологи '+fl+' '+x+' %');
-    v.value = ''; toast('Замір записано: '+fl+' — '+x+' %. План урахує при наступному розрахунку (вранці / ввечері).'); }}, 'Записати');
-  return el('div', {style:'border-top:1px dashed var(--line);margin-top:8px;padding-top:8px'}, el('b', {}, '💧 Замір вологи зерна'),
-    el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px'}, f, v, el('span', {}, '%'), who, go),
-    el('div', {class:'note'}, 'Міряти з кількох качанів у різних місцях поля, перед виїздом комбайна. Свіжий замір (до 3 днів) головніший за оцінку; вище межі — план ставить «ні».'));
+function grainOutlook(GO){
+  const dm = d => new Date(d+'T12:00:00').toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'});
+  const box = el('div', {style:'border-top:1px dashed var(--line);margin-top:8px;padding-top:8px'}, el('b', {}, '💧 Волога зерна на 14 днів (оцінка за погодою)'));
+  Object.entries(GO).forEach(([pt, cr]) => Object.entries(cr).forEach(([c, o]) => {
+    const w = o.window;
+    box.append(el('div', {class:'note', style:'margin-top:4px'}, '«'+pt+'» · '+c+' · межа '+o.max+' % · '+(w ? 'вікно: '+dm(w.from)+(w.days > 1 ? '–'+dm(w.to) : '')+(w.sure ? '' : ' (на межі)') : 'вікна ≤ '+o.max+' % у прогнозі немає')),
+      el('div', {style:'display:flex;gap:3px;flex-wrap:wrap;margin-top:3px'}, o.days.map(x => el('span', {title:dm(x.d)+': '+nf(x.m, 1)+' % (моделі '+nf(x.lo, 0)+'–'+nf(x.hi, 0)+')'+(x.p >= 1 ? ' · дощ '+nf(x.p, 0)+' мм' : '')+' · '+x.why,
+        style:'min-width:44px;text-align:center;border-radius:4px;padding:2px 3px;font-size:12px;color:#fff;background:'+(PST[x.st] || '#999')}, dm(x.d).slice(0, 5), el('br'), nf(x.m, 0)+'%'+(x.p >= 3 ? ' 🌧' : '')))));
+  }));
+  box.append(el('div', {class:'note'}, 'Модель: рівновага зерна з вологістю повітря (ASABE) за ERA5 + ECMWF/ICON; дощ додає воду на качани, що сходить за 1–3 дні. Зелене — верх оцінки в межі; жовте — на межі, перевірити першим бункером; червоне — чекає в полі або дощ.'));
+  return box;
 }
 function planEdit(P, fn){ if(!PLAN.edit || PLAN.edit.date!==P.date) PLAN.edit = JSON.parse(JSON.stringify(P)); fn(PLAN.edit); renderPlan(); }
 async function savePlan(doc, status){
