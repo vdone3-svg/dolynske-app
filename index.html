@@ -2755,7 +2755,7 @@ async function ghBlobUrl(path){ if(NDVI.urls[path]) return NDVI.urls[path];
   const r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+'/contents/'+enc(path)+'?ref='+GH.branch, {headers:{'Authorization':'Bearer '+TOKEN, 'Accept':'application/vnd.github.raw+json'}});
   if(!r.ok) return null; return NDVI.urls[path] = URL.createObjectURL(await r.blob()); }
 function ndviRec(n){ const F = (NDVI.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
-function ndviSeason(n, y){ const r = ndviRec(n); return r ? (r.series || []).filter(o => o.d >= (y-1)+'-08-01' && o.d <= y+'-12-31') : []; }
+function ndviSeason(n, y){ const r = ndviRec(n); return r ? (r.series || []).filter(o => o.d >= (y-1)+'-09-01' && o.d <= y+'-08-31') : []; }   // сезон «під урожай року»: вересень попереднього — серпень
 function ndviSpark(ser, w=150, h=34){
   if(ser.length < 2) return '';
   const t0 = new Date(ser[0].d).getTime(), t1 = new Date(ser[ser.length-1].d).getTime() || t0+1;
