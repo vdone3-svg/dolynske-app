@@ -322,6 +322,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <div class="sechead"><div><h2>Люди і техніка</h2><div class="note">Оберіть роботу — техніка й одиниця підставляться за звичкою. Заправку і масло пишіть у тому ж рядку.</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" id="all-yesterday">Усім «як учора»</button><button class="btn" id="add-person">+ Людина</button></div></div>
       <div class="grid-head"><span>Працівник</span><span>Статус</span><span>Робота</span><span>Поле</span><span>Техніка</span><span>Обсяг</span><span>Од.</span><span>ДП / бенз., л</span><span>Масло (марка)</span><span>Масло, л</span><span></span></div>
+      <div id="plan-day"></div>
       <div id="shifts"></div>
       <div class="rows" id="rows"></div>
     </section>
@@ -1238,7 +1239,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '21.11i План робіт';
+const APP_VER = '22.11a План → День';
 const TABS = [['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1294,6 +1295,7 @@ function yesterday(r){ const h = REF.hab[r.p]; if(!h || !h.recs.length) return f
 function inp(r, key, attrs, label, cls=''){
   const i = el('input', {...attrs, value: r[key] ?? '', title: r[key] ?? '', 'aria-label': label+' — '+r.p, on:{change: ev => { r[key] = ev.target.value; if(key==='op') applyHabit(r); renderDay(); }}});
   if(key==='m' && !r.m && REF.hab[r.p] && REF.hab[r.p].m) i.placeholder = REF.hab[r.p].m;
+  if(key==='q' && r.plan && !r.q) i.placeholder = 'план '+nf(r.plan.ha, 0);
   return el('div', {class:'cell '+cls}, el('label', {}, label), i);
 }
 function rowFlags(r){ const f = [], fuel = +r.fuel||0, q = +r.q||0;
@@ -1606,7 +1608,7 @@ function dayTotals(){
 function renderDay(){
   const d = new Date(DAY+'T12:00:00'); $('#date').value = DAY;
   $('#day-title').textContent = d.toLocaleDateString('uk-UA', {weekday:'long', day:'numeric', month:'long', year:'numeric'}).replace(/^./, c => c.toUpperCase());
-  renderShifts(); renderRows(); renderAppl(); renderZav(); renderSide(); renderDips(); renderGrainTabs();
+  renderPlanDay(); renderShifts(); renderRows(); renderAppl(); renderZav(); renderSide(); renderDips(); renderGrainTabs();
   const t = dayTotals(), closed = isClosed(DAY) && !DS.editing;
   $('#kpis').replaceChildren(...[['Люди заповнено', t.people+' / '+t.total], ['Роботи в полі', nf(t.ha)+' га'], ['ДП за день', nf(t.dp, fmt0)+' л'], ['Бензин', nf(t.bz, fmt0)+' л'],
     ['Масла', nf(t.oil)+' л'], ['Обприскано', nf(t.zzr)+' га'], ['Відвантажено', nf(t.ship/1000)+' т']].map(([a, b]) => el('div', {class:'kpi'}, a, el('b', {}, b))));
@@ -2843,13 +2845,15 @@ async function renderPlan(){
     const its = X.items.filter(i => i.kind===k && i.shifts.length), bl = (P.backlog || {})[k] || [];   // власник: у плані лише роботи, які можна робити
     if(!its.length) return;
     const tot = d3.sum(its, i => d3.sum(i.shifts, s => +s.ha || 0));
-    const card = el('div', {class:'card', 'data-work':'1'}, el('h3', {}, title+' · план '+nf(tot, 0)+' га з '+nf((P.backlog || {})[k+'_ha'] || 0, 0)+' га, що лишилось'));
+    const fu = d3.sum(its, i => planFuel(i.tech, d3.sum(i.shifts, s => +s.ha || 0)) || 0);
+    const card = el('div', {class:'card', 'data-work':'1'}, el('h3', {}, title+' · план '+nf(tot, 0)+' га з '+nf((P.backlog || {})[k+'_ha'] || 0, 0)+' га, що лишилось'+(fu ? ' · ⛽ ~'+nf(fu, 0)+' л ДП' : '')));
     its.forEach(it => { const ii = X.items.filter(i => i.kind===k).indexOf(it);
       const row = el('div', {style:'border-top:1px solid var(--line);padding:8px 0'});
       const fieldSel = editable ? el('select', {style:'width:auto', onchange:ev => { const [f, c] = ev.target.value.split('|'); planEdit(P, x => { const t = x.items.filter(i => i.kind===k)[ii]; t.field = f; t.crop = c || null; }); }},
         bl.map(b => el('option', {value:b.field+'|'+(b.crop || ''), selected:b.field===it.field && (b.crop || null)===(it.crop || null) ? '' : null}, b.field+(b.crop ? ' · '+b.crop : '')+' (лишилось '+nf(b.left, 0)+' га)'))) : el('b', {}, it.field+(it.crop ? ' · '+it.crop : ''));
       row.append(el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap'}, el('b', {}, it.tech), '→', fieldSel,
-        el('span', {class:'note'}, 'залишок '+nf(it.left_before, 0)+' → '+nf(Math.max(0, it.left_before - d3.sum(it.shifts, s => +s.ha || 0)), 0)+' га')));
+        el('span', {class:'note'}, 'залишок '+nf(it.left_before, 0)+' → '+nf(Math.max(0, it.left_before - d3.sum(it.shifts, s => +s.ha || 0)), 0)+' га'),
+        planFuel(it.tech, d3.sum(it.shifts, s => +s.ha || 0)) ? el('span', {class:'note'}, '⛽ ~'+nf(planFuel(it.tech, d3.sum(it.shifts, s => +s.ha || 0)), 0)+' л ДП ('+nf(REF.lha[it.tech], 1)+' л/га)') : ''));
       if(it.grain) row.append(grainLine(it.grain));
       it.shifts.forEach((s, si) => {
         const who = editable ? el('select', {style:'width:auto', onchange:ev => planEdit(P, x => { x.items.filter(i => i.kind===k)[ii].shifts[si].who = [ev.target.value]; })},
@@ -2946,6 +2950,55 @@ async function savePlan(doc, status){
   try{ syncState('Зберігаю план…'); await putJSON('plans/'+d.date+'.json', d, (status==='approved' ? 'План затверджено: ' : 'План виправлено: ')+d.date);
     PLAN.docs[d.date] = d; PLAN.edit = null; syncState('План збережено', 'ok'); toast(status==='approved' ? 'План затверджено — бригадир його бачить' : 'Зміни збережено'); renderPlan(); }
   catch(e){ toast('Не вдалося зберегти: '+e.message); syncState('Помилка збереження', 'bad'); }
+}
+// ======= ФАЗА 2: план → табель «День». Затверджений план підставляється в порожній день сам (люди, робота, поле, техніка);
+// гектари бригадир пише фактичні — план лише підказка в полі «Обсяг». Блок «План на цей день» звіряє план із фактом.
+const PLAN_OP = {harvest:'Пряме комбайнування', plow:'Оранка'};
+function planFuel(tech, ha){ const l = REF && REF.lha ? REF.lha[tech] : null; return l && ha ? l*ha : null; }   // л/га — з обліку пального за останній рік по техніці
+function planRows(P){ return ((P || {}).items || []).flatMap(it => (it.shifts || []).flatMap(s => (s.who || []).filter(w => w && w!=='хто?')
+  .map(p => ({p, kind:it.kind, op:PLAN_OP[it.kind] || it.kind, f:it.field, crop:it.crop || null, m:it.tech, ha:+s.ha || 0, shift:s.shift})))); }
+function planPerson(p){ const sur = x => String(x || '').split(/\s+/)[0].toLowerCase(); return DS.rows.find(r => r.p===p) || DS.rows.find(r => !r.sub && sur(r.p)===sur(p)); }
+function applyPlanToDay(P){ let n = 0; const skip = [], seen = new Set();
+  planRows(P).forEach(x => { let r = planPerson(x.p);
+    if(!r){ r = blankRow(x.p); DS.rows.push(r); }
+    if((r.st && r.st!=='працює') || (r.op && (r.op!==x.op || (r.f && r.f!==x.f)))){ skip.push(r.p); return; }   // уже записано інакше — не чіпаємо
+    const again = seen.has(r) && r.plan && r.op===x.op && r.f===x.f; seen.add(r);
+    Object.assign(r, {st:'працює', op:x.op, f:x.f, m:x.m, u:'га', plan:{ha:(again ? r.plan.ha : 0) + x.ha, shift:again && r.plan.shift!==x.shift ? 'день+ніч' : x.shift}});
+    if(x.crop && r.f && cropsFor(r.f, seasonFor(r.op)).length > 1) r.hc = x.crop;
+    n++; });
+  return {n, skip};
+}
+let PLAN_AUTO = '';
+async function maybeAutoPlan(){
+  const day = DAY, P = PLAN.docs[day];
+  if(!P || P.status!=='approved' || PLAN_AUTO===day || isClosed(day) || DIRTY || DRAFT_TS || !DS || DS.planApplied) return;
+  if(DS.rows.some(r => r.st || r.op)) return;                                  // день уже почали заповнювати
+  if(TOKEN){ try{ const o = await getJSON(draftPath(day)); if(o && !o.cleared && o.ds) return; }catch(e){} }   // є чернетка з іншого пристрою — вона головніша
+  if(day!==DAY || DIRTY || DRAFT_TS) return;
+  PLAN_AUTO = day; const res = applyPlanToDay(P); if(!res.n) return;
+  DS.planApplied = true; renderDay(); markDirty();
+  toast('Підставлено затверджений план: '+res.n+' '+(res.n===1 ? 'людина' : 'людей')+'. Допишіть фактичні гектари й заправку.');
+}
+function renderPlanDay(){
+  const box = $('#plan-day'); if(!box || !DS) return; box.replaceChildren();
+  if(!(DAY in PLAN.docs)){ const d = DAY; loadPlan(d).then(() => { if(d===DAY){ renderPlanDay(); maybeAutoPlan(); } }); return; }
+  const P = PLAN.docs[DAY], R = planRows(P); if(!R.length) return;
+  const lock = isClosed(DAY) && !DS.editing, apr = P.status==='approved';
+  const fact = x => { const r = planPerson(x.p); return r && r.st==='працює' && r.op===x.op && r.f===x.f ? r : null; };
+  const lines = R.map(x => { const r = fact(x), q = r ? +r.q || 0 : null, d = q && x.ha ? q/x.ha - 1 : null, pf = planFuel(x.m, x.ha);
+    const st = !r ? ['—', 'var(--muted)'] : !q ? ['гектари не внесені', 'var(--warn)'] : [nf(q, 1)+' га'+(d!=null ? ' ('+(d > 0 ? '+' : '')+nf(d*100, 0)+'%)' : ''), d!=null && Math.abs(d) > .3 ? 'var(--warn)' : 'var(--good)'];
+    return el('tr', {}, el('td', {class:'l'}, x.p), el('td', {class:'l'}, x.op+' · '+x.f+(x.crop ? ' · '+x.crop : '')+' · '+x.m), el('td', {}, x.shift==='ніч' ? '🌙 ніч' : '☀ день'),
+      el('td', {}, nf(x.ha, 0)+' га'), el('td', {style:'color:'+st[1]+';font-weight:600'}, st[0]),
+      el('td', {}, pf ? '~'+nf(pf, 0)+(r && +r.fuel ? ' / '+nf(+r.fuel, 0) : '')+' л' : (r && +r.fuel ? nf(+r.fuel, 0)+' л' : '—'))); });
+  const other = DS.rows.filter(r => r.st==='працює' && r.op && !R.some(x => fact(x)===r) && (r.op===PLAN_OP.plow || r.op===PLAN_OP.harvest));
+  const planHa = d3.sum(R, x => x.ha), factHa = d3.sum(R, x => { const r = fact(x); return r ? +r.q || 0 : 0; });
+  box.append(el('div', {class:'card', style:'border-left:3px solid '+(apr ? 'var(--good)' : 'var(--warn)')+';margin:0 0 10px'},
+    el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between'},
+      el('h3', {style:'margin:0'}, '📋 План на цей день · '+(apr ? '✓ затверджено' : 'не затверджено — може змінитися')+' · план '+nf(planHa, 0)+' га, факт '+nf(factHa, 1)+' га'),
+      !lock && (apr || ROLE==='o') ? el('button', {class:'btn small', type:'button', onclick:() => { const res = applyPlanToDay(P); DS.planApplied = true; markDirty(); renderDay();
+        toast(res.n ? 'Підставлено з плану: '+res.n+'.'+(res.skip.length ? ' Не чіпав (уже записано інакше): '+res.skip.join(', ') : '') : 'Нічого підставляти — усі вже записані'+(res.skip.length ? ' інакше: '+res.skip.join(', ') : '')); }}, 'Підставити план у табель') : ''),
+    el('div', {class:'tablewrap'}, el('table', {class:'dense'}, el('thead', {}, el('tr', {}, ...['Хто', 'Робота · поле · техніка', 'Зміна', 'План', 'Факт', 'Пальне план / факт'].map((h, i) => el('th', i < 2 ? {class:'l'} : {}, h)))), el('tbody', {}, lines))),
+    other.length ? el('div', {class:'note', style:'margin-top:6px'}, 'Поза планом: '+other.map(r => r.p+' — '+r.op.toLowerCase()+' '+(r.f || '?')+(+r.q ? ' '+nf(+r.q, 1)+' га' : '')).join('; ')) : ''));
 }
 // ======= «Вікна оранки» (geo/weather.json → points[*].plow, fields[*].plow)
 const PLOWCOL = {'так':'#2e7d4f', 'обмежено':'#d4a017', 'ні':'#b3372e'}, PLOW_UNH = '#6b7fa8', PLOW_NONE = '#9aa0a6';
