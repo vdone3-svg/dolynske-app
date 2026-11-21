@@ -1218,7 +1218,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '20.11 частки за га';
+const APP_VER = '21.11 збирання у «День»';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1365,12 +1365,16 @@ function rowKind(r){ const o = OP[r.op]; if(!o) return '';
 function seasonFor(op){ const m = +DAY.slice(5,7), y = +DAY.slice(0,4); return (OP[op]||{}).g==='Збирання' ? y-(m<=3) : y+(m>=8); }
 const harvSeason = () => { const m = +DAY.slice(5,7), y = +DAY.slice(0,4); return y-(m<=3); };
 const cropsFor = (f, y) => [...new Set(REF.prl.filter(x => x.y===y && x.f===f).map(x => x.c))];
+// збирання: скільки культури на полі вже скошено до цього дня (га) і яка площа під нею
+function harvDone(f, c, y){ const n = toSerial(DAY); return {cut: d3.sum(MODEL.harv.filter(h => h.f===f && h.c===c && h.y===y && h.d.n!==n), h => h.ha), ha: d3.sum(REF.prl.filter(x => x.y===y && x.f===f && x.c===c), x => x.ha)}; }
+// поділене поле: якщо одну культуру вже скошено повністю — для збирання лишається інша
+function harvAutoCrop(f, y){ const cc = cropsFor(f, y); if(cc.length < 2) return cc[0] || ''; const left = cc.filter(c => { const h = harvDone(f, c, y); return !h.ha || h.cut < h.ha*.98; }); return left.length===1 ? left[0] : ''; }
 function normRow(r){   // старі записи: один гібрид / одне добриво → списки
   if(r.hyb || r.sq){ r.seeds = [{m:r.hyb||'', q:r.sq||'', ha:''}]; delete r.hyb; delete r.sq; }
   if(r.fm || r.fq){ r.ferts = [{m:r.fm||'', q:r.fq||''}]; delete r.fm; delete r.fq; }
   return r; }
 const seedsOk = r => (normRow(r).seeds||[]).filter(sd => sd.m && +sd.q);
-function rowCrop(r){ const cc = cropsFor(r.f, seasonFor(r.op)); if(cc.length===1) return cc[0]; if(r.hc) return r.hc; const sd = seedsOk(r).find(sd => MAT[sd.m] && MAT[sd.m].crop); if(sd) return MAT[sd.m].crop; return ''; }
+function rowCrop(r){ const cc = cropsFor(r.f, seasonFor(r.op)); if(cc.length===1) return cc[0]; if(r.hc) return r.hc; if(r.f && cc.length > 1 && (OP[r.op]||{}).g==='Збирання'){ const a = harvAutoCrop(r.f, seasonFor(r.op)); if(a) return a; } const sd = seedsOk(r).find(sd => MAT[sd.m] && MAT[sd.m].crop); if(sd) return MAT[sd.m].crop; return ''; }
 function numIn(obj, key, label, attrs={}){ return el('div', {}, el('label', {class:'note'}, label), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:obj[key] ?? '', ...attrs, on:{change: ev => { obj[key] = ev.target.value; renderDay(); }}})); }
 function matSel(obj, key, label, list, ph='— оберіть —'){ return el('div', {}, el('label', {class:'note'}, label), el('select', {on:{change: ev => { obj[key] = ev.target.value; renderDay(); }}},
   el('option', {value:''}, ph), list.map(m => el('option', m.n===obj[key] ? {value:m.n, selected:''} : {value:m.n}, m.n)))); }
@@ -1389,6 +1393,7 @@ function rowExtra(r){
   if(k==='sow' && !seedsOk(r).length && !(r.ferts||[]).some(f => f.m)){ const main = DS.rows.find(o => o!==r && o.f===r.f && o.m && o.m===r.m && seedsOk(o).length);
     if(main) return el('div', {class:'xtra'}, el('div', {class:'ttl'}, 'Посів · поле '+r.f+' — насіння й добрива вже записані в рядку «'+main.p+'» (та сама техніка)')); }
   const ha = +r.q||0, y = seasonFor(r.op), cc = r.f ? cropsFor(r.f, y) : [], crop = rowCrop(r);
+  if(k==='harv' && cc.length > 1 && !r.hc && crop) r.hc = crop;   // поділене поле: друга культура вже скошена — підставляємо ту, що лишилась
   const per = (q, u) => ha && +q ? nf(+q/ha, 2)+' '+u+'/га' : '';
   const parts = [];
   const head = {sow:'Посів', fert:'Внесення добрив', zzr:'Обприскування', harv:'Збирання'}[k];
@@ -1431,18 +1436,24 @@ function rowExtra(r){
         btns(r.items, i, () => ['', '', '', '']))); });
     if(isOpenShift(r)) parts.push(el('div', {class:'calc', style:'grid-column:1/-1;color:var(--accent)'}, '🌙 Нічна зміна: день можна закривати. Повернення і гектари бригадир внесе вранці в блоці «Нічні зміни обприскування».'));
   }
-  if(k==='harv') parts.push(el('div', {class:'calc', style:'grid-column:1/-1'}, ha ? 'Скошено '+nf(ha)+' га — підуть в історію поля. Вагу пишіть у «Зерно → На склад після ЗАВ».' : 'Вкажіть скошені гектари в «Обсяг».'));
+  if(k==='harv'){ const hc = crop || (r.f ? harvAutoCrop(r.f, y) : '');
+    const hd = r.f && hc ? harvDone(r.f, hc, y) : null, todayHa = r.f && hc ? d3.sum(DS.rows.filter(o => o.st==='працює' && o.f===r.f && rowKind(o)==='harv' && (rowCrop(o)||hc)===hc), o => +o.q||0) : ha;
+    const left = hd && hd.ha ? hd.ha - hd.cut - todayHa : null;
+    parts.push(el('div', {class:'calc', style:'grid-column:1/-1'}, ha ? 'Скошено '+nf(ha)+' га — підуть в історію поля. Вагу пишіть у «Зерно → На склад після ЗАВ».' : 'Вкажіть скошені гектари в «Обсяг».',
+      hd && hd.ha ? el('div', {style:left < -hd.ha*.02 ? 'color:var(--warn);font-weight:600' : ''}, hc+' на полі '+r.f+': раніше скошено '+nf(hd.cut, 1)+' з '+nf(hd.ha, 1)+' га'+(ha ? ', з сьогоднішніми '+nf(hd.cut+todayHa, 1) : '')+(left < -hd.ha*.02 ? ' — більше площі під культурою' : left > .05 ? ' · лишилось '+nf(left, 1)+' га' : ' · поле скошено')) : '')); }
   return el('div', {class:'xtra'}, parts);
 }
 function renderZav(){
   const box = $('#zav-list'); box.replaceChildren(); const y = harvSeason();
   DS.zav.forEach(z => { const cc = z.f && z.f!=='*' ? cropsFor(z.f, y) : REF.crops;
     if(z.f && z.f!=='*' && cc.length===1) z.c = cc[0];
+    if(z.f && z.f!=='*' && cc.length > 1 && !z.c) z.c = harvAutoCrop(z.f, y);
     box.append(el('div', {class:'line', style:'border-left:3px solid var(--accent)'},
       el('div', {}, el('label', {class:'note'}, 'Поле'), el('select', {on:{change: ev => { z.f = ev.target.value; z.c = ''; renderDay(); }}}, el('option', {value:''}, '— поле —'),
         el('option', z.f==='*' ? {value:'*', selected:''} : {value:'*'}, 'кілька полів (змішане)'), REF.fields.map(f => el('option', f.n===z.f ? {value:f.n, selected:''} : {value:f.n}, f.n+(cropsFor(f.n, y).length ? ' · '+cropsFor(f.n, y).join('/') : ''))))),
-      el('div', {}, el('label', {class:'note'}, 'Культура'), el('select', {on:{change: ev => { z.c = ev.target.value; }}}, el('option', {value:''}, '—'), (cc.length ? cc : REF.crops).map(c => el('option', c===z.c ? {value:c, selected:''} : {value:c}, c)))),
+      el('div', {}, el('label', {class:'note'}, 'Культура'), el('select', {on:{change: ev => { z.c = ev.target.value; renderDay(); }}}, el('option', {value:''}, '—'), (cc.length ? cc : REF.crops).map(c => el('option', c===z.c ? {value:c, selected:''} : {value:c}, c)))),
       numIn(z, 'kg', 'На склад після ЗАВ, кг', {inputmode:'numeric'}), numIn(z, 'w', 'Вологість, %'), numIn(z, 'ws', 'Відходи, кг', {inputmode:'numeric'}),
+      z.c==='Кукурудза' || +z.dr ? numIn(z, 'dr', 'у т.ч. на доробіток, кг', {inputmode:'numeric'}) : '',
       el('div', {class:'calc'}, z.f==='*' ? 'Розподілиться між полями культури пропорційно скошеним га' : (+z.kg ? el('b', {}, nf(+z.kg/1000, 2)+' т') : '')))); });
 }
 // ---- ранкове закриття нічних змін обприскування
@@ -1603,6 +1614,7 @@ function checks(){
   const splitBad = DS.rows.filter(r => r.st==='працює' && r.f && OP[r.op] && FIELDOPS.has(OP[r.op].g) && cropsFor(r.f, seasonFor(r.op)).length > 1 && !rowCrop(r));
   if(splitBad.length) out.push(['warn', 'Поле поділене — не вказано культуру: '+splitBad.map(r => r.p+' ('+r.f+')').join(', '), '']);
   const zb = DS.zav.filter(z => +z.kg && (!z.c || !z.f)); if(zb.length) out.push(['bad', 'Зерно на склад без поля або культури: '+zb.length, 'Оберіть поле (або «кілька полів») і культуру.']);
+  const zd = DS.zav.filter(z => +z.dr && +z.dr > (+z.kg||0)); if(zd.length) out.push(['bad', 'На доробіток більше, ніж усього на склад: '+zd.map(z => z.f==='*' ? 'кілька полів' : z.f).join(', '), '«У т.ч. на доробіток» — це частина ваги на склад, не окрема цифра.']);
   const short = stockShort();
   if(short.length) out.push(['block', 'Не вистачає на складі — день не закриється: '+short.map(x => x.m+' — потрібно '+nf(x.q, x.u==='кг' ? 0 : 2)+' '+x.u+', '+(!x.known ? 'немає в довіднику матеріалів' : !x.inv ? 'на складі не оприбутковано' : 'є '+nf(Math.max(x.av, 0), x.u==='кг' ? 0 : 2)+' '+x.u)).join('; '),
     'Виправте кількість або спершу внесіть прихід на склад (вкладка «Склад» → «Прихід за накладною»).']);
@@ -1639,7 +1651,7 @@ function buildDayDoc(){
       if(qty > 0) rows['Внесення'].push({...base, 'Операція':'Обприскування (ЗЗР)', 'Матеріал':m, 'Кількість всього':+qty.toFixed(3), 'Примітка':(byIss ? 'видано '+(+iss)+', повернуто '+(+ret||0)+' · ' : 'за нормою · ')+who}); });
     if(k==='harv' && ha) rows['Урожай'].push({'Дата':n, 'Поле':r.f, 'Культура':rowCrop(r)||null, 'Скошено за день, га':ha, 'Джерело':'додаток', 'Примітка':'комбайн '+(r.m||'')});
   });
-  DS.zav.forEach(z => { if(+z.kg) rows['Урожай'].push({'Дата':n, 'Поле':z.f==='*' ? null : (z.f||null), 'Культура':z.c||null, 'Вага на склад, кг':+z.kg, 'Вологість, %':+z.w||null, 'Відходи після очищення, кг':+z.ws||null, 'Джерело':'додаток', 'Примітка':z.f==='*' ? 'змішане (кілька полів)' : 'після ЗАВ'}); });
+  DS.zav.forEach(z => { if(+z.kg) rows['Урожай'].push({'Дата':n, 'Поле':z.f==='*' ? null : (z.f||null), 'Культура':z.c||null, 'Вага на склад, кг':+z.kg, 'у т.ч. на доробіток, кг':+z.dr||null, 'Вологість, %':+z.w||null, 'Відходи після очищення, кг':+z.ws||null, 'Джерело':'додаток', 'Примітка':z.f==='*' ? 'змішане (кілька полів)' : 'після ЗАВ'}); });
   DS.rows.filter(r => r.st && r.st!=='працює').forEach(r => rows['Роботи'].push({'Дата':n, 'Операція':null, 'Працівник':r.p, 'Джерело':'додаток', 'Опис / примітка':r.st}));
   DS.appl.forEach(a => a.items.forEach(([m, k]) => rows['Внесення'].push({'Дата':n, 'Поле':a.f, 'Операція': (MAT[m]||{}).cat==='ЗЗР' ? 'Обприскування (ЗЗР)' : ((MAT[m]||{}).cat==='Насіння' ? 'Посів' : 'Внесення добрив'), 'Матеріал':m, 'Оброблено, га':+a.ha, 'Кількість всього':(+a.ha||0)*k, 'Джерело':'додаток', 'Примітка':a.t||null})));
   DS.rows.forEach(r => {
