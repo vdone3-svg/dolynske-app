@@ -2834,6 +2834,7 @@ async function renderPlan(){
   $('#plan-src').textContent = 'склав розрахунок '+new Date(P.generated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+(P.approved_at ? ' · затвердив '+(P.approved_by || 'власник')+' '+new Date(P.approved_at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '');
   const out = [el('div', {style:'margin:6px 0 10px'}, el('span', {class:'pill', style:'color:'+st[1]+';background:color-mix(in srgb,'+st[1]+' 15%,transparent)'}, st[0]),
     !own && X.status!=='approved' ? el('span', {class:'note', style:'margin-left:8px'}, 'чекає затвердження власником — може змінитися') : '')];
+  const wx = planWeather(P.date); if(wx) out.push(wx);
   if(P.ai && P.ai.text) out.push(el('div', {class:'card', style:'border-left:3px solid var(--accent)'}, el('h3', {}, '🤖 Коментар Claude'), el('p', {style:'margin:0;line-height:1.5'}, P.ai.text)));
   // роботи
   const groups = [['harvest', '🌽 Збирання'], ['plow', '🚜 Оранка']];
@@ -2884,6 +2885,23 @@ function grainLine(g){
   return el('div', {class:'note', style:'margin-top:4px;border-left:3px solid '+c+';padding-left:6px'},
     '💧 Зерно: '+(g.m!=null ? '~'+nf(g.m, 1)+' %' : 'невідомо')+' · '+(g.how || '')+(g.max!=null ? ' · межа '+g.max+' %, база '+g.base+' %' : '')+(g.m > g.max ? ' · чекає в полі (на елеватор не сушимо)' : '')+
     (g.lo!=null && Math.round(g.hi) > Math.round(g.lo) ? ' · моделі '+nf(g.lo, 0)+'–'+nf(g.hi, 0)+' %' : ''));
+}
+// погода на 7 днів від дня плану — середнє двох моделей (ECMWF/ICON) і всіх точок погоди; без розкиду, щоб не перевантажувати
+function planWeather(from){
+  const pts = Object.values((FWX.data || {}).points || {}).map(p => ((p.forecast || {}).days) || []).filter(d => d.length); if(!pts.length) return null;
+  const dates = [...new Set(pts.flat().map(d => d.d))].filter(d => d >= from).sort().slice(0, 7); if(!dates.length) return null;
+  const avg = (d, k) => { const v = pts.map(a => (a.find(x => x.d===d) || {})[k]).filter(x => x!=null); return v.length ? d3.sum(v, x => x)/v.length : null; };
+  const chips = dates.map(d => { const tx = avg(d, 'tx'), tn = avg(d, 'tn'), p = avg(d, 'p') || 0, ws = avg(d, 'ws'), cl = avg(d, 'cl');
+    const ic = p >= 0.5 ? (tx!=null && tx <= 0.5 ? '🌨' : p >= 3 ? '🌧' : '🌦') : cl==null ? '' : cl > 70 ? '☁' : cl > 30 ? '⛅' : '☀';
+    const day = new Date(d+'T12:00:00');
+    return el('div', {style:'min-width:66px;flex:1;text-align:center;border:1px solid var(--line);border-radius:6px;padding:4px 2px;font-size:12px;line-height:1.35'+(p >= 3 ? ';background:color-mix(in srgb,#3b6fb6 12%,transparent)' : '')},
+      el('div', {class:'note'}, day.toLocaleDateString('uk-UA', {weekday:'short'})+' '+day.toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'})),
+      el('div', {style:'font-size:18px'}, ic || '·'),
+      el('div', {}, el('b', {}, (tn!=null ? nf(tn, 0) : '?')+'…'+(tx!=null ? nf(tx, 0) : '?')+'°')),
+      el('div', {}, p >= 0.5 ? nf(p, p < 10 ? 1 : 0)+' мм' : 'сухо'),
+      el('div', {class:'note'}, ws!=null ? 'до '+nf(ws, 0)+' м/с' : ''));
+  });
+  return el('div', {class:'card'}, el('h3', {style:'margin-top:0'}, '🌦 Погода на 7 днів'), el('div', {style:'display:flex;gap:4px;flex-wrap:wrap'}, chips));
 }
 function grainOutlook(GO, bl){
   const dm = d => new Date(d+'T12:00:00').toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'});
