@@ -2254,6 +2254,19 @@ function showBattDetail(id){
     });
     btns.append(woBtn);
   }
+  if(ROLE==='o'){
+    const delAkbBtn = el('button', {class:'btn', style:'color:#c00;margin-left:auto', title:'Видалити АКБ з реєстру'}, '🗑 Видалити');
+    delAkbBtn.addEventListener('click', async () => {
+      if(!confirm('Видалити '+bat.id+' повністю з реєстру?\nЦю дію не можна скасувати.')) return;
+      const idx = BATT.batteries.indexOf(bat);
+      if(idx!==-1) BATT.batteries.splice(idx, 1);
+      BATT.log = BATT.log.filter(l => l.bat !== bat.id);
+      overlay.remove();
+      try { await saveBatt(); toast(bat.id+' видалено'); } catch(e){ toast('Помилка: '+e.message); }
+      renderBatt();
+    });
+    btns.append(delAkbBtn);
+  }
   box.append(btns);
   overlay.append(box);
   overlay.addEventListener('click', ev => { if(ev.target===overlay) overlay.remove(); });
