@@ -828,6 +828,8 @@ function renderFieldCard(){
   box.append(el('div', {class:'toolbar'}, el('h2', {}, 'Картка поля'), el('label', {for:'field-sel', class:'note'}, 'Поле'), sel));
   const ndl = ndviLine(f, YEAR); if(ndl) box.append(ndl);
   const nab = ndviAiBlock(f); if(nab) box.append(nab);
+  const fwb = fwxBlock(f, YEAR); if(fwb) box.append(fwb);
+  else if(FWX.data===undefined) ensureFwx().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f) renderFieldCard(); });
   else if(NDVI.data===undefined) ensureNdvi().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f && ndviLine(f, YEAR)) renderFieldCard(); });
   const hist = MODEL.fields.filter(x => x.f===f).sort((a,b) => b.y-a.y || a.c.localeCompare(b.c));
   hist.forEach(h => {
@@ -873,7 +875,7 @@ async function loadAgro(force){
 }
 async function loadWx(){
   if(AR.wx || AR.wxErr) return;
-  try{ const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=48.6&longitude=32.8&daily=precipitation_sum,temperature_2m_max,precipitation_probability_max,cloud_cover_mean&timezone=Europe%2FKyiv&forecast_days=7');
+  try{ const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=48.71&longitude=33.63&daily=precipitation_sum,temperature_2m_max,precipitation_probability_max,cloud_cover_mean&timezone=Europe%2FKyiv&forecast_days=7');
     const j = await r.json(); const d = j.daily; AR.wx = d.time.map((t, i) => ({t, mm:d.precipitation_sum[i], tx:d.temperature_2m_max[i], pr:d.precipitation_probability_max[i], cl:d.cloud_cover_mean[i]})); }
   catch(e){ AR.wxErr = 'прогноз недоступний'; }
 }
@@ -1221,7 +1223,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '21.11d NDVI + висновок';
+const APP_VER = '21.11e погода полів';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2781,6 +2783,19 @@ function renderNdviAi(){
 async function ghBlobUrl(path){ if(NDVI.urls[path]) return NDVI.urls[path];
   const r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+'/contents/'+enc(path)+'?ref='+GH.branch, {headers:{'Authorization':'Bearer '+TOKEN, 'Accept':'application/vnd.github.raw+json'}});
   if(!r.ok) return null; return NDVI.urls[path] = URL.createObjectURL(await r.blob()); }
+// ======= «Погода полів» (geo/weather.json, щодня з GitHub Actions)
+const FWX = {data:undefined};
+async function ensureFwx(){ if(FWX.data===undefined){ try{ FWX.data = await getJSON('geo/weather.json'); }catch(e){ FWX.data = null; } } return FWX.data; }
+function fwxBlock(n, y){
+  const F = (FWX.data || {}).fields || {}, r = F[n] || (LEGACY[n] && F[LEGACY[n]]); if(!r) return null;
+  const s = r[String(y)], w = r.now || {}, dm = d => d ? d.slice(8,10)+'.'+d.slice(5,7) : '';
+  const parts = [];
+  if(s && s.sow) parts.push(el('div', {}, '🌡 З сівби '+dm(s.sow)+' ('+s.days+' дн): Σ активних t '+nf(s.gdd_act, fmt0)+' °C · Σ ефективних (>'+s.base+' °C) '+nf(s.gdd_eff, fmt0)+' · опади '+nf(s.p_sow, fmt0)+' мм'+(s.frost ? ' · морозів ≤ −2 °C: '+s.frost : '')+(s.heat ? ' · спеки ≥ 32 °C: '+s.heat : '')));
+  if(w.last){ const d30 = w.p30 - w.p30_ly;
+    parts.push(el('div', {}, '💧 За 30 дн опадів '+nf(w.p30, fmt0)+' мм (рік тому '+nf(w.p30_ly, fmt0)+', '+(d30 >= 0 ? '+' : '')+nf(d30, fmt0)+') · за 90 дн '+nf(w.p90, fmt0)+' мм (рік тому '+nf(w.p90_ly, fmt0)+') · найдовше без дощу '+w.dry60+' дн'));
+    if(w.wroot!=null) parts.push(el('div', {}, '🌱 Волога кореневої зони '+w.wroot.toFixed(2)+' з 1 (рік тому '+(w.wroot_ly!=null ? w.wroot_ly.toFixed(2) : '—')+')'+(w.era5 ? ' · ERA5-Land 7–28 см: '+w.era5.s1+' м³/м³' : '')+' · дані до '+dm(w.last))); }
+  return parts.length ? el('div', {class:'note', style:'margin:6px 0;line-height:1.5'}, ...parts) : null;
+}
 function ndviRec(n){ const F = (NDVI.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
 function ndviSeason(n, y){ const r = ndviRec(n); return r ? (r.series || []).filter(o => o.d >= (y-1)+'-09-01' && o.d <= y+'-08-31') : []; }   // сезон «під урожай року»: вересень попереднього — серпень
 function ndviSpark(ser, w=150, h=34){
