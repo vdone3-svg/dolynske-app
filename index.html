@@ -2834,34 +2834,29 @@ async function renderPlan(){
   $('#plan-src').textContent = 'склав розрахунок '+new Date(P.generated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+(P.approved_at ? ' · затвердив '+(P.approved_by || 'власник')+' '+new Date(P.approved_at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '');
   const out = [el('div', {style:'margin:6px 0 10px'}, el('span', {class:'pill', style:'color:'+st[1]+';background:color-mix(in srgb,'+st[1]+' 15%,transparent)'}, st[0]),
     !own && X.status!=='approved' ? el('span', {class:'note', style:'margin-left:8px'}, 'чекає затвердження власником — може змінитися') : '')];
-  // умови
-  out.push(el('div', {class:'ar-grid'}, Object.entries(P.cond || {}).map(([pt, c]) => { const f = x => x ? (x.p!=null ? nf(x.p, 1)+' мм' : '')+(x.tmin!=null ? ' · повітря '+nf(x.tmin, 0)+'…'+nf(x.tmax ?? x.tmin, 0)+'°' : '')+(x.tsmin!=null ? ' · ґрунт до '+nf(x.tsmin, 0)+'°' : '') : '—';
-    return el('div', {class:'card'}, el('h3', {}, '🌦 Точка «'+pt+'»'), el('div', {class:'note'}, '☀ День 07–17: '+f(c.day)), el('div', {class:'note'}, '🌙 Ніч 18–06: '+f(c.night)),
-      el('div', {class:'note'}, '🌱 Орний шар: '+(c.soil && c.soil.r!=null ? c.soil.r+'% НВ' : '—')+(c.soil && c.soil.sn ? ' · сніг '+nf(c.soil.sn, 0)+' см' : '')), c.plow_summary ? el('div', {class:'note'}, '🚜 '+c.plow_summary) : ''); })));
   if(P.ai && P.ai.text) out.push(el('div', {class:'card', style:'border-left:3px solid var(--accent)'}, el('h3', {}, '🤖 Коментар Claude'), el('p', {style:'margin:0;line-height:1.5'}, P.ai.text)));
   // роботи
   const groups = [['harvest', '🌽 Збирання'], ['plow', '🚜 Оранка']];
   const people = [...new Set(Object.values(P.resources || {}).flatMap(r => Object.values(r).flatMap(t => t.workers || [])))].sort();
   groups.forEach(([k, title]) => {
-    const its = X.items.filter(i => i.kind===k), bl = (P.backlog || {})[k] || [];
+    const its = X.items.filter(i => i.kind===k && i.shifts.length), bl = (P.backlog || {})[k] || [];   // власник: у плані лише роботи, які можна робити
+    if(!its.length) return;
     const tot = d3.sum(its, i => d3.sum(i.shifts, s => +s.ha || 0));
-    const card = el('div', {class:'card'}, el('h3', {}, title+' · план '+nf(tot, 0)+' га з '+nf((P.backlog || {})[k+'_ha'] || 0, 0)+' га, що лишилось'));
-    if(!its.length) card.append(el('p', {class:'note'}, bl.length ? 'Немає техніки для цієї роботи в табелі.' : 'Робіт немає — усе зроблено.'));
-    its.forEach((it, ii) => {
+    const card = el('div', {class:'card', 'data-work':'1'}, el('h3', {}, title+' · план '+nf(tot, 0)+' га з '+nf((P.backlog || {})[k+'_ha'] || 0, 0)+' га, що лишилось'));
+    its.forEach(it => { const ii = X.items.filter(i => i.kind===k).indexOf(it);
       const row = el('div', {style:'border-top:1px solid var(--line);padding:8px 0'});
       const fieldSel = editable ? el('select', {style:'width:auto', onchange:ev => { const [f, c] = ev.target.value.split('|'); planEdit(P, x => { const t = x.items.filter(i => i.kind===k)[ii]; t.field = f; t.crop = c || null; }); }},
         bl.map(b => el('option', {value:b.field+'|'+(b.crop || ''), selected:b.field===it.field && (b.crop || null)===(it.crop || null) ? '' : null}, b.field+(b.crop ? ' · '+b.crop : '')+' (лишилось '+nf(b.left, 0)+' га)'))) : el('b', {}, it.field+(it.crop ? ' · '+it.crop : ''));
       row.append(el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap'}, el('b', {}, it.tech), '→', fieldSel,
-        el('span', {class:'note'}, 'залишок '+nf(it.left_before, 0)+' → '+nf(Math.max(0, it.left_before - d3.sum(it.shifts, s => +s.ha || 0)), 0)+' га · '+it.rate)));
+        el('span', {class:'note'}, 'залишок '+nf(it.left_before, 0)+' → '+nf(Math.max(0, it.left_before - d3.sum(it.shifts, s => +s.ha || 0)), 0)+' га')));
       if(it.grain) row.append(grainLine(it.grain));
-      if(!it.shifts.length) row.append(el('div', {class:'note', style:'color:var(--bad)'}, '⛔ '+(it.note || 'стоїть')));
       it.shifts.forEach((s, si) => {
         const who = editable ? el('select', {style:'width:auto', onchange:ev => planEdit(P, x => { x.items.filter(i => i.kind===k)[ii].shifts[si].who = [ev.target.value]; })},
             [...new Set([...(s.who || []), ...people])].map(w => el('option', {value:w, selected:(s.who || [])[0]===w ? '' : null}, w))) : el('span', {}, (s.who || []).join(', '));
         const ha = editable ? el('input', {type:'number', min:'0', step:'1', value:s.ha, style:'width:70px', onchange:ev => planEdit(P, x => { x.items.filter(i => i.kind===k)[ii].shifts[si].ha = +ev.target.value || 0; })}) : el('b', {}, nf(s.ha, 0));
         row.append(el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px'},
           el('span', {style:'display:inline-block;min-width:62px;text-align:center;border-radius:4px;color:#fff;padding:1px 6px;background:'+PST[s.st]}, s.shift==='ніч' ? '🌙 ніч' : '☀ день'),
-          who, ha, el('span', {}, 'га'), el('span', {class:'note'}, s.why.join('; ')),
+          who, ha, el('span', {}, 'га'), s.st!=='так' ? el('span', {class:'note'}, s.why.join('; ')) : '',
           editable ? el('button', {class:'btn small ghost', title:'Прибрати зміну', onclick:() => planEdit(P, x => { x.items.filter(i => i.kind===k)[ii].shifts.splice(si, 1); })}, '✕') : ''));
       });
       const has = sh => it.shifts.some(s => s.shift===sh);
@@ -2869,11 +2864,10 @@ async function renderPlan(){
         el('button', {class:'btn small ghost', title:c.why.join('; '), onclick:() => planEdit(P, x => { const w = ((((P.resources || {})[k] || {})[it.tech] || {}).workers || []), busy = it.shifts.flatMap(z => z.who || []); x.items.filter(i => i.kind===k)[ii].shifts.push({shift:sh, ha:0, who:[w.find(z => !busy.includes(z)) || w[0] || 'хто?'], st:c.st, why:c.why}); })}, '+ '+(sh==='ніч' ? '🌙 нічна' : '☀ денна')+' зміна ('+c.st+')'))));
       card.append(row);
     });
-    if(bl.length) card.append(el('div', {class:'note', style:'margin-top:6px'}, 'Лишилось: '+bl.map(b => b.field+(b.crop ? ' ('+b.crop+')' : '')+' '+nf(b.left, 0)+' га'+(b.grain && b.grain.m!=null ? ' (зерно ~'+nf(b.grain.m, 0)+' %)' : '')).join(' · ')));
-    if(k==='harvest' && P.grain_outlook) card.append(grainOutlook(P.grain_outlook));
     out.push(card);
   });
-  out.push(el('div', {class:'note'}, 'Правила: день 07–17, ніч 18–06. Збирання: волога зерна за погодою — у межі так, на межі (+1 %) обмежено, вище — ні, чекає в полі; дощ ≥ 3 мм — ні; ґрунт ≥ 95 % НВ і не підмерзає — обмежено (багнюка); вночі по підмерзлому — краще. Оранка: стан з «Вікон оранки»; вночі — лише без дощу й коли ґрунт підмерзає не глибше кірки (≥ −3 °C). Виробіток — з табеля (га на людино-зміну). Техніку для робіт задає ref/plan.json.'));
+  if(!out.some(x => x.dataset && x.dataset.work)) out.push(el('p', {class:'note'}, 'На цей день робіт у полі немає — погода не дозволяє.'));
+  if(P.grain_outlook && Object.keys(P.grain_outlook).length) out.push(el('div', {class:'card'}, grainOutlook(P.grain_outlook, (P.backlog || {}).harvest || [])));
   if(own){
     const acts = el('div', {class:'acts', style:'justify-content:flex-start;margin-top:10px'});
     if(X.status!=='approved'){
@@ -2891,16 +2885,19 @@ function grainLine(g){
     '💧 Зерно: '+(g.m!=null ? '~'+nf(g.m, 1)+' %' : 'невідомо')+' · '+(g.how || '')+(g.max!=null ? ' · межа '+g.max+' %, база '+g.base+' %' : '')+(g.m > g.max ? ' · чекає в полі (на елеватор не сушимо)' : '')+
     (g.lo!=null && Math.round(g.hi) > Math.round(g.lo) ? ' · моделі '+nf(g.lo, 0)+'–'+nf(g.hi, 0)+' %' : ''));
 }
-function grainOutlook(GO){
+function grainOutlook(GO, bl){
   const dm = d => new Date(d+'T12:00:00').toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'});
-  const box = el('div', {style:'border-top:1px dashed var(--line);margin-top:8px;padding-top:8px'}, el('b', {}, '💧 Волога зерна на 14 днів (оцінка за погодою)'));
-  Object.entries(GO).forEach(([pt, cr]) => Object.entries(cr).forEach(([c, o]) => {
+  const box = el('div', {}, el('h3', {style:'margin-top:0'}, '💧 Волога зерна на 14 днів'));
+  const crops = {};      // культура → точка погоди, де найбільше незібраного (точки в плані не показуємо)
+  Object.entries(GO).forEach(([pt, cr]) => Object.entries(cr).forEach(([c, o]) => { const ha = d3.sum(bl.filter(b => b.point===pt && b.crop===c), b => b.left);
+    if(!crops[c] || ha > crops[c].ha) crops[c] = {o, ha}; }));
+  Object.entries(crops).forEach(([c, {o}]) => {
     const w = o.window;
-    box.append(el('div', {class:'note', style:'margin-top:4px'}, '«'+pt+'» · '+c+' · межа '+o.max+' % · '+(w ? 'вікно: '+dm(w.from)+(w.days > 1 ? '–'+dm(w.to) : '')+(w.sure ? '' : ' (на межі)') : 'вікна ≤ '+o.max+' % у прогнозі немає')),
+    box.append(el('div', {class:'note', style:'margin-top:4px'}, c+' · межа '+o.max+' % · '+(w ? 'можна косити: '+dm(w.from)+(w.days > 1 ? '–'+dm(w.to) : '')+(w.sure ? '' : ' (на межі)') : 'вікна ≤ '+o.max+' % у прогнозі немає — чекає в полі')),
       el('div', {style:'display:flex;gap:3px;flex-wrap:wrap;margin-top:3px'}, o.days.map(x => el('span', {title:dm(x.d)+': '+nf(x.m, 1)+' % (моделі '+nf(x.lo, 0)+'–'+nf(x.hi, 0)+')'+(x.p >= 1 ? ' · дощ '+nf(x.p, 0)+' мм' : '')+' · '+x.why,
         style:'min-width:44px;text-align:center;border-radius:4px;padding:2px 3px;font-size:12px;color:#fff;background:'+(PST[x.st] || '#999')}, dm(x.d).slice(0, 5), el('br'), nf(x.m, 0)+'%'+(x.p >= 3 ? ' 🌧' : '')))));
-  }));
-  box.append(el('div', {class:'note'}, 'Модель: рівновага зерна з вологістю повітря (ASABE) за ERA5 + ECMWF/ICON; дощ додає воду на качани, що сходить за 1–3 дні. Зелене — верх оцінки в межі; жовте — на межі, перевірити першим бункером; червоне — чекає в полі або дощ.'));
+  });
+  box.append(el('div', {class:'note'}, 'Оцінка за погодою. Зелене — можна косити; жовте — на межі, перевірити першим бункером; червоне — чекає в полі або дощ.'));
   return box;
 }
 function planEdit(P, fn){ if(!PLAN.edit || PLAN.edit.date!==P.date) PLAN.edit = JSON.parse(JSON.stringify(P)); fn(PLAN.edit); renderPlan(); }
