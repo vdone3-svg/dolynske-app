@@ -481,7 +481,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   <main class="pane" id="pane-map">
     <section class="card">
       <div class="toolbar"><h2 style="margin:0">Карта полів</h2>
-        <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button></div>
+        <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button><button class="chip" data-m="ndvi">NDVI (супутник)</button></div>
         <button class="btn small" id="map-loc">Де я</button>
         <button class="btn small" id="map-off">Зберегти карту офлайн</button>
         <button class="chip" id="map-sc" aria-pressed="true">Огляди</button>
@@ -826,6 +826,8 @@ function renderFieldCard(){
   const sel = el('select', {id:'field-sel', onchange:ev => { SELFIELD = ev.target.value; renderFields(); renderFieldCard(); }}, names.map(n => el('option', {value:n}, n)));
   sel.value = f;
   box.append(el('div', {class:'toolbar'}, el('h2', {}, 'Картка поля'), el('label', {for:'field-sel', class:'note'}, 'Поле'), sel));
+  const ndl = ndviLine(f, YEAR); if(ndl) box.append(ndl);
+  else if(NDVI.data===undefined) ensureNdvi().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f && ndviLine(f, YEAR)) renderFieldCard(); });
   const hist = MODEL.fields.filter(x => x.f===f).sort((a,b) => b.y-a.y || a.c.localeCompare(b.c));
   hist.forEach(h => {
     const groups = d3.rollups(h.appl, v => ({q:d3.sum(v, a => a.q), u:v[0].u, cat:v[0].cat}), a => a.mat).sort((a,b) => a[1].cat.localeCompare(b[1].cat));
@@ -1218,7 +1220,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '21.11b збирання у «День»';
+const APP_VER = '21.11c NDVI';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2745,9 +2747,48 @@ function yieldClass(n, y){   // урожайність відносно сере
   return {c:x.c, v:x.ycut, avg, d: avg ? x.ycut/avg-1 : 0};
 }
 const YCOL = d => d==null ? '#9aa0a6' : d > 0.1 ? '#2e7d4f' : d < -0.1 ? '#b3372e' : '#d4a72c';
+// ======= NDVI із супутника (geo/ndvi.json + geo/ndvi/<поле>.png, оновлює GitHub Actions раз на 2 дні)
+const NDVI = {data:undefined, urls:{}, layer:null};
+const NDVI_RAMP = [[0,'#a60026'],[.2,'#d73027'],[.3,'#f46d43'],[.4,'#fdae61'],[.5,'#fee08b'],[.6,'#d9ef8b'],[.7,'#66bd63'],[.8,'#1a9850'],[1,'#006837']];
+async function ensureNdvi(){ if(NDVI.data===undefined){ try{ NDVI.data = await getJSON('geo/ndvi.json'); }catch(e){ NDVI.data = null; } } return NDVI.data; }
+async function ghBlobUrl(path){ if(NDVI.urls[path]) return NDVI.urls[path];
+  const r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+'/contents/'+enc(path)+'?ref='+GH.branch, {headers:{'Authorization':'Bearer '+TOKEN, 'Accept':'application/vnd.github.raw+json'}});
+  if(!r.ok) return null; return NDVI.urls[path] = URL.createObjectURL(await r.blob()); }
+function ndviRec(n){ const F = (NDVI.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
+function ndviSeason(n, y){ const r = ndviRec(n); return r ? (r.series || []).filter(o => o.d >= (y-1)+'-08-01' && o.d <= y+'-12-31') : []; }
+function ndviSpark(ser, w=150, h=34){
+  if(ser.length < 2) return '';
+  const t0 = new Date(ser[0].d).getTime(), t1 = new Date(ser[ser.length-1].d).getTime() || t0+1;
+  const X = d => 2 + (new Date(d).getTime()-t0)/(t1-t0 || 1)*(w-4), Y = v => h-2 - Math.max(0, Math.min(1, v))*(h-4);
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'); svg.setAttribute('width', w); svg.setAttribute('height', h); svg.setAttribute('viewBox', '0 0 '+w+' '+h);
+  const band = document.createElementNS(ns, 'path'); band.setAttribute('d', 'M'+ser.map(o => X(o.d)+','+Y(o.p90)).join('L')+'L'+ser.slice().reverse().map(o => X(o.d)+','+Y(o.p10)).join('L')+'Z'); band.setAttribute('fill', 'rgba(26,152,80,.18)');
+  const ln = document.createElementNS(ns, 'polyline'); ln.setAttribute('points', ser.map(o => X(o.d)+','+Y(o.mean)).join(' ')); ln.setAttribute('fill', 'none'); ln.setAttribute('stroke', '#1a9850'); ln.setAttribute('stroke-width', '1.6');
+  svg.append(band, ln); return svg;
+}
+function ndviLine(n, y){
+  const ser = ndviSeason(n, y); if(!ser.length) return null;
+  const o = ser[ser.length-1], sp = o.p90 - o.p10;
+  return el('div', {class:'note', style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap'},
+    el('span', {}, 'NDVI '+o.mean.toFixed(2)+' (на полі від '+o.p10.toFixed(2)+' до '+o.p90.toFixed(2)+')'+(sp > .25 ? ' · ⚠ неоднорідне' : '')+' · знімок '+o.d.slice(8,10)+'.'+o.d.slice(5,7)+' · '+ser.length+' знімків за сезон'),
+    ndviSpark(ser));
+}
+async function drawNdviLayer(){
+  if(NDVI.layer){ NDVI.layer.remove(); NDVI.layer = null; }
+  if(MAPV.mode!=='ndvi') return;
+  await ensureNdvi();
+  if(!NDVI.data){ $('#map-info').textContent = 'NDVI ще не зібрано: потрібні ключі Copernicus у сховищі даних і перший запуск збору'; return; }
+  const g = L.layerGroup();
+  for(const [n, r] of Object.entries(NDVI.data.fields || {})){
+    if(!r.img) continue; const url = await ghBlobUrl(r.img.file); if(!url) continue;
+    const b = r.img.bbox; L.imageOverlay(url, [[b[1], b[0]], [b[3], b[2]]], {opacity:.9, interactive:false}).addTo(g);
+  }
+  if(MAPV.mode!=='ndvi') return;
+  NDVI.layer = g.addTo(MAPV.map); if(MAPV.fl) MAPV.fl.bringToFront(); renderMapLegend();
+}
 function fieldStyle(f){
   const n = fieldsOf(f)[0], base = {weight:2, color:'#ffffff', opacity:.9, fillOpacity:.55};
   if(MAPV.mode==='yield'){ const yc = yieldClass(n, YEAR); return {...base, fillColor:YCOL(yc && yc.d)}; }
+  if(MAPV.mode==='ndvi') return {...base, fillOpacity:0, weight:1.5};
   const cs = cropsOfField(n, YEAR); return {...base, fillColor: cs.length ? cropColor(cs[0].c) : '#9aa0a6', dashArray: f.properties.flag ? '6 4' : null};
 }
 function fieldPopup(f){
@@ -2762,6 +2803,7 @@ function fieldPopup(f){
       el('button', {class:'btn small', onclick:() => { HF = n; location.hash = 'history'; }}, 'Історія')));
   });
   box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га'+(p.parts ? ' ('+p.parts+')' : '')+(p.ha_gps && p.ha_gps!==p.ha_geom ? ' · GPS '+nf(p.ha_gps)+' га' : '')+' · '+(p.source || '')));
+  fieldsOf(f).forEach(n => { const nl = ndviLine(n, YEAR); if(nl) box.append(nl); });
   fieldsOf(f).forEach(n => box.append(...zonePopupPart(n)));
   if(p.flag) box.append(el('div', {class:'note', style:'color:var(--warn)'}, '⚠ '+p.flag));
   return box;
@@ -2775,11 +2817,16 @@ function drawFields(){
   drawZones();
   if(MAPV.paiL) MAPV.paiL.bringToFront();
   renderMapLegend();
+  drawNdviLayer();
 }
 function renderMapLegend(){
   const lg = $('#map-legend'); lg.replaceChildren();
   const sw = (c, t) => el('span', {class:'lg'}, el('i', {style:'background:'+c}), t);
-  if(MAPV.mode==='yield') lg.append(sw(YCOL(0.2), 'вище середньої по культурі > 10%'), sw(YCOL(0), '±10%'), sw(YCOL(-0.2), 'нижче > 10%'), sw(YCOL(null), 'немає даних'));
+  if(MAPV.mode==='ndvi'){
+    lg.append(el('span', {class:'lg'}, el('i', {style:'width:120px;background:linear-gradient(90deg,'+NDVI_RAMP.map(([v, c]) => c+' '+v*100+'%').join(',')+')'}), ' NDVI 0 → 1'));
+    const ds = Object.values((NDVI.data || {}).fields || {}).map(r => r.img && r.img.d).filter(Boolean).sort();
+    lg.append(el('span', {class:'note'}, ds.length ? ' знімки '+ds[0].slice(8,10)+'.'+ds[0].slice(5,7)+(ds[0]!==ds[ds.length-1] ? '–'+ds[ds.length-1].slice(8,10)+'.'+ds[ds.length-1].slice(5,7) : '')+' · червоне — слабша рослинність; без кольору — хмари або немає даних' : ' знімків ще немає'));
+  } else if(MAPV.mode==='yield') lg.append(sw(YCOL(0.2), 'вище середньої по культурі > 10%'), sw(YCOL(0), '±10%'), sw(YCOL(-0.2), 'нижче > 10%'), sw(YCOL(null), 'немає даних'));
   else { const cs = [...new Set((REF.prl || []).filter(r => r.y===YEAR).map(r => r.c))]; cs.forEach(c => lg.append(sw(cropColor(c), c))); lg.append(sw('#9aa0a6', 'немає даних')); }
   const tot = d3.sum(MAPV.geo.features, f => f.properties.ha_geom);
   $('#map-info').textContent = 'Урожай '+YEAR+' · '+MAPV.geo.features.length+' контурів, '+nf(tot)+' га за контурами · пунктир — контур потребує уточнення';
