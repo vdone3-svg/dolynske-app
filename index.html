@@ -1979,17 +1979,34 @@ function renderBattLog(){
   if(!logs.length){ c.append(el('p', {class:'note'}, 'Журнал порожній.')); return; }
 
   const tbl = el('table');
-  tbl.append(el('thead', {}, el('tr', {}, ['Дата','АКБ','Дія','Звідки','Куди','Причина'].map((h,i) => el('th', {class:i<2?'l':''}, h)))));
-  tbl.append(el('tbody', {}, logs.map(l => {
+  const ownerCols = ROLE==='o' ? ['Дата','АКБ','Дія','Звідки','Куди','Причина',''] : ['Дата','АКБ','Дія','Звідки','Куди','Причина'];
+  tbl.append(el('thead', {}, el('tr', {}, ownerCols.map((h,i) => el('th', {class:i<2?'l':''}, h)))));
+  const tbody = el('tbody');
+  logs.forEach((l, idx) => {
+    const origIdx = BATT.log.indexOf(l);
     const d = l.ts.slice(0,10).split('-').reverse().join('.');
-    return el('tr', {},
+    const tr = el('tr', {},
       el('td', {class:'l'}, d),
       el('td', {class:'l', style:'font-weight:700'}, l.bat),
       el('td', {}, BATT_ACTIONS[l.action]||l.action),
       el('td', {}, l.from||'—'),
       el('td', {}, l.to||'—'),
       el('td', {class:'note'}, l.reason||''));
-  })));
+    if(ROLE==='o'){
+      const delTd = el('td', {});
+      const delBtn = el('button', {class:'btn small', style:'color:#c00;padding:2px 7px;font-size:12px', title:'Видалити запис'}, '🗑');
+      delBtn.addEventListener('click', async () => {
+        if(!confirm('Видалити цей запис з журналу?\n'+d+' · '+l.bat+' · '+(BATT_ACTIONS[l.action]||l.action))) return;
+        BATT.log.splice(origIdx, 1);
+        try { await saveBatt(); toast('Запис видалено'); } catch(e){ toast('Помилка: '+e.message); }
+        renderBatt();
+      });
+      delTd.append(delBtn);
+      tr.append(delTd);
+    }
+    tbody.append(tr);
+  });
+  tbl.append(tbody);
   c.append(el('div', {class:'tablewrap'}, tbl));
 }
 
@@ -2193,10 +2210,25 @@ function showBattDetail(id){
 
   if(logs.length){
     logs.forEach(l => {
+      const origIdx = BATT.log.indexOf(l);
       const d = l.ts.slice(0,10).split('-').reverse().join('.');
-      box.append(el('div', {style:'padding:4px 0;border-bottom:1px solid var(--line);font-size:13px'},
+      const row = el('div', {style:'padding:4px 0;border-bottom:1px solid var(--line);font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:6px'});
+      const info = el('div', {},
         el('span', {style:'font-weight:600'}, d+' '), el('span', {}, (BATT_ACTIONS[l.action]||l.action)+' '),
-        el('span', {class:'note'}, (l.from||'')+' → '+(l.to||'')), l.reason ? el('span', {class:'note', style:'margin-left:6px'}, '('+l.reason+')') : ''));
+        el('span', {class:'note'}, (l.from||'')+' → '+(l.to||'')), l.reason ? el('span', {class:'note', style:'margin-left:6px'}, '('+l.reason+')') : '');
+      row.append(info);
+      if(ROLE==='o'){
+        const delBtn = el('button', {class:'btn small', style:'color:#c00;padding:1px 6px;font-size:11px;flex-shrink:0', title:'Видалити'}, '🗑');
+        delBtn.addEventListener('click', async () => {
+          if(!confirm('Видалити цей запис?\n'+d+' · '+(BATT_ACTIONS[l.action]||l.action))) return;
+          BATT.log.splice(origIdx, 1);
+          overlay.remove();
+          try { await saveBatt(); toast('Запис видалено'); } catch(e){ toast('Помилка: '+e.message); }
+          renderBatt();
+        });
+        row.append(delBtn);
+      }
+      box.append(row);
     });
   } else {
     box.append(el('p', {class:'note'}, 'Немає записів.'));
