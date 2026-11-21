@@ -481,7 +481,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   <main class="pane" id="pane-map">
     <section class="card">
       <div class="toolbar"><h2 style="margin:0">Карта полів</h2>
-        <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button><button class="chip" data-m="ndvi">NDVI (супутник)</button></div>
+        <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button><button class="chip" data-m="ndvi">NDVI (супутник)</button><button class="chip" data-m="plow">Оранка</button></div>
         <button class="btn small" id="map-loc">Де я</button>
         <button class="btn small" id="map-off">Зберегти карту офлайн</button>
         <button class="chip" id="map-sc" aria-pressed="true">Огляди</button>
@@ -875,10 +875,11 @@ async function loadAgro(force){
 }
 async function loadWx(){
   if(AR.wx || AR.wxErr) return;
-  try{ const W = await ensureFwx(), fc = W && W.points && W.points['Захід'] && W.points['Захід'].forecast;   // прогноз MET Norway (CC BY 4.0), зібраний сервером щодня
+  try{ const W = await ensureFwx(), fc = W && W.points && W.points['Захід'] && W.points['Захід'].forecast;   // прогноз Open-Meteo (ECMWF + ICON; запасний — MET Norway), зібраний сервером
     const today = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
     const ds = fc && fc.days ? fc.days.filter(x => x.d >= today && x.tx != null) : [];
-    if(ds.length){ AR.wx = ds.slice(0, 7).map(x => { const m = x.ecmwf || x; return {t:x.d, mm:m.p ?? 0, tx:m.tx, pr:m.pp, cl:m.cl ?? 0}; }); return; }
+    if(ds.length){ AR.wxSrc = fc.source || ''; AR.wx = ds.slice(0, 7).map(x => { const m = x.m || {}, sp = (fc.spray || {})[x.d] || [];
+      return {t:x.d, mm:x.p ?? 0, tx:x.tx, tn:x.tn, pr:x.pp, cl:x.cl ?? 0, me:m.ecmwf && m.ecmwf.p, mi:m.icon && m.icon.p, agree:x.agree, ws:x.ws, sp:sp.map(w => typeof w==='string' ? {h:w, q:1} : w)}; }); return; }
     AR.wxErr = 'прогноз ще не зібрано'; }
   catch(e){ AR.wxErr = 'прогноз недоступний'; }
 }
@@ -1009,14 +1010,18 @@ function drawAgro(){
     el('table', {}, el('thead', {}, el('tr', {}, ['Культура','Ми','Кіровоградська обл.','Україна'].map((x, i) => el('th', {class:i ? '' : 'l'}, x)))),
       el('tbody', {}, bench.map(b => { const u = us(b.c); return el('tr', {}, el('td', {class:'l'}, b.c), el('td', {}, el('b', {}, nf(u, 1))), el('td', {}, nf(b.obl, 1), badge(u, b.obl)), el('td', {}, nf(b.ua, 1), badge(u, b.ua))); }))),
     el('div', {class:'note', style:'margin-top:6px'}, 'Область і Україна — з агрозвіту (Latifundist, UkrAgroConsult). «Ми» — з наших даних збирання.'));
-  // --- погода (MET Norway, через «Погоду полів») з алгоритмом простою агрозвіту
+  // --- погода (Open-Meteo ECMWF + ICON, запасний MET Norway — через «Погоду полів») з алгоритмом простою агрозвіту
   const wxDay = w => { const rain = w.mm >= .5, stop = rain ? (w.tx > 12 ? 1 : w.tx >= 8 ? 1.5 : 2) : 0, late = !rain && w.cl > 90;
     return {stop, late, txt: stop ? 'простій '+nf(stop, 1)+' дн' : late ? 'вихід з 11:00' : 'робочий'}; };
   const secWx = el('div', {class:'card', style:'grid-column:1/-1'}, el('h3', {}, '🌦 Погода на 7 днів · Долинське'),
     AR.wx ? el('div', {class:'wx'}, AR.wx.map(w => { const r = wxDay(w), dd = new Date(w.t+'T12:00:00');
-      return el('div', {class: r.stop ? 'stop' : r.late ? 'late' : ''}, el('b', {}, dd.toLocaleDateString('uk-UA', {weekday:'short', day:'numeric'})), el('div', {}, nf(w.tx, 0)+'°'), el('div', {class:'note'}, nf(w.mm, 1)+' мм · '+(w.pr ?? '—')+'%'), el('div', {style:'font-weight:600;margin-top:2px'}, r.txt)); }))
+      return el('div', {class: r.stop ? 'stop' : r.late ? 'late' : ''}, el('b', {}, dd.toLocaleDateString('uk-UA', {weekday:'short', day:'numeric'})), el('div', {}, (w.tn!=null ? nf(w.tn, 0)+'…' : '')+nf(w.tx, 0)+'°'),
+        el('div', {class:'note', title: w.me!=null && w.mi!=null ? 'ECMWF '+nf(w.me, 1)+' мм · ICON '+nf(w.mi, 1)+' мм' : ''}, nf(w.mm, 1)+' мм'+(w.me!=null && w.mi!=null ? ' ('+nf(w.me, 1)+'/'+nf(w.mi, 1)+')' : w.pr!=null ? ' · '+w.pr+'%' : '')),
+        w.agree==='моделі розходяться' ? el('div', {class:'note', style:'color:var(--warn)'}, '⚠ моделі розходяться') : '',
+        el('div', {style:'font-weight:600;margin-top:2px'}, r.txt),
+        el('div', {class:'note', style:'margin-top:2px', title:'Вікна обприскування: вітер < 4,5 м/с, пориви < 8, 8–25 °C, ΔT ≤ 10, 4 год без дощу. Суцільна рамка — обидві моделі згодні'}, w.sp.length ? w.sp.map(x => el('span', {style:'display:inline-block;margin:1px;padding:0 4px;border-radius:4px;border:1px '+(x.q===2 ? 'solid var(--good)' : 'dashed var(--warn)')}, '💧'+x.h)) : '💧 —')); }))
       : el('p', {class:'note'}, AR.wxErr || 'Завантажую прогноз…'),
-    el('div', {class:'note', style:'margin-top:6px'}, 'Правило простою як в агрозвіті: дощ ≥0,5 мм → 1 день (>12°), 1,5 (8–12°), 2 (<8°); хмарність >90% → вихід з 11:00. Прогноз — MET Norway (api.met.no), CC BY 4.0.'));
+    el('div', {class:'note', style:'margin-top:6px'}, 'Правило простою як в агрозвіті: дощ ≥0,5 мм → 1 день (>12°), 1,5 (8–12°), 2 (<8°); хмарність >90% → вихід з 11:00. Опади — середнє двох моделей (у дужках ECMWF / ICON). 💧 — вікна обприскування: суцільна рамка — обидві моделі згодні, пунктир — лише одна. Прогноз: '+(AR.wxSrc || 'Open-Meteo.com (ECMWF IFS + DWD ICON)')+', CC BY 4.0.'));
   const bad = AR._bad;
   const recon = X ? el('div', {class:'recon '+(bad ? 'bad' : 'ok')}, el('b', {}, bad ? '⚠ Розбіжностей з агрозвітом: '+bad : '✓ Дані бригадира й агрозвіту сходяться'),
       el('div', {class:'note'}, 'Агрозвіт — файли бухгалтера (OneDrive), дані на '+X.data_date.split('-').reverse().join('.')+'. Допуск: гектари ±1 га або 2%, пальне ±20 л або 5%, зерно ±0,5 т або 1%.'+(iso > X.data_date ? ' Обраний день новіший за агрозвіт — для звірки дочекайтесь файлів бухгалтера.' : '')))
@@ -1226,7 +1231,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '21.11g прогноз MET Norway';
+const APP_VER = '21.11h Open-Meteo · ґрунт · оранка';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2796,9 +2801,38 @@ function fwxBlock(n, y){
   if(s && s.sow) parts.push(el('div', {}, '🌡 З сівби '+dm(s.sow)+' ('+s.days+' дн): Σ активних t '+nf(s.gdd_act, fmt0)+' °C · Σ ефективних (>'+s.base+' °C) '+nf(s.gdd_eff, fmt0)+' · опади '+nf(s.p_sow, fmt0)+' мм'+(s.frost ? ' · морозів ≤ −2 °C: '+s.frost : '')+(s.heat ? ' · спеки ≥ 32 °C: '+s.heat : '')));
   if(w.last){ const d30 = w.p30 - w.p30_ly;
     parts.push(el('div', {}, '💧 За 30 дн опадів '+nf(w.p30, fmt0)+' мм (рік тому '+nf(w.p30_ly, fmt0)+', '+(d30 >= 0 ? '+' : '')+nf(d30, fmt0)+') · за 90 дн '+nf(w.p90, fmt0)+' мм (рік тому '+nf(w.p90_ly, fmt0)+') · найдовше без дощу '+w.dry60+' дн'));
-    if(w.wroot!=null) parts.push(el('div', {}, '🌱 Волога кореневої зони '+w.wroot.toFixed(2)+' з 1 (рік тому '+(w.wroot_ly!=null ? w.wroot_ly.toFixed(2) : '—')+')'+(w.era5 ? ' · ERA5-Land 7–28 см: '+w.era5.s1+' м³/м³' : '')+' · дані до '+dm(w.last))); }
-  if(parts.length) parts.push(el('div', {style:'opacity:.7'}, 'Дані: NASA POWER; прогноз — MET Norway, CC BY 4.0'));
+    const e = w.era5, fc = ((fwxPoint(n) || {}).plow || {}).cal, pc = v => v!=null && fc && fc.fc ? ' ('+Math.round(v/fc.fc*100)+'% НВ)' : '';
+    if(e) parts.push(el('div', {}, '🌱 Ґрунт на '+dm(e.d)+': волога 0–7 см '+e.s0+pc(e.s0)+' · 7–28 см '+e.s1+pc(e.s1)+' · 28–100 см '+e.s2+pc(e.s2)+' м³/м³'+(w.era5_ly && w.era5_ly.s1!=null ? ' (рік тому 7–28 см '+w.era5_ly.s1+')' : '')));
+    if(e && e.ts!=null) parts.push(el('div', {}, '🌡 t ґрунту 0–7 см '+nf(e.ts, 1)+' °C (мін '+nf(e.tsn, 1)+') · 7–28 см '+nf(e.ts1, 1)+' · 28–100 см '+nf(e.ts2, 1)+(e.sn ? ' · сніг '+nf(e.sn, 0)+' см' : '')));
+    else if(w.wroot!=null) parts.push(el('div', {}, '🌱 Волога кореневої зони '+w.wroot.toFixed(2)+' з 1 (рік тому '+(w.wroot_ly!=null ? w.wroot_ly.toFixed(2) : '—')+') · дані до '+dm(w.last))); }
+  const pb = plowBlock(n); if(pb) parts.push(pb);
+  if(parts.length) parts.push(el('div', {style:'opacity:.7'}, 'Дані: NASA POWER; ґрунт — ERA5-Land (Copernicus) і ECMWF через Open-Meteo.com; прогноз — '+(((fwxPoint(n) || {}).forecast || {}).source || 'Open-Meteo.com')));
   return parts.length ? el('div', {class:'note', style:'margin:6px 0;line-height:1.5'}, ...parts) : null;
+}
+// ======= «Вікна оранки» (geo/weather.json → points[*].plow, fields[*].plow)
+const PLOWCOL = {'так':'#2e7d4f', 'обмежено':'#d4a017', 'ні':'#b3372e'}, PLOW_UNH = '#6b7fa8', PLOW_NONE = '#9aa0a6';
+const isoToday = () => new Date(Date.now() - new Date().getTimezoneOffset()*6e4).toISOString().slice(0, 10);
+function fwxField(n){ const F = (FWX.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
+function fwxPoint(n){ const r = fwxField(n); return r && ((FWX.data || {}).points || {})[r.point] || null; }
+function plowToday(n){ const P = (fwxPoint(n) || {}).plow; if(!P || !P.days) return null; const t = isoToday(); return P.days.find(o => o.d===t) || P.days.find(o => o.d > t) || null; }
+function plowColor(n){ const f = (fwxField(n) || {}).plow; if(!f) return PLOW_NONE;
+  if(f.left >= 1){ const t = plowToday(n); return t ? PLOWCOL[t.st] : PLOW_NONE; }
+  return f.unharv >= 1 ? PLOW_UNH : PLOW_NONE; }
+function plowLine(n){ const r = fwxField(n), f = r && r.plow; if(!f) return null;
+  return f.left >= 1 ? '🚜 Лишилось зорати ~'+nf(f.left, 0)+' га' : f.unharv >= 1 ? '🚜 Спершу дозібрати '+nf(f.unharv, 0)+' га' : '🚜 Оранка не потрібна'+(f.winter ? ' (озимина '+nf(f.winter, 0)+' га)' : f.plowed ? ' (зорано '+nf(f.plowed, 0)+' га)' : ''); }
+function plowBlock(n){
+  const r = fwxField(n), P = (fwxPoint(n) || {}).plow; if(!r || !P || !P.days) return null;
+  const f = r.plow || {}, t0 = isoToday(), dm = d => d.slice(8,10)+'.'+d.slice(5,7), box = el('div', {style:'margin-top:6px'});
+  box.append(el('div', {style:'font-weight:600'}, (plowLine(n) || '🚜 Оранка')+(f.area ? ' · площа '+nf(f.area, 0)+' га' : '')
+    +(f.winter ? ' · озимина '+nf(f.winter, 0) : '')+(f.unharv ? ' · не зібрано '+nf(f.unharv, 0) : '')+(f.plowed ? ' · зорано '+nf(f.plowed, 0)+(f.last_plow ? ' (до '+dm(f.last_plow)+')' : '') : '')));
+  const fut = P.days.filter(o => o.d >= t0);
+  box.append(el('div', {style:'display:flex;gap:2px;flex-wrap:wrap;margin:4px 0'}, fut.map(o => el('span', {title:dm(o.d)+' — '+o.st+': '+o.why.join('; ')+(o.r!=null ? ' · '+o.r+'% НВ' : '')+(o.ts!=null ? ' · t ґрунту '+o.ts+'°' : '')+' · '+o.src,
+    style:'width:26px;text-align:center;border-radius:4px;padding:2px 0;font-size:11px;color:#fff;background:'+PLOWCOL[o.st]+(o.src==='ERA5-Land' ? '' : ';opacity:.85')}, o.d.slice(8,10)))));
+  const t = fut[0];
+  if(t) box.append(el('div', {}, (t.d===t0 ? 'Сьогодні' : dm(t.d))+': '+t.st+' — '+t.why.join('; ')));
+  box.append(el('div', {}, P.summary || ''));
+  if(P.cal) box.append(el('div', {style:'opacity:.7'}, 'Орний шар 0–28 см; % НВ — для ґрунтового класу моделі «'+P.cal.name+'» (НВ '+P.cal.fc+' м³/м³, '+P.cal.how+'). Стиглість ~50–85 % НВ. Модель ~9 км — перед виїздом перевірте ком ґрунту в долоні.'+(P.simplified ? ' Прогноз ґрунту недоступний — спрощений розрахунок.' : '')));
+  return box;
 }
 function ndviRec(n){ const F = (NDVI.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
 function ndviSeason(n, y){ const r = ndviRec(n); return r ? (r.series || []).filter(o => o.d >= (y-1)+'-09-01' && o.d <= y+'-08-31') : []; }   // сезон «під урожай року»: вересень попереднього — серпень
@@ -2836,6 +2870,7 @@ function fieldStyle(f){
   const n = fieldsOf(f)[0], base = {weight:2, color:'#ffffff', opacity:.9, fillOpacity:.55};
   if(MAPV.mode==='yield'){ const yc = yieldClass(n, YEAR); return {...base, fillColor:YCOL(yc && yc.d)}; }
   if(MAPV.mode==='ndvi') return {...base, fillOpacity:0, weight:1.5};
+  if(MAPV.mode==='plow') return {...base, fillColor:plowColor(n), fillOpacity:.65};
   const cs = cropsOfField(n, YEAR); return {...base, fillColor: cs.length ? cropColor(cs[0].c) : '#9aa0a6', dashArray: f.properties.flag ? '6 4' : null};
 }
 function fieldPopup(f){
@@ -2850,6 +2885,7 @@ function fieldPopup(f){
       el('button', {class:'btn small', onclick:() => { HF = n; location.hash = 'history'; }}, 'Історія')));
   });
   box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га'+(p.parts ? ' ('+p.parts+')' : '')+(p.ha_gps && p.ha_gps!==p.ha_geom ? ' · GPS '+nf(p.ha_gps)+' га' : '')+' · '+(p.source || '')));
+  if(MAPV.mode==='plow') fieldsOf(f).forEach(n => { const pb = plowBlock(n); if(pb) box.append(el('div', {class:'note'}, pb)); });
   fieldsOf(f).forEach(n => { const nl = ndviLine(n, YEAR); if(nl) box.append(nl); const ab = MAPV.mode==='ndvi' && ndviAiBlock(n); if(ab) box.append(ab); });
   fieldsOf(f).forEach(n => box.append(...zonePopupPart(n)));
   if(p.flag) box.append(el('div', {class:'note', style:'color:var(--warn)'}, '⚠ '+p.flag));
@@ -2873,6 +2909,12 @@ function renderMapLegend(){
     lg.append(el('span', {class:'lg'}, el('i', {style:'width:120px;background:linear-gradient(90deg,'+NDVI_RAMP.map(([v, c]) => c+' '+v*100+'%').join(',')+')'}), ' NDVI 0 → 1'));
     const ds = Object.values((NDVI.data || {}).fields || {}).map(r => r.img && r.img.d).filter(Boolean).sort();
     lg.append(el('span', {class:'note'}, ds.length ? ' знімки '+ds[0].slice(8,10)+'.'+ds[0].slice(5,7)+(ds[0]!==ds[ds.length-1] ? '–'+ds[ds.length-1].slice(8,10)+'.'+ds[ds.length-1].slice(5,7) : '')+' · червоне — слабша рослинність; без кольору — хмари або немає даних' : ' знімків ще немає'));
+  } else if(MAPV.mode==='plow'){
+    if(FWX.data===undefined){ ensureFwx().then(() => { if(MAPV.mode==='plow') drawFields(); }); lg.append(el('span', {class:'note'}, 'Завантажую ґрунт і прогноз…')); }
+    else { const P = ((FWX.data || {}).points || {})['Захід'], pl = P && P.plow;
+      lg.append(sw(PLOWCOL['так'], 'сьогодні можна орати'), sw(PLOWCOL['обмежено'], 'обмежено'), sw(PLOWCOL['ні'], 'не можна'), sw(PLOW_UNH, 'спершу дозібрати'), sw(PLOW_NONE, 'оранка не потрібна / немає даних'));
+      const left = d3.sum(Object.values((FWX.data || {}).fields || {}), r => (r.plow || {}).left || 0);
+      lg.append(el('span', {class:'note'}, ' · лишилось зорати ~'+nf(left, 0)+' га'+(pl ? ' · '+pl.summary : ''))); }
   } else if(MAPV.mode==='yield') lg.append(sw(YCOL(0.2), 'вище середньої по культурі > 10%'), sw(YCOL(0), '±10%'), sw(YCOL(-0.2), 'нижче > 10%'), sw(YCOL(null), 'немає даних'));
   else { const cs = [...new Set((REF.prl || []).filter(r => r.y===YEAR).map(r => r.c))]; cs.forEach(c => lg.append(sw(cropColor(c), c))); lg.append(sw('#9aa0a6', 'немає даних')); }
   const tot = d3.sum(MAPV.geo.features, f => f.properties.ha_geom);
