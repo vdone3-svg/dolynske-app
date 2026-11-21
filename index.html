@@ -1218,7 +1218,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '21.11 збирання у «День»';
+const APP_VER = '21.11b збирання у «День»';
 const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1326,7 +1326,8 @@ function passInfo(r){
   if(!r.f || !FIELD[r.f] || r.u!=='га' || opMode(r.op)!=='field' || !(+r.q) || r.st!=='працює') return null;
   const area = FIELD[r.f].ha, n = toSerial(DAY), y = seasonFor(r.op), k = opKey(r.op);
   const ws = MODEL.works.filter(w => w.f===r.f && w.y===y && w.u==='га' && opKey(w.op)===k && w.d.n!==n);
-  const done = d3.sum(d3.rollups(ws, v => d3.max(v, w => w.q), w => w.d.n+'|'+(w.m||w.p)), x => x[1]);
+  let done = d3.sum(d3.rollups(ws, v => d3.max(v, w => w.q), w => w.d.n+'|'+(w.m||w.p)), x => x[1]);
+  if((OP[r.op]||{}).g==='Збирання'){ const c = rowCrop(r); if(c){ const hd = harvDone(r.f, c, y); if(hd.cut) done = hd.cut; } }   // збирання: скошені га беремо з «Урожаю» (вони точніші за табель)
   const same = DS.rows.filter(o => o.st==='працює' && o.f===r.f && opKey(o.op)===k && o.u==='га');
   const cur = d3.sum(d3.rollups(same, v => d3.max(v, o => +o.q||0), mkey), x => x[1]);
   const lead = same.find(o => mkey(o)===mkey(r));                // підтвердження — один раз на машину (водій + помічник)
@@ -1347,6 +1348,11 @@ function passLine(r){
   const msg = p.type==='repeat'
     ? 'Поле '+r.f+' ('+nf(p.area, 1)+' га): '+op+' вже зроблено повністю'+(p.full > 1 ? ' '+p.full+' рази' : '')+' — '+nf(p.done, 1)+' га ('+dd+'). Це '+p.passNo+'-й прохід?'
     : 'Поле '+r.f+' ('+nf(p.area, 1)+' га): '+op+' — '+cur+'уже '+nf(p.rem, 1)+' га ('+dd+') + сьогодні '+nf(p.cur, 1)+' = '+nf(p.total, 1)+' га, більше площі на '+nf(p.total-p.area, 1)+' га. Помилка в гектарах чи почали '+p.passNo+'-й прохід?';
+  if((OP[r.op]||{}).g==='Збирання'){   // збирання повторно не буває — лише помилка в га або уточнена площа
+    const hm = 'Поле '+r.f+' ('+nf(p.area, 1)+' га): уже скошено '+nf(p.done, 1)+' га + сьогодні '+nf(p.cur, 1)+' = '+nf(p.done+p.cur, 1)+' га — більше площі на '+nf(p.done+p.cur-p.area, 1)+' га. Перевірте гектари.';
+    return el('div', {class:'xtra pass'+(p.ok ? ' ok' : '')}, el('div', {class:'ttl', style:'color:'+(p.ok ? 'var(--good)' : 'var(--warn)')}, p.ok ? '✓ Гектари підтверджено · поле '+r.f : '⚠ '+hm),
+      p.ok ? el('div', {}, el('button', {class:'btn small', type:'button', onclick:() => { r.rep = false; renderDay(); }}, 'Скасувати підтвердження'))
+           : el('div', {style:'grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap'}, el('button', {class:'btn small primary', type:'button', onclick:() => { r.rep = true; renderDay(); }}, 'Гектари правильні'), el('span', {class:'note', style:'align-self:center'}, 'Якщо ні — виправте гектари в рядку'))); }
   return el('div', {class:'xtra pass'+(p.ok ? ' ok' : '')},
     el('div', {class:'ttl', style:'color:'+(p.ok ? 'var(--good)' : 'var(--warn)')}, p.ok ? '✓ Підтверджено: '+p.passNo+'-й прохід · '+op+' · поле '+r.f+' (до цього '+nf(p.done, 1)+' га)' : '⚠ '+msg),
     p.ok ? el('div', {}, el('button', {class:'btn small', type:'button', onclick:() => { r.rep = false; renderDay(); }}, 'Скасувати підтвердження'))
@@ -1638,7 +1644,7 @@ function buildDayDoc(){
   const rows = {'Роботи':[], 'Внесення':[], 'Урожай':[], 'Відвантаження':[], 'Рух зерна':[]}, cells = [];
   const splitC = r => r.f && cropsFor(r.f, seasonFor(r.op)).length > 1 ? (rowCrop(r) || null) : null;
   const shifts = [];
-  DS.rows.filter(r => r.st==='працює' && r.op && !isOpenShift(r)).forEach(r => rows['Роботи'].push({'Дата':n, 'Поле':r.f||null, 'Культура (лише якщо поле поділене)':splitC(r), 'Операція':r.op, 'Техніка':r.m||null, 'Працівник':r.p, 'Обсяг':+r.q||null, 'Од.':r.u||null, 'Джерело':'додаток', 'Опис / примітка':(() => { const p = passInfo(r); return p && p.ok ? p.passNo+'-й прохід' : null; })()}));
+  DS.rows.filter(r => r.st==='працює' && r.op && !isOpenShift(r)).forEach(r => rows['Роботи'].push({'Дата':n, 'Поле':r.f||null, 'Культура (лише якщо поле поділене)':splitC(r), 'Операція':r.op, 'Техніка':r.m||null, 'Працівник':r.p, 'Обсяг':+r.q||null, 'Од.':r.u||null, 'Джерело':'додаток', 'Опис / примітка':(() => { const p = passInfo(r); return p && p.ok ? ((OP[r.op]||{}).g==='Збирання' ? 'га підтверджено понад площу' : p.passNo+'-й прохід') : null; })()}));
   DS.rows.filter(r => r.st==='працює' && r.op && r.f).forEach(r => { const k = rowKind(r), ha = +r.q||0;
     const base = {'Дата':n, 'Поле':r.f, 'Культура (лише якщо поле поділене)':splitC(r), 'Оброблено, га':ha, 'Джерело':'додаток'}, who = r.p+(r.m ? ' · '+r.m : '');
     normRow(r); const fl = (r.ferts||[]).filter(f => f.m && +f.q), sl = seedsOk(r);
