@@ -1035,6 +1035,8 @@ function renderHistory(){
   const fScouts = allScouts().filter(d => d.field===HF);
   const years = [...new Set([...M.fields.filter(onF), ...M.works.filter(onF), ...M.appl.filter(onF), ...M.harv.filter(onF)].map(x => x.y).concat(fScouts.map(d => d.season)))].sort((a, b) => b-a);
   const now = (() => { const t = new Date(); return t.getFullYear()+(t.getMonth()>=7 ? 1 : 0); })();
+  // Синхронізуємо HY з глобальним YEAR при перемиканні сезону в тулбарі
+  if(HY!=='all' && YEAR && years.includes(YEAR) && HY !== YEAR) HY = YEAR;
   if(HY!=='all' && !years.includes(HY)) HY = years.includes(now) ? now : (years[0] ?? now);
   const ys = $('#h-year'); ys.replaceChildren(...years.map(y => el('option', y===HY ? {value:y, selected:''} : {value:y}, 'урожай '+y)), el('option', HY==='all' ? {value:'all', selected:''} : {value:'all'}, 'усі роки'));
   ys.onchange = ev => { HY = ev.target.value==='all' ? 'all' : +ev.target.value; renderHistory(); };
