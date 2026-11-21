@@ -373,6 +373,13 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   </main>
 
   <!-- АГРОЗВІТ: один дашборд власника + звірка з агрозвітом бухгалтера -->
+  <main class="pane" id="pane-plan">
+    <section class="card">
+      <div class="toolbar"><h2 style="margin:0">План робіт</h2><div class="chips" id="plan-days" role="group" aria-label="День плану"></div><span class="note" id="plan-src"></span></div>
+      <div id="plan-body"></div>
+    </section>
+  </main>
+
   <main class="pane" id="pane-agro">
     <section class="card">
       <div class="toolbar"><h2 style="margin:0">Агрозвіт</h2>
@@ -1231,8 +1238,8 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '21.11h Open-Meteo · ґрунт · оранка';
-const TABS = [['day','День'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
+const APP_VER = '21.11i План робіт';
+const TABS = [['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
 
@@ -1250,7 +1257,7 @@ window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
-    fields:() => { renderFields(); renderFieldCard(); }, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
+    fields:() => { renderFields(); renderFieldCard(); }, plan:renderPlan, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
     fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:renderJournal, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
@@ -2808,6 +2815,80 @@ function fwxBlock(n, y){
   const pb = plowBlock(n); if(pb) parts.push(pb);
   if(parts.length) parts.push(el('div', {style:'opacity:.7'}, 'Дані: NASA POWER; ґрунт — ERA5-Land (Copernicus) і ECMWF через Open-Meteo.com; прогноз — '+(((fwxPoint(n) || {}).forecast || {}).source || 'Open-Meteo.com')));
   return parts.length ? el('div', {class:'note', style:'margin:6px 0;line-height:1.5'}, ...parts) : null;
+}
+
+// ======= «ПЛАН РОБІТ» (plans/РРРР-ММ-ДД.json — чернетка щовечора з tools/plan.py; власник править і затверджує, бригадир бачить)
+const PLAN = {day:null, docs:{}, edit:null};
+const planDates = () => { const t = isoToday(), d = new Date(t+'T12:00:00'); d.setDate(d.getDate()+1); return [t, d.toISOString().slice(0, 10)]; };
+const PST = {'так':'#2e7d4f', 'обмежено':'#d4a017', 'ні':'#b3372e'};
+async function loadPlan(d, force){ if(force || !(d in PLAN.docs)){ try{ PLAN.docs[d] = await getJSON('plans/'+d+'.json'); }catch(e){ PLAN.docs[d] = null; } } return PLAN.docs[d]; }
+async function renderPlan(){
+  const [today, tomorrow] = planDates(); if(!PLAN.day) PLAN.day = new Date().getHours() >= 12 ? tomorrow : today;
+  const dm = d => new Date(d+'T12:00:00').toLocaleDateString('uk-UA', {weekday:'short', day:'numeric', month:'2-digit'});
+  $('#plan-days').replaceChildren(...[[today, 'Сьогодні'], [tomorrow, 'Завтра']].map(([d, t]) => el('button', {class:'chip', 'aria-pressed':String(PLAN.day===d), onclick:() => { PLAN.day = d; PLAN.edit = null; renderPlan(); }}, t+' · '+dm(d))));
+  const body = $('#plan-body'); body.replaceChildren(el('p', {class:'note'}, 'Завантажую план…'));
+  const P = await loadPlan(PLAN.day); if(!FWX.data) await ensureFwx();
+  if(!P){ body.replaceChildren(el('p', {class:'note'}, 'Плану на '+dm(PLAN.day)+' ще немає. Чернетка складається автоматично щовечора (~18:00) разом з оновленням погоди, вранці — уточнюється на сьогодні, якщо її не затверджено.')); $('#plan-src').textContent = ''; return; }
+  const own = ROLE==='o', E = PLAN.edit && PLAN.edit.date===P.date ? PLAN.edit : null, X = E || P, editable = own && X.status!=='approved';
+  const st = {draft:['Чернетка', 'var(--warn)'], edited:['Виправлено власником (не затверджено)', 'var(--warn)'], approved:['✓ Затверджено', 'var(--good)']}[X.status] || ['?', ''];
+  $('#plan-src').textContent = 'склав розрахунок '+new Date(P.generated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+(P.approved_at ? ' · затвердив '+(P.approved_by || 'власник')+' '+new Date(P.approved_at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '');
+  const out = [el('div', {style:'margin:6px 0 10px'}, el('span', {class:'pill', style:'color:'+st[1]+';background:color-mix(in srgb,'+st[1]+' 15%,transparent)'}, st[0]),
+    !own && X.status!=='approved' ? el('span', {class:'note', style:'margin-left:8px'}, 'чекає затвердження власником — може змінитися') : '')];
+  // умови
+  out.push(el('div', {class:'ar-grid'}, Object.entries(P.cond || {}).map(([pt, c]) => { const f = x => x ? (x.p!=null ? nf(x.p, 1)+' мм' : '')+(x.tmin!=null ? ' · повітря '+nf(x.tmin, 0)+'…'+nf(x.tmax ?? x.tmin, 0)+'°' : '')+(x.tsmin!=null ? ' · ґрунт до '+nf(x.tsmin, 0)+'°' : '') : '—';
+    return el('div', {class:'card'}, el('h3', {}, '🌦 Точка «'+pt+'»'), el('div', {class:'note'}, '☀ День 07–17: '+f(c.day)), el('div', {class:'note'}, '🌙 Ніч 18–06: '+f(c.night)),
+      el('div', {class:'note'}, '🌱 Орний шар: '+(c.soil && c.soil.r!=null ? c.soil.r+'% НВ' : '—')+(c.soil && c.soil.sn ? ' · сніг '+nf(c.soil.sn, 0)+' см' : '')), c.plow_summary ? el('div', {class:'note'}, '🚜 '+c.plow_summary) : ''); })));
+  if(P.ai && P.ai.text) out.push(el('div', {class:'card', style:'border-left:3px solid var(--accent)'}, el('h3', {}, '🤖 Коментар Claude'), el('p', {style:'margin:0;line-height:1.5'}, P.ai.text)));
+  // роботи
+  const groups = [['harvest', '🌽 Збирання'], ['plow', '🚜 Оранка']];
+  const people = [...new Set(Object.values(P.resources || {}).flatMap(r => Object.values(r).flatMap(t => t.workers || [])))].sort();
+  groups.forEach(([k, title]) => {
+    const its = X.items.filter(i => i.kind===k), bl = (P.backlog || {})[k] || [];
+    const tot = d3.sum(its, i => d3.sum(i.shifts, s => +s.ha || 0));
+    const card = el('div', {class:'card'}, el('h3', {}, title+' · план '+nf(tot, 0)+' га з '+nf((P.backlog || {})[k+'_ha'] || 0, 0)+' га, що лишилось'));
+    if(!its.length) card.append(el('p', {class:'note'}, bl.length ? 'Немає техніки для цієї роботи в табелі.' : 'Робіт немає — усе зроблено.'));
+    its.forEach((it, ii) => {
+      const row = el('div', {style:'border-top:1px solid var(--line);padding:8px 0'});
+      const fieldSel = editable ? el('select', {style:'width:auto', onchange:ev => { const [f, c] = ev.target.value.split('|'); planEdit(P, x => { const t = x.items.filter(i => i.kind===k)[ii]; t.field = f; t.crop = c || null; }); }},
+        bl.map(b => el('option', {value:b.field+'|'+(b.crop || ''), selected:b.field===it.field && (b.crop || null)===(it.crop || null) ? '' : null}, b.field+(b.crop ? ' · '+b.crop : '')+' (лишилось '+nf(b.left, 0)+' га)'))) : el('b', {}, it.field+(it.crop ? ' · '+it.crop : ''));
+      row.append(el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap'}, el('b', {}, it.tech), '→', fieldSel,
+        el('span', {class:'note'}, 'залишок '+nf(it.left_before, 0)+' → '+nf(Math.max(0, it.left_before - d3.sum(it.shifts, s => +s.ha || 0)), 0)+' га · '+it.rate)));
+      if(!it.shifts.length) row.append(el('div', {class:'note', style:'color:var(--bad)'}, '⛔ '+(it.note || 'стоїть')));
+      it.shifts.forEach((s, si) => {
+        const who = editable ? el('select', {style:'width:auto', onchange:ev => planEdit(P, x => { x.items.filter(i => i.kind===k)[ii].shifts[si].who = [ev.target.value]; })},
+            [...new Set([...(s.who || []), ...people])].map(w => el('option', {value:w, selected:(s.who || [])[0]===w ? '' : null}, w))) : el('span', {}, (s.who || []).join(', '));
+        const ha = editable ? el('input', {type:'number', min:'0', step:'1', value:s.ha, style:'width:70px', onchange:ev => planEdit(P, x => { x.items.filter(i => i.kind===k)[ii].shifts[si].ha = +ev.target.value || 0; })}) : el('b', {}, nf(s.ha, 0));
+        row.append(el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px'},
+          el('span', {style:'display:inline-block;min-width:62px;text-align:center;border-radius:4px;color:#fff;padding:1px 6px;background:'+PST[s.st]}, s.shift==='ніч' ? '🌙 ніч' : '☀ день'),
+          who, ha, el('span', {}, 'га'), el('span', {class:'note'}, s.why.join('; ')),
+          editable ? el('button', {class:'btn small ghost', title:'Прибрати зміну', onclick:() => planEdit(P, x => { x.items.filter(i => i.kind===k)[ii].shifts.splice(si, 1); })}, '✕') : ''));
+      });
+      const has = sh => it.shifts.some(s => s.shift===sh);
+      if(editable) row.append(el('div', {class:'acts', style:'justify-content:flex-start;margin-top:4px'}, [['день', it.day], ['ніч', it.night]].filter(([sh]) => !has(sh)).map(([sh, c]) =>
+        el('button', {class:'btn small ghost', title:c.why.join('; '), onclick:() => planEdit(P, x => { const w = ((((P.resources || {})[k] || {})[it.tech] || {}).workers || []), busy = it.shifts.flatMap(z => z.who || []); x.items.filter(i => i.kind===k)[ii].shifts.push({shift:sh, ha:0, who:[w.find(z => !busy.includes(z)) || w[0] || 'хто?'], st:c.st, why:c.why}); })}, '+ '+(sh==='ніч' ? '🌙 нічна' : '☀ денна')+' зміна ('+c.st+')'))));
+      card.append(row);
+    });
+    if(bl.length) card.append(el('div', {class:'note', style:'margin-top:6px'}, 'Лишилось: '+bl.map(b => b.field+(b.crop ? ' ('+b.crop+')' : '')+' '+nf(b.left, 0)+' га').join(' · ')));
+    out.push(card);
+  });
+  out.push(el('div', {class:'note'}, 'Правила: день 07–17, ніч 18–06. Збирання: дощ ≥ 3 мм — ні; ґрунт ≥ 95 % НВ і не підмерзає — обмежено (багнюка); вночі по підмерзлому — краще. Оранка: стан з «Вікон оранки»; вночі — лише без дощу й коли ґрунт підмерзає не глибше кірки (≥ −3 °C). Виробіток — з табеля (га на людино-зміну). Техніку для робіт задає ref/plan.json.'));
+  if(own){
+    const acts = el('div', {class:'acts', style:'justify-content:flex-start;margin-top:10px'});
+    if(X.status!=='approved'){
+      if(E) acts.append(el('button', {class:'btn', onclick:() => savePlan(E, 'edited')}, 'Зберегти зміни'), el('button', {class:'btn ghost', onclick:() => { PLAN.edit = null; renderPlan(); }}, 'Скасувати зміни'));
+      acts.append(el('button', {class:'btn primary', onclick:() => savePlan(E || P, 'approved')}, '✓ Затвердити план'));
+    } else acts.append(el('button', {class:'btn ghost', onclick:() => savePlan(P, 'edited')}, 'Зняти затвердження (правити)'));
+    out.push(acts);
+  }
+  body.replaceChildren(...out);
+}
+function planEdit(P, fn){ if(!PLAN.edit || PLAN.edit.date!==P.date) PLAN.edit = JSON.parse(JSON.stringify(P)); fn(PLAN.edit); renderPlan(); }
+async function savePlan(doc, status){
+  const d = JSON.parse(JSON.stringify(doc)); d.status = status;
+  if(status==='approved'){ d.approved_at = new Date().toISOString(); d.approved_by = LS.get('dl_name') || 'Власник'; } else { delete d.approved_at; delete d.approved_by; d.edited_at = new Date().toISOString(); }
+  try{ syncState('Зберігаю план…'); await putJSON('plans/'+d.date+'.json', d, (status==='approved' ? 'План затверджено: ' : 'План виправлено: ')+d.date);
+    PLAN.docs[d.date] = d; PLAN.edit = null; syncState('План збережено', 'ok'); toast(status==='approved' ? 'План затверджено — бригадир його бачить' : 'Зміни збережено'); renderPlan(); }
+  catch(e){ toast('Не вдалося зберегти: '+e.message); syncState('Помилка збереження', 'bad'); }
 }
 // ======= «Вікна оранки» (geo/weather.json → points[*].plow, fields[*].plow)
 const PLOWCOL = {'так':'#2e7d4f', 'обмежено':'#d4a017', 'ні':'#b3372e'}, PLOW_UNH = '#6b7fa8', PLOW_NONE = '#9aa0a6';
