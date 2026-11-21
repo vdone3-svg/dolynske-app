@@ -1879,8 +1879,8 @@ const BATT_TYPES = ['6СТ-190','6СТ-140','6СТ-100','6СТ-77','6СТ-60','6
 const BATT_BRANDS = ['Varta','Bosch','Ista','Forse','A-Mega','Westa','Mutlu','Exide','Yuasa','Topla'];
 const BATT_REASONS = ['планова заміна','не тримає заряд','сезонне зберігання','повернення з зарядки','вийшов з ладу','новий'];
 const BATT_ACTIONS = {install:'Встановив',remove:'Зняв',charge:'На зарядку',return_charge:'Повернув із зарядки',write_off:'Списав'};
-const BATT_STATUS = {on_tech:'🚜 На техніці',storage:'📦 На складі',charging:'🔌 На зарядці',written_off:'⚫ Списано'};
-const BATT_STATUS_COLOR = {on_tech:'#2a7c2a',storage:'#4a6fa5',charging:'#b8860b',written_off:'#888'};
+const BATT_STATUS = {on_tech:'🚜 На техніці',storage:'📦 На складі',written_off:'⚫ Списано'};
+const BATT_STATUS_COLOR = {on_tech:'#2a7c2a',storage:'#4a6fa5',written_off:'#888'};
 
 document.querySelectorAll('#batt-tabs .chip').forEach(b => b.addEventListener('click', () => {
   BTAB = b.dataset.bt;
@@ -1895,21 +1895,15 @@ function renderBatt(){
   const bs = BATT.batteries;
   const onTech = bs.filter(b => b.status==='on_tech');
   const onStore = bs.filter(b => b.status==='storage');
-  const onCharge = bs.filter(b => b.status==='charging');
-  const off = bs.filter(b => b.status==='written_off');
-  const totalVal = bs.filter(b => b.status!=='written_off').reduce((a,b) => a+(+b.price||0), 0);
-  const now = new Date();
 
-  // stats tiles
+  // stats tiles — без зарядки і вартості
   $('#batt-stats').replaceChildren(
     battStatTile('⚡ '+bs.length, 'всього'),
     battStatTile('🚜 '+onTech.length, 'на техніці'),
-    battStatTile('📦 '+onStore.length, 'на складі'),
-    battStatTile('🔌 '+onCharge.length, 'на зарядці'),
-    battStatTile('💰 '+nf(totalVal, fmt0)+'₴', 'вартість')
+    battStatTile('📦 '+onStore.length, 'на складі')
   );
 
-  if(BTAB==='dash') renderBattDash(onTech, onStore, onCharge);
+  if(BTAB==='dash') renderBattDash(onTech, onStore);
   else if(BTAB==='log') renderBattLog();
   else if(BTAB==='reg') renderBattReg();
 }
@@ -1921,17 +1915,15 @@ function battStatTile(val, label){
   return d;
 }
 
-function renderBattDash(onTech, onStore, onCharge){
+function renderBattDash(onTech, onStore){
   const c = $('#batt-dash'); c.replaceChildren();
-  const techNames = REF.mach.map(m => m.n);
 
   if(onTech.length){
     c.append(el('h3', {style:'margin:12px 0 6px;color:var(--accent)'}, '🚜 На техніці'));
     onTech.forEach(b => {
-      const days = b._installed ? Math.round((Date.now() - new Date(b._installed).getTime())/(86400000)) : '—';
       const card = el('div', {class:'card', style:'padding:10px 12px;margin-bottom:6px;cursor:pointer'});
       card.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center"><b>'+b.location+'</b><span style="color:var(--accent);font-weight:700">'+b.id+'</span></div>'
-        +'<div class="note">'+b.type+' '+b.brand+' · з '+(b._installed||b.bought||'?')+'</div>';
+        +'<div class="note">'+b.type+' '+b.brand+' · встановлено '+(b._installed||'?')+'</div>';
       const btns = el('div', {style:'display:flex;gap:6px;margin-top:6px'});
       const btnRemove = el('button', {class:'btn small'}, '⬇ Зняти');
       btnRemove.addEventListener('click', ev => { ev.stopPropagation(); showBattMove(b.id, 'remove'); });
@@ -1950,33 +1942,14 @@ function renderBattDash(onTech, onStore, onCharge){
       const btns = el('div', {style:'display:flex;gap:6px;margin-top:6px'});
       const btnInst = el('button', {class:'btn small primary'}, '⬆ Встановити');
       btnInst.addEventListener('click', ev => { ev.stopPropagation(); showBattMove(b.id, 'install'); });
-      const btnChrg = el('button', {class:'btn small'}, '🔌 На зарядку');
-      btnChrg.addEventListener('click', ev => { ev.stopPropagation(); doBattAction(b.id, 'charge', b.location, 'на зарядці', 'зарядка'); });
-      btns.append(btnInst, btnChrg);
+      btns.append(btnInst);
       card.append(btns);
       card.addEventListener('click', () => showBattDetail(b.id));
       c.append(card);
     });
   }
 
-  if(onCharge.length){
-    c.append(el('h3', {style:'margin:12px 0 6px;color:var(--accent)'}, '🔌 На зарядці'));
-    onCharge.forEach(b => {
-      const card = el('div', {class:'card', style:'padding:10px 12px;margin-bottom:6px;cursor:pointer'});
-      const logEntry = [...BATT.log].reverse().find(l => l.bat===b.id && l.action==='charge');
-      const since = logEntry ? logEntry.ts.slice(0,10) : '?';
-      card.innerHTML = '<b>'+b.id+'</b> · '+b.type+' '+b.brand+' · з '+since;
-      const btns = el('div', {style:'display:flex;gap:6px;margin-top:6px'});
-      const btnRet = el('button', {class:'btn small primary'}, '✓ Повернути на склад');
-      btnRet.addEventListener('click', ev => { ev.stopPropagation(); doBattAction(b.id, 'return_charge', 'на зарядці', 'склад', 'повернення з зарядки'); });
-      btns.append(btnRet);
-      card.append(btns);
-      card.addEventListener('click', () => showBattDetail(b.id));
-      c.append(card);
-    });
-  }
-
-  if(!onTech.length && !onStore.length && !onCharge.length){
+  if(!onTech.length && !onStore.length){
     c.append(el('p', {class:'note', style:'text-align:center;padding:24px 0'}, 'Ще немає акумуляторів. Натисніть «+ Новий АКБ» щоб додати перший.'));
   }
 }
@@ -2014,56 +1987,77 @@ function renderBattReg(){
   if(!bs.length){ c.append(el('p', {class:'note'}, 'Реєстр порожній.')); return; }
 
   const tbl = el('table');
-  tbl.append(el('thead', {}, el('tr', {}, ['ID','Тип','Бренд','Ціна','Статус','Локація','Куплено'].map((h,i) => el('th', {class:i<3?'l':''}, h)))));
+  tbl.append(el('thead', {}, el('tr', {}, ['ID','Тип','Бренд','Статус','Локація','Встановлено'].map((h,i) => el('th', {class:i<3?'l':''}, h)))));
   tbl.append(el('tbody', {}, bs.map(b => {
     const tr = el('tr', {style:'cursor:pointer'},
       el('td', {class:'l', style:'font-weight:700'}, b.id),
       el('td', {class:'l'}, b.type),
       el('td', {class:'l'}, b.brand),
-      el('td', {}, nf(+b.price||0, fmt0)+'₴'),
       el('td', {style:'color:'+BATT_STATUS_COLOR[b.status]}, BATT_STATUS[b.status]||b.status),
       el('td', {}, b.location||'—'),
-      el('td', {class:'note'}, b.bought||'—'));
+      el('td', {class:'note'}, b._installed||'—'));
     tr.addEventListener('click', () => showBattDetail(b.id));
     return tr;
   })));
   c.append(el('div', {class:'tablewrap'}, tbl));
 }
 
+// --- Автонумерація: наступний вільний номер
+function nextBattId(){
+  const nums = BATT.batteries.map(b => parseInt(b.id.replace(/\D/g,''))).filter(n => !isNaN(n));
+  const next = nums.length ? Math.max(...nums)+1 : 1;
+  return 'АКБ-'+next.toString().padStart(2,'0');
+}
+
 // --- Modal: new / edit battery
 function showBattForm(bat){
   const isNew = !bat;
-  bat = bat || {id:'АКБ-'+(BATT.batteries.length+1).toString().padStart(2,'0'), type:'6СТ-190', brand:'', capacity:190, cca:'', bought:DAY, price:'', warranty:'', status:'storage', location:'склад', note:''};
-  const techNames = REF.mach.map(m => m.n);
+  bat = bat || {id:nextBattId(), type:'6СТ-190', brand:'', capacity:190, cca:'', _installed:DAY, status:'storage', location:'склад', note:''};
   const overlay = el('div', {class:'overlay', style:'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px'});
   const box = el('div', {style:'background:var(--bg);border-radius:12px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow-y:auto'});
   box.innerHTML = '<h3 style="margin:0 0 12px">'+(isNew?'Новий акумулятор':'Редагувати '+bat.id)+'</h3>';
 
-  const fields = [
-    ['id','Інв. номер','text',bat.id],
-    ['type','Тип','select',bat.type, BATT_TYPES],
-    ['brand','Бренд','select',bat.brand, BATT_BRANDS],
-    ['capacity','Ємність, А·год','number',bat.capacity],
-    ['cca','Пусковий струм, А','number',bat.cca],
-    ['bought','Дата придбання','date',bat.bought],
-    ['price','Ціна, грн','number',bat.price],
-    ['note','Примітка','text',bat.note]
-  ];
-  const inputs = {};
-  fields.forEach(([key,label,type,val,opts]) => {
+  // Поле ID (тільки для читання при редагуванні, автозаповнення для нового)
+  const idWrap = el('div', {style:'margin-bottom:8px'});
+  idWrap.append(el('label', {class:'note', style:'display:block;margin-bottom:2px'}, 'Інв. номер'));
+  const idInp = el('input', {type:'text', value:bat.id, style:'width:100%', readOnly:isNew});
+  if(isNew) idInp.style.opacity='0.6';
+  idWrap.append(idInp);
+  box.append(idWrap);
+
+  // Тип — select + інше
+  const inputs = {id: idInp};
+  [
+    ['type','Тип', BATT_TYPES, bat.type],
+    ['brand','Бренд', BATT_BRANDS, bat.brand]
+  ].forEach(([key,label,opts,val]) => {
     const wrap = el('div', {style:'margin-bottom:8px'});
     wrap.append(el('label', {class:'note', style:'display:block;margin-bottom:2px'}, label));
-    if(type==='select'){
-      const sel = el('select', {style:'width:100%'});
-      (opts||[]).forEach(o => sel.append(el('option', {value:o, selected:o===val}, o)));
-      sel.append(el('option', {value:'__other'}, '— інше —'));
-      inputs[key] = sel;
-      wrap.append(sel);
-    } else {
-      const inp = el('input', {type, value:val||'', style:'width:100%'});
-      inputs[key] = inp;
-      wrap.append(inp);
-    }
+    const sel = el('select', {style:'width:100%'});
+    opts.forEach(o => sel.append(el('option', {value:o, selected:o===val}, o)));
+    if(!opts.includes(val) && val) sel.append(el('option', {value:val, selected:true}, val));
+    sel.append(el('option', {value:'__other'}, '— інше (ввести) —'));
+    inputs[key] = sel;
+    // текстове поле для "інше"
+    const otherInp = el('input', {type:'text', placeholder:'Введіть значення', style:'width:100%;margin-top:4px;display:none'});
+    sel.addEventListener('change', () => { otherInp.style.display = sel.value==='__other' ? '' : 'none'; });
+    inputs[key+'_other'] = otherInp;
+    wrap.append(sel, otherInp);
+    box.append(wrap);
+  });
+
+  // Ємність, Пусковий, Дата установки, Примітка
+  [
+    ['capacity','Ємність, А·год','number', bat.capacity],
+    ['cca','Пусковий струм, А','number', bat.cca],
+    ['_installed','Дата установки','date', bat._installed||DAY],
+    ['note','Примітка','text', bat.note]
+  ].forEach(([key,label,type,val]) => {
+    const wrap = el('div', {style:'margin-bottom:8px'});
+    wrap.append(el('label', {class:'note', style:'display:block;margin-bottom:2px'}, label));
+    const inp = el('input', {type, value:val||'', style:'width:100%'});
+    inputs[key] = inp;
+    wrap.append(inp);
     box.append(wrap);
   });
 
@@ -2072,21 +2066,23 @@ function showBattForm(bat){
   const cancelBtn = el('button', {class:'btn'}, 'Скасувати');
   cancelBtn.addEventListener('click', () => overlay.remove());
   saveBtn.addEventListener('click', async () => {
-    const id = inputs.id.value.trim();
-    if(!id){ toast('Вкажіть інв. номер'); return; }
+    const id = inputs.id.value.trim() || nextBattId();
     if(isNew && battById(id)){ toast('АКБ з таким номером вже існує'); return; }
+    const getVal = (key) => {
+      const sel = inputs[key]; const other = inputs[key+'_other'];
+      return sel.value==='__other' ? (other.value.trim()||'') : sel.value;
+    };
     const obj = {
       id,
-      type: inputs.type.value==='__other' ? prompt('Введіть тип:')||inputs.type.value : inputs.type.value,
-      brand: inputs.brand.value==='__other' ? prompt('Введіть бренд:')||inputs.brand.value : inputs.brand.value,
+      type: getVal('type'),
+      brand: getVal('brand'),
       capacity: +inputs.capacity.value||0,
       cca: +inputs.cca.value||0,
-      bought: inputs.bought.value,
-      price: +inputs.price.value||0,
+      _installed: inputs._installed.value,
       note: inputs.note.value
     };
     if(isNew){
-      obj.status = 'storage'; obj.location = 'склад'; obj._installed = null;
+      obj.status = 'storage'; obj.location = 'склад';
       BATT.batteries.push(obj);
       BATT.log.push({ts:new Date().toISOString().slice(0,16), bat:obj.id, action:'install', from:'новий', to:'склад', reason:'новий', note:''});
     } else {
@@ -2114,7 +2110,7 @@ function showBattDetail(id){
   box.innerHTML = '<h3 style="margin:0 0 4px">'+bat.id+' — '+bat.type+' '+bat.brand+'</h3>'
     +'<div style="color:'+BATT_STATUS_COLOR[bat.status]+';font-weight:700;margin-bottom:8px">'+statusTxt+(bat.location && bat.status==='on_tech' ? ' · '+bat.location : '')+'</div>'
     +'<div class="note">Ємність: '+bat.capacity+' А·год'+(bat.cca?' · Пусковий: '+bat.cca+' А':'')+'</div>'
-    +'<div class="note">Куплено: '+(bat.bought||'?')+' · Ціна: '+nf(+bat.price||0, fmt0)+' ₴</div>'
+    +'<div class="note">Встановлено: '+(bat._installed||'?')+'</div>'
     +(bat.note?'<div class="note">📝 '+bat.note+'</div>':'')
     +'<h4 style="margin:14px 0 6px">Історія рухів</h4>';
 
