@@ -2888,7 +2888,7 @@ async function renderPlan(){
 function grainLine(g){
   const c = {'так':'var(--good)', 'обмежено':'var(--warn)', 'ні':'var(--bad)'}[g.st] || '';
   return el('div', {class:'note', style:'margin-top:4px;border-left:3px solid '+c+';padding-left:6px'},
-    '💧 Зерно: '+(g.m!=null ? '~'+nf(g.m, 1)+' %' : 'невідомо')+' · '+(g.how || '')+' · межа '+g.max+' %, база '+g.base+' %'+(g.shrink ? ' · усушка до бази ≈ '+nf(g.shrink, 1)+' % ваги + сушка на елеваторі' : '')+
+    '💧 Зерно: '+(g.m!=null ? '~'+nf(g.m, 1)+' %' : 'невідомо')+' · '+(g.how || '')+' · межа '+g.max+' %, база '+g.base+' %'+(g.m > g.max ? ' · чекає в полі (на елеватор не сушимо)' : '')+
     (g.age==null || g.age > 3 ? ' · ⚠ заміряти перед виїздом' : '')+(g.m > g.max ? (g.ok_from ? ' · у межу за прогнозом ~'+new Date(g.ok_from+'T12:00:00').toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'}) : ' · у межу за 14 днів не ввійде') : ''));
 }
 function grainForm(bl){
