@@ -1878,9 +1878,9 @@ function battOnTech(tech){ return BATT.batteries.filter(b => b.status==='on_tech
 const BATT_TYPES = ['6СТ-190','6СТ-140','6СТ-100','6СТ-77','6СТ-60','6СТ-45'];
 const BATT_BRANDS = ['Varta','Bosch','Ista','Forse','A-Mega','Westa','Mutlu','Exide','Yuasa','Topla'];
 const BATT_REASONS = ['планова заміна','не тримає заряд','сезонне зберігання','повернення з зарядки','вийшов з ладу','новий'];
-const BATT_ACTIONS = {install:'Встановив',remove:'Зняв',charge:'На зарядку',return_charge:'Повернув із зарядки',write_off:'Списав'};
-const BATT_STATUS = {on_tech:'🚜 На техніці',storage:'📦 На складі',written_off:'⚫ Списано'};
-const BATT_STATUS_COLOR = {on_tech:'#2a7c2a',storage:'#4a6fa5',written_off:'#888'};
+const BATT_ACTIONS = {install:'Встановив',remove:'Зняв',write_off:'Списав'};
+const BATT_STATUS = {on_tech:'🚜 На техніці',storage_ok:'📦 Склад (робочий)',storage_bad:'⚠️ Склад (несправний)',written_off:'⚫ Списано'};
+const BATT_STATUS_COLOR = {on_tech:'#2a7c2a',storage_ok:'#4a6fa5',storage_bad:'#c0392b',written_off:'#888'};
 
 document.querySelectorAll('#batt-tabs .chip').forEach(b => b.addEventListener('click', () => {
   BTAB = b.dataset.bt;
@@ -1894,16 +1894,18 @@ document.querySelectorAll('#batt-tabs .chip').forEach(b => b.addEventListener('c
 function renderBatt(){
   const bs = BATT.batteries;
   const onTech = bs.filter(b => b.status==='on_tech');
-  const onStore = bs.filter(b => b.status==='storage');
+  const onStoreOk = bs.filter(b => b.status==='storage_ok');
+  const onStoreBad = bs.filter(b => b.status==='storage_bad');
+  const onStore = [...onStoreOk, ...onStoreBad];
 
-  // stats tiles — без зарядки і вартості
   $('#batt-stats').replaceChildren(
-    battStatTile('⚡ '+bs.length, 'всього'),
+    battStatTile('⚡ '+bs.filter(b=>b.status!=='written_off').length, 'всього'),
     battStatTile('🚜 '+onTech.length, 'на техніці'),
-    battStatTile('📦 '+onStore.length, 'на складі')
+    battStatTile('📦 '+onStoreOk.length, 'склад робочі'),
+    ...(onStoreBad.length ? [battStatTile('⚠️ '+onStoreBad.length, 'несправні')] : [])
   );
 
-  if(BTAB==='dash') renderBattDash(onTech, onStore);
+  if(BTAB==='dash') renderBattDash(onTech, onStoreOk, onStoreBad);
   else if(BTAB==='log') renderBattLog();
   else if(BTAB==='reg') renderBattReg();
 }
@@ -1915,13 +1917,31 @@ function battStatTile(val, label){
   return d;
 }
 
-function renderBattDash(onTech, onStore){
+function renderBattDash(onTech, onStoreOk, onStoreBad){
   const c = $('#batt-dash'); c.replaceChildren();
+
+  function makeStoreCard(b){
+    const isBad = b.status==='storage_bad';
+    const card = el('div', {class:'card', style:'padding:10px 12px;margin-bottom:6px;cursor:pointer;border-left:3px solid '+(isBad?'#c0392b':'#4a6fa5')});
+    card.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center"><b>'+b.id+'</b><span class="note">'+b.type+' '+b.brand+'</span></div>';
+    const btns = el('div', {style:'display:flex;gap:6px;margin-top:6px'});
+    if(!isBad){
+      const btnInst = el('button', {class:'btn small primary'}, '⬆ Встановити');
+      btnInst.addEventListener('click', ev => { ev.stopPropagation(); showBattMove(b.id, 'install'); });
+      btns.append(btnInst);
+    }
+    const btnWO = el('button', {class:'btn small'}, '⚫ Списати');
+    btnWO.addEventListener('click', ev => { ev.stopPropagation(); showBattMove(b.id, 'write_off'); });
+    btns.append(btnWO);
+    card.append(btns);
+    card.addEventListener('click', () => showBattDetail(b.id));
+    return card;
+  }
 
   if(onTech.length){
     c.append(el('h3', {style:'margin:12px 0 6px;color:var(--accent)'}, '🚜 На техніці'));
     onTech.forEach(b => {
-      const card = el('div', {class:'card', style:'padding:10px 12px;margin-bottom:6px;cursor:pointer'});
+      const card = el('div', {class:'card', style:'padding:10px 12px;margin-bottom:6px;cursor:pointer;border-left:3px solid #2a7c2a'});
       card.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center"><b>'+b.location+'</b><span style="color:var(--accent);font-weight:700">'+b.id+'</span></div>'
         +'<div class="note">'+b.type+' '+b.brand+' · встановлено '+(b._installed||'?')+'</div>';
       const btns = el('div', {style:'display:flex;gap:6px;margin-top:6px'});
@@ -1934,22 +1954,17 @@ function renderBattDash(onTech, onStore){
     });
   }
 
-  if(onStore.length){
-    c.append(el('h3', {style:'margin:12px 0 6px;color:var(--accent)'}, '📦 На складі'));
-    onStore.forEach(b => {
-      const card = el('div', {class:'card', style:'padding:10px 12px;margin-bottom:6px;cursor:pointer'});
-      card.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center"><b>'+b.id+'</b><span class="note">'+b.type+' '+b.brand+'</span></div>';
-      const btns = el('div', {style:'display:flex;gap:6px;margin-top:6px'});
-      const btnInst = el('button', {class:'btn small primary'}, '⬆ Встановити');
-      btnInst.addEventListener('click', ev => { ev.stopPropagation(); showBattMove(b.id, 'install'); });
-      btns.append(btnInst);
-      card.append(btns);
-      card.addEventListener('click', () => showBattDetail(b.id));
-      c.append(card);
-    });
+  if(onStoreOk.length){
+    c.append(el('h3', {style:'margin:12px 0 6px;color:#4a6fa5'}, '📦 Склад — робочі'));
+    onStoreOk.forEach(b => c.append(makeStoreCard(b)));
   }
 
-  if(!onTech.length && !onStore.length){
+  if(onStoreBad.length){
+    c.append(el('h3', {style:'margin:12px 0 6px;color:#c0392b'}, '⚠️ Склад — несправні'));
+    onStoreBad.forEach(b => c.append(makeStoreCard(b)));
+  }
+
+  if(!onTech.length && !onStoreOk.length && !onStoreBad.length){
     c.append(el('p', {class:'note', style:'text-align:center;padding:24px 0'}, 'Ще немає акумуляторів. Натисніть «+ Новий АКБ» щоб додати перший.'));
   }
 }
@@ -1981,7 +1996,7 @@ function renderBattLog(){
 function renderBattReg(){
   const c = $('#batt-reg'); c.replaceChildren();
   const bs = [...BATT.batteries].sort((a,b) => {
-    const ord = {on_tech:0, storage:1, charging:2, written_off:3};
+    const ord = {on_tech:0, storage_ok:1, storage_bad:2, written_off:3};
     return (ord[a.status]||9) - (ord[b.status]||9) || a.id.localeCompare(b.id);
   });
   if(!bs.length){ c.append(el('p', {class:'note'}, 'Реєстр порожній.')); return; }
@@ -2012,7 +2027,7 @@ function nextBattId(){
 // --- Modal: new / edit battery
 function showBattForm(bat){
   const isNew = !bat;
-  bat = bat || {id:nextBattId(), type:'6СТ-190', brand:'', capacity:190, cca:'', _installed:DAY, status:'storage', location:'склад', note:''};
+  bat = bat || {id:nextBattId(), type:'6СТ-190', brand:'', capacity:190, cca:'', _installed:DAY, status:'storage_ok', location:'склад', note:''};
   const overlay = el('div', {class:'overlay', style:'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px'});
   const box = el('div', {style:'background:var(--bg);border-radius:12px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow-y:auto'});
   box.innerHTML = '<h3 style="margin:0 0 12px">'+(isNew?'Новий акумулятор':'Редагувати '+bat.id)+'</h3>';
@@ -2046,11 +2061,10 @@ function showBattForm(bat){
     box.append(wrap);
   });
 
-  // Ємність, Пусковий, Дата установки, Примітка
+  // Ємність, Пусковий, Примітка
   [
     ['capacity','Ємність, А·год','number', bat.capacity],
     ['cca','Пусковий струм, А','number', bat.cca],
-    ['_installed','Дата установки','date', bat._installed||DAY],
     ['note','Примітка','text', bat.note]
   ].forEach(([key,label,type,val]) => {
     const wrap = el('div', {style:'margin-bottom:8px'});
@@ -2060,6 +2074,55 @@ function showBattForm(bat){
     wrap.append(inp);
     box.append(wrap);
   });
+
+  // Розміщення — тільки для нового АКБ
+  let destStatus = 'storage_ok'; // default
+  if(isNew){
+    const destWrap = el('div', {style:'margin:12px 0 4px'});
+    destWrap.append(el('label', {class:'note', style:'display:block;margin-bottom:6px;font-weight:600'}, 'Куди розмістити?'));
+
+    // Радіо-кнопки вибору місця
+    const radioRow = el('div', {style:'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px'});
+    const opts = [['tech','🚜 На техніку'],['storage_ok','📦 Склад (робочий)'],['storage_bad','⚠️ Склад (несправний)']];
+    let activePlace = 'storage_ok';
+    const radioMap = {};
+    opts.forEach(([val,label]) => {
+      const btn = el('button', {class:'btn'+(val===activePlace?' primary':''), type:'button', style:'font-size:13px;padding:5px 10px'}, label);
+      btn.addEventListener('click', () => {
+        activePlace = val;
+        opts.forEach(([v]) => { radioMap[v].className = 'btn'+(v===val?' primary':''); radioMap[v].style.fontSize='13px'; radioMap[v].style.padding='5px 10px'; });
+        techRow.hidden = (val!=='tech');
+        condNote.hidden = (val==='tech');
+      });
+      radioMap[val] = btn;
+      radioRow.append(btn);
+    });
+    destWrap.append(radioRow);
+
+    // Вибір техніки
+    const techRow = el('div', {hidden:true, style:'margin-bottom:8px'});
+    techRow.append(el('label', {class:'note', style:'display:block;margin-bottom:2px'}, 'Техніка'));
+    const techSel = el('select', {style:'width:100%'});
+    REF.mach.map(m => m.n).forEach(n => techSel.append(el('option', {value:n}, n)));
+    inputs['_dest_tech'] = techSel;
+    techRow.append(techSel);
+    destWrap.append(techRow);
+
+    // Підказка для складу
+    const condNote = el('div', {class:'note', style:'font-size:12px;color:var(--muted);margin-bottom:4px'}, '');
+    destWrap.append(condNote);
+
+    inputs['_dest_place'] = {get:()=>activePlace, getTech:()=>techSel.value};
+    box.append(destWrap, techRow);
+  } else {
+    // Редагування: показати дату установки
+    const wrap = el('div', {style:'margin-bottom:8px'});
+    wrap.append(el('label', {class:'note', style:'display:block;margin-bottom:2px'}, 'Дата установки'));
+    const inp = el('input', {type:'date', value:bat._installed||DAY, style:'width:100%'});
+    inputs['_installed'] = inp;
+    wrap.append(inp);
+    box.append(wrap);
+  }
 
   const btns = el('div', {style:'display:flex;gap:8px;margin-top:14px'});
   const saveBtn = el('button', {class:'btn primary'}, '💾 Зберегти');
@@ -2078,14 +2141,28 @@ function showBattForm(bat){
       brand: getVal('brand'),
       capacity: +inputs.capacity.value||0,
       cca: +inputs.cca.value||0,
-      _installed: inputs._installed.value,
       note: inputs.note.value
     };
     if(isNew){
-      obj.status = 'storage'; obj.location = 'склад';
-      BATT.batteries.push(obj);
-      BATT.log.push({ts:new Date().toISOString().slice(0,16), bat:obj.id, action:'install', from:'новий', to:'склад', reason:'новий', note:''});
+      const place = inputs['_dest_place'].get();
+      if(place==='tech'){
+        const tech = inputs['_dest_tech'].value;
+        obj.status = 'on_tech'; obj.location = tech; obj._installed = DAY;
+        // якщо на техніці вже стоїть АКБ — зняти на склад (робочий)
+        const existing = battOnTech(tech);
+        existing.forEach(eb => {
+          eb.status = 'storage_ok'; eb.location = 'склад'; eb._installed = null;
+          BATT.log.push({ts:new Date().toISOString().slice(0,16), bat:eb.id, action:'remove', from:tech, to:'склад', reason:'заміна на '+id, note:''});
+        });
+        BATT.batteries.push(obj);
+        BATT.log.push({ts:new Date().toISOString().slice(0,16), bat:id, action:'install', from:'новий', to:tech, reason:'новий', note:''});
+      } else {
+        obj.status = place; obj.location = 'склад'; obj._installed = null;
+        BATT.batteries.push(obj);
+        BATT.log.push({ts:new Date().toISOString().slice(0,16), bat:id, action:'install', from:'новий', to:'склад ('+(place==='storage_ok'?'робочий':'несправний')+')', reason:'новий', note:''});
+      }
     } else {
+      obj._installed = inputs['_installed'] ? inputs['_installed'].value : bat._installed;
       Object.assign(bat, obj);
     }
     overlay.remove();
@@ -2169,12 +2246,23 @@ function showBattMove(batId, action){
   Object.entries(BATT_ACTIONS).forEach(([k,v]) => actSel.append(el('option', {value:k, selected:k===action}, v)));
   box.append(el('label', {class:'note'}, 'Операція'), actSel);
 
-  // target (tech)
+  // target (tech) — для встановлення і зняття
   const tgtLabel = el('label', {class:'note'}, 'Техніка');
   const tgtSel = el('select', {style:'width:100%;margin-bottom:8px'});
   techNames.forEach(n => tgtSel.append(el('option', {value:n}, n)));
   box.append(tgtLabel, tgtSel);
-  function toggleTgt(){ tgtLabel.hidden = tgtSel.hidden = (actSel.value!=='install' && actSel.value!=='remove'); }
+
+  // condition after remove — стан АКБ при знятті
+  const condLabel = el('label', {class:'note'}, 'Стан після зняття');
+  const condSel = el('select', {style:'width:100%;margin-bottom:8px'});
+  condSel.append(el('option', {value:'storage_ok'}, '📦 Робочий → склад'), el('option', {value:'storage_bad'}, '⚠️ Несправний → склад'));
+  box.append(condLabel, condSel);
+
+  function toggleTgt(){
+    const a = actSel.value;
+    tgtLabel.hidden = tgtSel.hidden = (a!=='install' && a!=='remove');
+    condLabel.hidden = condSel.hidden = (a!=='remove');
+  }
   actSel.addEventListener('change', toggleTgt); toggleTgt();
 
   // reason
@@ -2200,22 +2288,17 @@ function showBattMove(batId, action){
 
     if(act==='install'){
       to = tech;
-      // якщо на техніці вже стоїть АКБ — зняти його на склад
+      // якщо на техніці вже стоїть АКБ — зняти його на склад як робочий
       const existing = battOnTech(tech);
       existing.forEach(eb => {
-        eb.status = 'storage'; eb.location = 'склад'; eb._installed = null;
-        BATT.log.push({ts:new Date().toISOString().slice(0,16), bat:eb.id, action:'remove', from:tech, to:'склад', reason:'заміна на '+bid, note:''});
+        eb.status = 'storage_ok'; eb.location = 'склад'; eb._installed = null;
+        BATT.log.push({ts:new Date().toISOString().slice(0,16), bat:eb.id, action:'remove', from:tech, to:'склад (робочий)', reason:'заміна на '+bid, note:''});
       });
       bat.status = 'on_tech'; bat.location = tech; bat._installed = DAY;
     } else if(act==='remove'){
-      to = 'склад';
-      bat.status = 'storage'; bat.location = 'склад'; bat._installed = null;
-    } else if(act==='charge'){
-      to = 'на зарядці';
-      bat.status = 'charging'; bat.location = 'на зарядці'; bat._installed = null;
-    } else if(act==='return_charge'){
-      to = 'склад';
-      bat.status = 'storage'; bat.location = 'склад';
+      const cond = condSel.value; // 'storage_ok' або 'storage_bad'
+      to = 'склад ('+(cond==='storage_ok'?'робочий':'несправний')+')';
+      bat.status = cond; bat.location = 'склад'; bat._installed = null;
     } else if(act==='write_off'){
       to = 'списано';
       bat.status = 'written_off'; bat.location = 'списано'; bat._installed = null;
@@ -2235,8 +2318,6 @@ function showBattMove(batId, action){
 async function doBattAction(batId, action, from, to, reason){
   const bat = battById(batId);
   if(!bat) return;
-  if(action==='charge'){ bat.status = 'charging'; bat.location = 'на зарядці'; bat._installed = null; }
-  else if(action==='return_charge'){ bat.status = 'storage'; bat.location = 'склад'; }
   BATT.log.push({ts:new Date().toISOString().slice(0,16), bat:batId, action, from, to, reason, note:''});
   try { await saveBatt(); toast(BATT_ACTIONS[action]+' '+batId); } catch(e){ toast('Помилка: '+e.message); }
   renderBatt();
