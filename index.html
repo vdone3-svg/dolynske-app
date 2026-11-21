@@ -1236,7 +1236,7 @@ function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
     fields:() => { renderFields(); renderFieldCard(); }, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
-    fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:renderJournal, settings:renderSettings})[TAB]();
+    fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:renderJournal, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
 $('#role-b').addEventListener('click', () => { ROLE = 'b'; $('#role-b').setAttribute('aria-pressed','true'); $('#role-o').setAttribute('aria-pressed','false'); showTab(TAB); });
@@ -1877,6 +1877,59 @@ function battById(id){ return BATT.batteries.find(b => b.id===id); }
 function battOnTech(tech){ return BATT.batteries.filter(b => b.status==='on_tech' && b.location===tech); }
 const BATT_TYPES = ['6СТ-190','6СТ-140','6СТ-100','6СТ-77','6СТ-60','6СТ-45'];
 const BATT_BRANDS = ['Varta','Bosch','Ista','Forse','A-Mega','Westa','Mutlu','Exide','Yuasa','Topla'];
+
+// --- Розпізнавання АКБ по фото через Claude Vision API ---
+async function recognizeBattFromPhoto(){
+  const apiKey = LS.get('dl_anthropic_key');
+  if(!apiKey){ toast('⚠️ Вкажіть Anthropic API ключ у Довідниках'); return null; }
+
+  return new Promise((resolve) => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+    inp.addEventListener('change', async () => {
+      const file = inp.files[0]; if(!file){ resolve(null); return; }
+      const toastId = toast('🔍 Розпізнаю АКБ…', 15000);
+      try {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const b64 = e.target.result.split(',')[1];
+          const mediaType = file.type || 'image/jpeg';
+          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5',
+              max_tokens: 256,
+              messages: [{
+                role: 'user',
+                content: [
+                  { type: 'image', source: { type: 'base64', media_type: mediaType, data: b64 } },
+                  { type: 'text', text: 'Це фото акумулятора (АКБ). Визнач тип, бренд, ємність і пусковий струм (CCA). Відповідь ТІЛЬКИ у форматі JSON без пояснень:\n{"type":"6СТ-190","brand":"Topla","capacity":190,"cca":1200}\nЯкщо щось не видно — порожній рядок або 0.' }
+                ]
+              }]
+            })
+          });
+          if(!resp.ok) throw new Error('API: '+resp.status);
+          const data = await resp.json();
+          const text = data.content?.[0]?.text || '';
+          const match = text.match(/\{[\s\S]*?\}/);
+          if(!match) throw new Error('Не вдалося розпізнати');
+          const result = JSON.parse(match[0]);
+          resolve(result);
+        };
+        reader.readAsDataURL(file);
+      } catch(e) {
+        toast('Помилка розпізнавання: '+e.message);
+        resolve(null);
+      }
+    });
+    inp.click();
+  });
+}
 const BATT_REASONS = ['планова заміна','не тримає заряд','сезонне зберігання','повернення з зарядки','вийшов з ладу','новий'];
 const BATT_ACTIONS = {install:'Встановив',remove:'Зняв',write_off:'Списав'};
 const BATT_STATUS = {on_tech:'🚜 На техніці',storage_ok:'📦 Склад (робочий)',storage_bad:'⚠️ Склад (несправний)',written_off:'⚫ Списано'};
@@ -2048,6 +2101,34 @@ function showBattForm(bat){
   const overlay = el('div', {class:'overlay', style:'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px'});
   const box = el('div', {style:'background:var(--bg);border-radius:12px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow-y:auto'});
   box.innerHTML = '<h3 style="margin:0 0 12px">'+(isNew?'Новий акумулятор':'Редагувати '+bat.id)+'</h3>';
+
+  // Кнопка «Сфотографувати» — тільки для нового АКБ
+  if(isNew){
+    const photoBtn = el('button', {class:'btn', type:'button', style:'width:100%;margin-bottom:14px;font-size:15px;padding:10px;background:var(--accent-bg,#e8f4ff);border:1.5px dashed var(--accent,#2563eb)'}, '📷 Сфотографувати АКБ — розпізнати автоматично');
+    photoBtn.addEventListener('click', async () => {
+      photoBtn.disabled = true; photoBtn.textContent = '⏳ Розпізнаю…';
+      const result = await recognizeBattFromPhoto();
+      photoBtn.disabled = false; photoBtn.textContent = '📷 Сфотографувати АКБ — розпізнати автоматично';
+      if(!result) return;
+      // Заповнити поля форми
+      const fillSelect = (key, val) => {
+        const sel = inputs[key]; if(!sel) return;
+        const opts = Array.from(sel.options).map(o => o.value);
+        if(opts.includes(val)){ sel.value = val; }
+        else if(val){
+          // додати як опцію "інше"
+          sel.value = '__other';
+          if(inputs[key+'_other']){ inputs[key+'_other'].value = val; inputs[key+'_other'].style.display = ''; }
+        }
+      };
+      if(result.type) fillSelect('type', result.type);
+      if(result.brand) fillSelect('brand', result.brand);
+      if(result.capacity && inputs.capacity) inputs.capacity.value = result.capacity;
+      if(result.cca && inputs.cca) inputs.cca.value = result.cca;
+      toast('✅ Розпізнано: '+[result.brand, result.type, result.capacity+'А·год'].filter(Boolean).join(' · '));
+    });
+    box.append(photoBtn);
+  }
 
   // Поле ID (тільки для читання при редагуванні, автозаповнення для нового)
   const idWrap = el('div', {style:'margin-bottom:8px'});
@@ -2426,6 +2507,27 @@ function renderSettings(){
     el('tbody', {}, REF.people.map(p => el('tr', {}, el('td', {class:'l'}, p), el('td', {class:'l'}, (REF.hab[p]||{}).m || '—')))));
 }
 $('#rot-year').addEventListener('change', renderSettings);
+
+// --- Anthropic API ключ (для розпізнавання АКБ по фото) ---
+function renderAnthropicKeyBlock(){
+  if(ROLE!=='o') return;
+  const existing = document.getElementById('anthropic-key-block');
+  if(existing) return; // вже є
+  const pane = document.getElementById('pane-settings');
+  if(!pane) return;
+  const wrap = el('div', {id:'anthropic-key-block', style:'margin-top:24px;padding-top:16px;border-top:1px solid var(--line)'});
+  wrap.append(el('h3', {style:'margin:0 0 8px;font-size:15px'}, '🔑 Anthropic API ключ (розпізнавання АКБ)'));
+  wrap.append(el('p', {class:'note', style:'margin:0 0 8px;font-size:12px'}, 'Зберігається тільки на цьому пристрої. Потрібен для кнопки «📷 Сфотографувати АКБ».'));
+  const row = el('div', {style:'display:flex;gap:8px;align-items:center'});
+  const keyInp = el('input', {type:'password', placeholder:'sk-ant-...', value: LS.get('dl_anthropic_key')||'', style:'flex:1;font-family:monospace;font-size:12px'});
+  const saveKeyBtn = el('button', {class:'btn primary', style:'white-space:nowrap'}, '💾 Зберегти');
+  const clearKeyBtn = el('button', {class:'btn', style:'white-space:nowrap;color:#c00'}, '🗑 Очистити');
+  saveKeyBtn.addEventListener('click', () => { const v = keyInp.value.trim(); if(!v){ toast('Введіть ключ'); return; } LS.set('dl_anthropic_key', v); toast('✅ API ключ збережено'); });
+  clearKeyBtn.addEventListener('click', () => { LS.del('dl_anthropic_key'); keyInp.value=''; toast('Ключ видалено'); });
+  row.append(keyInp, saveKeyBtn, clearKeyBtn);
+  wrap.append(row);
+  pane.append(wrap);
+}
 $('#rot-save').addEventListener('click', () => { const s = RAW['Д_Поле-рік']; saveDoc('ref/pole-rik.json', {kind:'ref', sheet:'Д_Поле-рік', h:s.h, r:s.r, saved_at:new Date().toISOString()}, 'Сівозміна').then(ok => toast(ok ? 'Сівозміну збережено' : 'Немає зв\'язку — збережу пізніше')); });
 $('#rot-add').addEventListener('click', () => { const pr = RAW['Д_Поле-рік']; const cur = +$('#rot-year').value; const used = new Set(pr.r.filter(r => r[0]===cur).map(r => r[pr.h.indexOf('Поле')]));
   const f = REF.fields.find(x => !used.has(x.n)); if(!f){ toast('Усі поля вже додані'); return; }
