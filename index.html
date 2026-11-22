@@ -225,6 +225,7 @@ td.new{background:color-mix(in srgb,var(--good) 16%,transparent)}
 td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .empty{color:var(--muted);font-size:13px;padding:10px 0}
 
+.alerts{margin:4px 0 8px;border-radius:10px;border:1px solid var(--line, rgba(127,127,127,.3))}.alerts.crit{border-color:var(--bad);background:color-mix(in srgb, var(--bad) 12%, transparent)}.alerts.warn{border-color:var(--warn);background:color-mix(in srgb, var(--warn) 10%, transparent)}.alerts-head{all:unset;box-sizing:border-box;cursor:pointer;display:flex;gap:10px;align-items:center;width:100%;padding:8px 10px}.alerts.crit .alerts-head b{color:var(--bad)}
 .sync{font-size:12px;color:var(--muted);min-height:16px}.sync.ok{color:var(--good)}.sync.warn{color:var(--warn);font-weight:600}.sync.bad{color:var(--bad);font-weight:600}
 .login{position:fixed;inset:0;background:var(--bg);z-index:20;display:grid;place-items:center;padding:16px}
 .login[hidden]{display:none}
@@ -308,6 +309,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   </header>
   <nav class="tabs" id="tabs" aria-label="Розділи"></nav>
   <div class="sync" id="sync" role="status"></div>
+  <div id="alerts" class="alerts" role="region" aria-label="Тривоги" hidden></div>
 
   <!-- ДЕНЬ -->
   <main class="pane" id="pane-day">
@@ -1246,7 +1248,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '22.11h Супутник: зведення по полях';
+const APP_VER = '22.11i Тривоги';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -3071,6 +3073,125 @@ function plowBlock(n){
   if(P.cal) box.append(el('div', {style:'opacity:.7'}, 'Орний шар 0–28 см; % НВ — для ґрунтового класу моделі «'+P.cal.name+'» (НВ '+P.cal.fc+' м³/м³, '+P.cal.how+'). Стиглість ~50–85 % НВ. Модель ~9 км — перед виїздом перевірте ком ґрунту в долоні.'+(P.simplified ? ' Прогноз ґрунту недоступний — спрощений розрахунок.' : '')));
   return box;
 }
+// ======= ТРИВОГИ (етап 0b): ai/alerts.json (tools/alerts.py — погода, перезимівля, супутник) + оренда паїв (лише власник,
+// рахується тут: дані паїв зашифровані паролем власника, geo/leases.enc.json тим самим ключем, що й шар «Паї»)
+const ALR = {doc:undefined, lease:[], leaseAt:null, open:false};
+const LEASE_PATH = 'geo/leases.enc.json', LEASE_WARN = 180, LEASE_CRIT = 60;
+const alrSeen = () => { try{ return JSON.parse(LS.get('dl_alert_seen') || '{}'); }catch(e){ return {}; } };
+const ALR_KIND = {ndvi:'🛰', ndre:'🛰', ndmi:'🛰', frost:'❄️', ice:'🧊', rain:'🌧', spray:'💨', lease:'📜'};
+async function paiKeyAny(doc){              // ключ шару «Паї»: розблокований на карті або запам'ятований на пристрої
+  if(MAPV.key) return MAPV.key;
+  try{ const j = JSON.parse(LS.get('dl_paikey') || 'null'); if(!j || j.salt!==doc.salt) return null;
+    return await crypto.subtle.importKey('jwk', j.jwk, {name:'AES-GCM'}, true, ['encrypt', 'decrypt']); }catch(e){ return null; }
+}
+async function leaseEncrypt(obj, key, base){ const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, new TextEncoder().encode(JSON.stringify(obj))));
+  return {kind:'lease-enc', v:1, alg:'AES-256-GCM', kdf:'PBKDF2-SHA256', iter:base.iter, salt:base.salt, iv:u8b64(iv), ct:u8b64(ct), created_at:new Date().toISOString()}; }
+function leaseAlerts(rows){
+  const t0 = new Date(isoToday()+'T12:00:00'), out = [];
+  rows.forEach(r => { if(!r.end || /власн|закінч|розірв/i.test(r.status || '')) return;
+    const days = Math.round((new Date(r.end+'T12:00:00') - t0)/864e5); if(days > LEASE_WARN) return;
+    const who = [r.name, r.cad ? '…'+String(r.cad).slice(-9) : '', r.area ? nf(r.area, 2)+' га' : ''].filter(Boolean).join(', ');
+    out.push({id:'lease:'+(r.cad || r.contract || r.name)+':'+r.end, level: days <= LEASE_CRIT ? 'crit' : 'warn', kind:'lease', d:r.end, roles:['o'],
+      title: days < 0 ? 'Оренда закінчилась '+fmtD(r.end)+', а в списку «діє»: '+who : 'Кінець оренди '+fmtD(r.end)+' (через '+days+' дн.): '+who,
+      text:'Договір '+(r.contract || '—')+(r.status ? ' · статус у списку: '+r.status : '')+'. Вирішити: переукласти договір / викуп / віддати. Бачите лише ви.'}); });
+  return out.sort((a, b) => a.d < b.d ? -1 : 1);
+}
+const fmtD = d => d ? d.slice(8,10)+'.'+d.slice(5,7)+'.'+d.slice(0,4) : '';
+async function loadAlerts(){
+  try{ ALR.doc = await getJSON('ai/alerts.json'); }catch(e){ ALR.doc = null; }
+  if(ROLE==='o'){ try{ const enc = await getJSON(LEASE_PATH), pai = enc && (MAPV.enc || await getJSON(PAI_PATH)); if(pai) MAPV.enc = pai;
+      const k = enc && await paiKeyAny(pai); if(k){ const L = await paiDecrypt(enc, k); ALR.lease = leaseAlerts(L.rows || []); ALR.leaseAt = L.at; ALR.leaseN = (L.rows || []).length; }
+      else ALR.leaseLocked = !!enc; }catch(e){ ALR.lease = []; } }
+  renderAlerts(); if(TAB==='report') renderReport();
+}
+function alertList(){
+  const own = (ALR.doc && ALR.doc.alerts || []).filter(a => (a.roles || ['o']).includes(ROLE));
+  const all = [...own, ...(ROLE==='o' ? ALR.lease : [])], o = {crit:0, warn:1, info:2};
+  return all.sort((a, b) => (o[a.level] - o[b.level]) || String(a.d).localeCompare(String(b.d)));
+}
+function alertRow(a, seen){
+  const c = a.level==='crit' ? 'var(--bad)' : (a.level==='warn' ? 'var(--warn)' : 'var(--muted)');
+  return el('div', {style:'display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid rgba(127,127,127,.2)'+(seen===true ? ';opacity:.55' : '')},
+    el('span', {style:'font-size:16px;line-height:1.2'}, ALR_KIND[a.kind] || '⚠'),
+    el('div', {style:'flex:1;min-width:0'}, el('b', {style:'color:'+c}, (a.level==='crit' ? 'КРИТИЧНО · ' : '')+a.title), el('div', {class:'note', style:'line-height:1.45'}, a.text)),
+    seen ? '' : el('button', {class:'btn small ghost', type:'button', title:'Сховати на цьому пристрої', onclick:() => { const s = alrSeen(); s[a.id] = isoToday(); LS.set('dl_alert_seen', JSON.stringify(s)); renderAlerts(); }}, 'Бачив'));
+}
+function renderAlerts(){
+  const box = $('#alerts'); if(!box) return;
+  const seen = alrSeen(), list = alertList(), fresh = list.filter(a => !seen[a.id]);
+  const stale = ALR.doc && ALR.doc.date && (new Date(isoToday()) - new Date(ALR.doc.date))/864e5 > 2;
+  if(!list.length && !stale && !ALR.leaseLocked){ box.hidden = true; return; }
+  box.hidden = false; const crit = fresh.some(a => a.level==='crit');
+  box.className = 'alerts '+(crit ? 'crit' : (fresh.length ? 'warn' : 'calm'));
+  const head = el('button', {type:'button', class:'alerts-head', 'aria-expanded':String(ALR.open), onclick:() => { ALR.open = !ALR.open; renderAlerts(); }},
+    el('b', {}, fresh.length ? '⚠ Тривоги: '+fresh.length+(crit ? ' (є критичні)' : '') : '✓ Нових тривог немає'),
+    el('span', {class:'note', style:'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, fresh.slice(0, 3).map(a => a.title).join(' · ')),
+    el('span', {class:'note'}, ALR.open ? 'згорнути ▲' : 'деталі ▼'));
+  box.replaceChildren(head);
+  if(!ALR.open) return;
+  const body = el('div', {style:'padding:0 10px 8px'});
+  fresh.forEach(a => body.append(alertRow(a, false)));
+  const old = list.filter(a => seen[a.id]); if(old.length) body.append(el('details', {}, el('summary', {class:'note'}, 'Переглянуті ('+old.length+')'), ...old.map(a => alertRow(a, true))));
+  if(stale) body.append(el('div', {class:'note', style:'color:var(--warn)'}, 'Тривоги не оновлювались з '+fmtD(ALR.doc.date)+' — перевірте запуск «Погода полів…» в GitHub Actions.'));
+  if(ROLE==='o' && ALR.leaseLocked) body.append(el('div', {class:'note'}, '📜 Оренда паїв: щоб бачити кінці договорів, відкрийте шар «Паї» на карті (пароль) з позначкою «запам’ятати».'));
+  if(ROLE==='o' && ALR.leaseN) body.append(el('div', {class:'note'}, '📜 Оренда: перевірено '+ALR.leaseN+' договорів (список від '+fmtD((ALR.leaseAt || '').slice(0,10))+'), попередження за '+LEASE_WARN+' дн., критично — за '+LEASE_CRIT+'.'));
+  body.append(el('div', {class:'note', style:'opacity:.7;margin-top:4px'}, 'Оновлено '+(ALR.doc ? new Date(ALR.doc.at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—')+
+    ' · правила: падіння NDVI ≥ 0,10 і ≥ 20 % (NDRE ≥ 0,07, NDMI ≥ 0,10), мороз на вузлі ближче 3° до загартованості, дощ по мерзлому ґрунту, злива ≥ 20 мм, 3 дні без вікон обприскування (у сезон).'));
+  box.append(body);
+}
+function alertsReportBlock(){        // у «Звіті дня»: структурований список (текст Claude має розділ «Тривоги»; оренду бачить лише власник — тут)
+  const L = alertList(); if(!L.length) return '';
+  const lease = L.filter(a => a.kind==='lease');
+  return el('details', {class:'card', style:'margin:8px 0;padding:8px 10px', open: lease.length ? '' : null},
+    el('summary', {}, el('b', {}, '⚠ Тривоги на сьогодні: '+L.length), lease.length ? el('span', {class:'note'}, ' · з них оренда паїв: '+lease.length+' (лише вам)') : ''),
+    ...L.map(a => alertRow(a, 'report')));
+}
+// ---------- імпорт «Список паїв» (Excel власника) → зашифрований geo/leases.enc.json
+const XD = v => { if(v==null || v==='') return null;
+  if(typeof v==='number' && v > 20000 && v < 80000){ const d = new Date(Math.round((v - 25569)*864e5)); return d.toISOString().slice(0,10); }
+  const m = String(v).match(/(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/); if(!m) return null;
+  const y = m[3].length===2 ? '20'+m[3] : m[3]; return y+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'); };
+function parseLeaseBook(wb){
+  const rows = [];
+  for(const sn of wb.SheetNames){
+    const A = XLSX.utils.sheet_to_json(wb.Sheets[sn], {header:1, raw:true, defval:null});
+    const hi = A.slice(0, 15).findIndex(r => r && r.some(c => /кадастр/i.test(String(c || ''))) && r.some(c => /договор|пайовик|орендодав|піб|прізвищ/i.test(String(c || ''))));
+    if(hi < 0) continue;
+    const H = A[hi].map(c => String(c || '').toLowerCase()), col = re => H.findIndex(h => re.test(h));
+    const C = {name:col(/пайовик|орендодав|піб|прізвищ/), contract:col(/№|номер/), start:col(/дата (договору|реєстр|укладення|початку)|^дата$/), term:col(/строк|термін|період/),
+      end:col(/закінч|діє до|кінц|^по$|дата завершення/), cad:col(/кадастр/), area:col(/площ/), status:col(/статус/)};
+    for(const r of A.slice(hi+1)){ if(!r || !r.some(c => c!=null && c!=='')) continue;
+      const g = k => C[k] >= 0 ? r[C[k]] : null, start = XD(g('start')), term = g('term');
+      let end = XD(g('end'));
+      if(!end && term!=null){ const ds = String(term).match(/\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}/g); if(ds && ds.length) end = XD(ds[ds.length-1]);
+        else { const yrs = parseFloat(String(term).replace(',', '.')); if(start && yrs > 0 && yrs < 60){ const d = new Date(start+'T12:00:00'); d.setMonth(d.getMonth() + Math.round(yrs*12)); end = d.toISOString().slice(0,10); } } }
+      if(!g('cad') && !g('name')) continue;
+      rows.push({name:g('name') ? String(g('name')).trim() : '', contract:g('contract')!=null ? String(g('contract')).trim() : '', start, end, cad:g('cad') ? String(g('cad')).trim() : '',
+        area:typeof g('area')==='number' ? g('area') : parseFloat(String(g('area') || '').replace(',', '.')) || null, status:g('status') ? String(g('status')).trim() : '', sheet:sn});
+    }
+  }
+  return rows;
+}
+function leaseImportForm(){
+  const box = $('#map-owner'), msg = el('span', {class:'note'}), file = el('input', {type:'file', accept:'.xlsx,.xls'});
+  file.addEventListener('change', async () => {
+    try{ const f = file.files[0]; if(!f) return; msg.textContent = 'Читаю…';
+      const rows = parseLeaseBook(XLSX.read(await f.arrayBuffer(), {type:'array', cellDates:false}));
+      if(!rows.length) throw new Error('не знайшов таблиці з колонками «кадастровий номер» і «пайовик/договір»');
+      const withEnd = rows.filter(r => r.end).length, al = leaseAlerts(rows);
+      msg.replaceChildren(el('div', {}, 'Знайдено '+rows.length+' договорів, з датою кінця — '+withEnd+' (без дати: '+(rows.length - withEnd)+' — для них потрібна колонка «закінчується» або «строк» + «дата договору»). Тривог зараз: '+al.length+'.'),
+        el('ul', {style:'margin:4px 0 4px 18px'}, ...al.slice(0, 8).map(a => el('li', {}, a.title))),
+        el('button', {class:'btn primary small', type:'button', onclick: async () => {
+          try{ const pai = MAPV.enc || await getJSON(PAI_PATH), k = await paiKeyAny(pai); if(!k) throw new Error('спершу відкрийте шар «Паї» паролем');
+            const doc = await leaseEncrypt({at:new Date().toISOString(), file:f.name, rows}, k, pai);
+            await putJSON(LEASE_PATH, doc, 'Оренда паїв: оновлено список (зашифровано)'); await paiDecrypt(await getJSON(LEASE_PATH), k);
+            toast('Збережено зашифровано: '+rows.length+' договорів'); box.replaceChildren(); loadAlerts(); }catch(e){ msg.append(el('div', {style:'color:var(--bad)'}, 'Не збережено: '+e.message)); } }}, 'Зберегти зашифровано'));
+    }catch(e){ msg.textContent = 'Помилка: '+e.message; } });
+  box.replaceChildren(el('div', {class:'card', style:'display:grid;gap:8px;max-width:620px'}, el('b', {}, '📜 Оренда паїв → тривоги про кінець договорів'),
+    el('div', {class:'note'}, 'Виберіть свій Excel «Список паїв» (колонки: пайовик, № і дата договору, строк або дата закінчення, кадастровий номер, площа, статус). Файл розбирається тут, у браузері, і зберігається зашифрованим тим самим ключем, що шар «Паї» — без пароля його не прочитає ніхто. Тривоги бачите лише ви: за '+LEASE_WARN+' днів до кінця — увага, за '+LEASE_CRIT+' — критично.'),
+    file, msg));
+}
 // ======= ЗВІТ ДНЯ (ai/daily/РРРР-ММ-ДД.json — tools/daily.py щоранку в workflow «Погода полів…»), лише власник
 const REP = {list:null, day:null, docs:{}};
 function mdLite(t){            // простий Markdown звіту: ## заголовки, «- » пункти, **жирний**
@@ -3095,6 +3216,7 @@ async function renderReport(){
   const m = R.meta || {};
   body.replaceChildren(el('div', {class:'note'}, 'Склав Claude '+new Date(R.at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+
       ' · день '+(m.closed ? 'закрито в застосунку' : 'у застосунку не закрито')+' · агрозвіт бухгалтера: '+(m.agro_report ? 'дані на '+m.agro_report : (m.agro_err || 'немає'))),
+    alertsReportBlock(),
     el('div', {style:'max-width:900px'}, ...mdLite(R.text)),
     el('details', {style:'margin-top:12px'}, el('summary', {class:'note'}, 'Факти, з яких складено звіт'), el('pre', {style:'white-space:pre-wrap;font-size:11px;max-height:480px;overflow:auto'}, R.facts || '')));
 }
@@ -3374,6 +3496,8 @@ function drawPai(){
   const feats = [...P.mainData.features, ...(P.theirData.features || []).map(f => ({...f, properties:{...f.properties, ftype:'exchanged_in'}}))];
   MAPV.paiL = L.geoJSON({type:'FeatureCollection', features:feats}, {style, onEachFeature:(f, l) => { l.bindPopup(() => pop(f), {maxWidth:300}); l.bindTooltip(f.properties.short, {className:'map-lbl small'}); }}).addTo(MAPV.map);
   $('#map-info').textContent = 'Шар «Паї»: '+P.mainData.features.length+' ділянок, обмінів '+P.EXCHANGES.length+' · жовта межа — ділянки родини, помаранчеві — віддали, сині — отримали';
+  $('#map-owner').replaceChildren(el('button', {class:'btn small', type:'button', onclick:leaseImportForm}, '📜 Оренда: завантажити «Список паїв» (для тривог про кінець договорів)'));
+  if(!ALR.lease.length && ALR.leaseLocked) loadAlerts();
 }
 
 // ---------- розділ спільного контуру (Малаківка / 9 Малаківка): власник обводить меншу частину
@@ -4254,6 +4378,7 @@ async function start(){
   YEAR = MODEL.years.includes(new Date().getFullYear()) ? new Date().getFullYear() : d3.max(MODEL.years);
   $('#src-line').textContent = 'ТОВ «Долинське» · дані з приватного сховища · версія '+APP_VER;
   openDay(); showTab(location.hash.slice(1) || 'day');
+  loadAlerts();
   OUTBOX.all().then(q => { OUTQ = q; if(q.length){ renderScQueue(); flushScouts(); } }).catch(() => {});
 }
 if(TOKEN) start(); else showLogin();
