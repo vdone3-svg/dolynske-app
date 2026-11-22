@@ -836,6 +836,7 @@ function renderFieldCard(){
   const ndl = ndviLine(f, YEAR); if(ndl) box.append(ndl);
   const nab = ndviAiBlock(f); if(nab) box.append(nab);
   const fwb = fwxBlock(f, YEAR); if(fwb) box.append(fwb);
+  const wib = winterBlock(f, YEAR); if(wib) box.append(wib);
   else if(FWX.data===undefined) ensureFwx().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f) renderFieldCard(); });
   else if(NDVI.data===undefined) ensureNdvi().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f && ndviLine(f, YEAR)) renderFieldCard(); });
   const hist = MODEL.fields.filter(x => x.f===f).sort((a,b) => b.y-a.y || a.c.localeCompare(b.c));
@@ -1238,7 +1239,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '22.11a Озимина: ризики кольором';
+const APP_VER = '22.11b Перезимівля озимини, %';
 const TABS = [['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2896,9 +2897,13 @@ function winterFields(){
   const F = (FWX.data || {}).fields || {}, now = new Date(), sy = String(now.getMonth() >= 7 ? now.getFullYear()+1 : now.getFullYear());
   return Object.entries(F).map(([n, f]) => { const s = (f || {})[sy];
     if(!s || !s.sow || !WINTER_RX.test(s.crop || '') || +s.sow.slice(5, 7) < 8) return null;
-    const g = s.gdd_eff || 0, cls = g < 250 ? 'слабкі' : g > 550 ? 'перерослі' : 'норма';
-    return {n, crop:s.crop, sow:s.sow, g, cls, weak:cls!=='норма'}; }).filter(Boolean);
+    const w = ((f || {}).winter || {})[sy] || null, g = s.gdd_eff || 0, cls = w ? w.cls : g < 250 ? 'слабкі' : g > 550 ? 'перерослі' : 'норма';
+    return {n, crop:s.crop, sow:s.sow, g, cls, weak:cls!=='норма', w}; }).filter(Boolean);
 }
+// перезимівля (tools/winter.py → geo/weather.json fields[n].winter[рік урожаю]): ряд [дата, стан %, LT50, мін t вузла, прогноз]
+function winterOf(n, y){ const r = fwxField(n); return r && r.winter ? (r.winter[String(y)] || null) : null; }
+function wAt(w, d){ const S = (w || {}).ser || []; if(!S.length) return null; let x = null; for(const o of S){ if(o[0] <= d) x = o; else break; } return x || (d < S[0][0] ? null : S[S.length-1]); }
+const WST = s => s==null ? '' : s >= 90 ? 'color:var(--good);font-weight:600' : s >= 75 ? 'color:var(--warn);font-weight:600' : s >= 50 ? 'color:#fff;background:#d9822b;font-weight:600' : 'color:#fff;background:var(--bad);font-weight:600';
 // рівень загрози морозу на вузлі кущіння: 0 безпечно, 1 увага, 2 загроза слабким, 3 загроза навіть загартованим
 function nodeLevel(t, weak){ if(t==null) return 0; const k = weak ? 2 : 0; return t <= -16+k ? 3 : t <= -12+k ? 2 : t <= -10+k ? 1 : 0; }
 const NODE_ST = ['', 'color:var(--warn);font-weight:600', 'color:#fff;background:#d9822b;font-weight:600', 'color:#fff;background:var(--bad);font-weight:600'];
@@ -2918,8 +2923,10 @@ function planWeather(from, P){
     o.ice = o.p >= 1 && o.tx!=null && o.tx > 0.5 && ((o.ts!=null && o.ts <= 0) || (prev && prev.fdp > 0)) && o.tn!=null && o.tn < 0; });
   const WF = winterFields();
   D.forEach((o, i) => {
-    o.nl = WF.length ? Math.max(...WF.map(f => nodeLevel(o.tsn, f.weak))) : nodeLevel(o.tsn, false);
-    o.nf = WF.filter(f => nodeLevel(o.tsn, f.weak) >= 1).map(f => f.n);
+    const lv = f => { const x = f.w && wAt(f.w, o.d); if(!x || o.tsn==null) return nodeLevel(o.tsn, f.weak);   // модель: запас до LT50 поля
+      const m = o.tsn - x[2]; return m <= 0 ? 3 : m <= 2 ? 2 : m <= 4 ? 1 : 0; };
+    o.nl = WF.length ? Math.max(...WF.map(lv)) : nodeLevel(o.tsn, false);
+    o.nf = WF.filter(f => lv(f) >= 1).map(f => f.n + (f.w && wAt(f.w, o.d) ? ' (LT50 '+nf(wAt(f.w, o.d)[2], 0)+'°)' : ''));
     const m = +o.d.slice(5, 7), win = m===12 || m <= 2, warm = x => x && x.tx!=null && x.tx > 5;
     let run = 0; for(let j = i; j >= 0 && warm(D[j]); j--) run++; for(let j = i+1; j < D.length && warm(D[j]); j++) run++;
     o.risk = [];
@@ -2947,6 +2954,9 @@ function planWeather(from, P){
     ['⚠ Льодяна кірка', o => o.ice ? 'ризик' : '—', o => o.ice ? 'color:var(--bad);font-weight:600' : ''],
     ['🚜 Оранка', o => o.st || '—', o => o.st ? 'color:#fff;background:'+C[o.st] : ''],
   ];
+  const ni = rows.findIndex(r => r[0]==='🌾 Озимі: вузол кущіння');
+  WF.filter(f => f.w).forEach((f, k) => rows.splice(ni+1+k, 0, ['🌾 '+f.n+' · стан', o => { const x = wAt(f.w, o.d); return x ? el('span', {title:'загартованість LT50 '+nf(x[2], 0)+'°, мін. t на вузлі '+nf(x[3], 0)+'° · '+f.cls}, nf(x[1], 0)+' %') : '—'; },
+    o => { const x = wAt(f.w, o.d); return x ? WST(x[1]) : ''; }]));
   // волога зерна незібраних культур — одразу під оранкою, ті самі 7 днів (межа косіння = база елеватора + 2 %)
   const GC = grainCrops((P || {}).grain_outlook, ((P || {}).backlog || {}).harvest || []), gnotes = [];
   Object.entries(GC).forEach(([c, {o}]) => { const by = {}; (o.days || []).forEach(x => by[x.d] = x);
@@ -2961,14 +2971,14 @@ function planWeather(from, P){
   const upd = (FWX.data || {}).updated ? new Date(FWX.data.updated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
   return el('div', {class:'card'}, el('h3', {style:'margin-top:0'}, '🌦 Погода і ґрунт на 7 днів'), el('div', {style:'overflow-x:auto'}, tb),
     gnotes.length ? el('div', {class:'note', style:'margin-top:6px'}, '💧 '+gnotes.join(' · ')+'. Волога зерна — оцінка за погодою; межа косіння = база елеватора + 2 %.') : '',
-    el('div', {class:'note', style:'margin-top:4px'}, 'Оновлюється щодня ~06:00 і ~18:30'+(upd ? ' · останнє '+upd : '')+'. Середнє моделей ECMWF/ICON. Запас — продуктивна волога (понад в\'янення). Вузол кущіння — мін. t ґрунту 0–7 см (сніг уже врахований моделлю): жовтий ≤ −10°, помаранчевий ≤ −12° (загроза слабким посівам), червоний ≤ −16° (загроза навіть загартованим); для слабких і перерослих полів пороги на 2° вище. Відлига — ≥ 3 дні вище +5 °C у грудні–лютому (втрата загартування). Випрівання — сніг ≥ 30 см на непромерзлому ґрунті. Льодяна кірка — дощ по мерзлому ґрунту з морозом слідом; небезпечна, якщо тримається понад 10–15 днів.'),
+    el('div', {class:'note', style:'margin-top:4px'}, 'Оновлюється щодня ~06:00 і ~18:30'+(upd ? ' · останнє '+upd : '')+'. Середнє моделей ECMWF/ICON. Запас — продуктивна волога (понад в\'янення). Вузол кущіння — мін. t ґрунту 0–7 см (сніг уже врахований моделлю); колір — запас до загартованості (LT50) найвразливішого поля: жовтий ≤ 4°, помаранчевий ≤ 2°, червоний — мороз нижче LT50. Відлига — ≥ 3 дні вище +5 °C у грудні–лютому (втрата загартування). Випрівання — сніг ≥ 30 см на непромерзлому ґрунті. Льодяна кірка — дощ по мерзлому ґрунту з морозом слідом; небезпечна, якщо тримається понад 10–15 днів.'),
     winterNote(D));
 }
 function winterNote(D){
   const WF = winterFields(); if(!WF.length) return '';
   const dm = d => new Date(d+'T12:00:00').toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'});
-  const bad = WF.map(f => ({f, l:Math.max(0, ...D.map(o => nodeLevel(o.tsn, f.weak)))})).filter(x => x.l >= 2);
-  return el('div', {class:'note', style:'margin-top:4px'}, '🌾 Озимина: '+WF.map(f => f.n+' — сівба '+dm(f.sow)+', Σеф '+nf(f.g, 0)+'° ('+f.cls+(f.weak ? ', пороги +2°' : '')+')').join('; ')+'.',
+  const bad = WF.map(f => ({f, l:Math.max(0, ...D.map(o => { const x = f.w && wAt(f.w, o.d); return x && o.tsn!=null ? (o.tsn - x[2] <= 0 ? 3 : o.tsn - x[2] <= 2 ? 2 : 0) : nodeLevel(o.tsn, f.weak); }))})).filter(x => x.l >= 2);
+  return el('div', {class:'note', style:'margin-top:4px'}, '🌾 Озимина: '+WF.map(f => f.n+' — сівба '+dm(f.sow)+', '+f.cls+(f.w ? ', стан '+nf(f.w.now.s, 0)+' %, LT50 '+nf(f.w.now.lt, 0)+'°' : ', Σеф '+nf(f.g, 0)+'°')).join('; ')+'. Стан — модель перезимівлі (загартованість + втрати від морозу, кірки, випрівання, вимокання), деталі й моноліти — у картці поля.',
     bad.length ? el('b', {style:'color:var(--bad)'}, ' Під загрозою морозу за 7 днів: '+bad.map(x => x.f.n).join(', ')+' — оглянути після морозу (відрощування пагонів у теплі через 10–14 днів).') : '');
 }
 function grainCrops(GO, bl){      // культура → прогноз у точці погоди, де найбільше незібраного (точки в плані не показуємо)
@@ -3009,6 +3019,50 @@ function plowBlock(n){
   box.append(el('div', {}, P.summary || ''));
   if(P.cal) box.append(el('div', {style:'opacity:.7'}, 'Орний шар 0–28 см; % НВ — для ґрунтового класу моделі «'+P.cal.name+'» (НВ '+P.cal.fc+' м³/м³, '+P.cal.how+'). Стиглість ~50–85 % НВ. Модель ~9 км — перед виїздом перевірте ком ґрунту в долоні.'+(P.simplified ? ' Прогноз ґрунту недоступний — спрощений розрахунок.' : '')));
   return box;
+}
+// ======= ПЕРЕЗИМІВЛЯ: картка поля (модель tools/winter.py + моноліти ref/monoliths.json)
+function winterChart(ser, w=320, h=90){
+  if(ser.length < 2) return '';
+  const t0 = new Date(ser[0][0]).getTime(), t1 = new Date(ser[ser.length-1][0]).getTime();
+  const X = d => 4 + (new Date(d).getTime()-t0)/((t1-t0) || 1)*(w-8), Ys = v => h-4 - v/100*(h-8), Yt = v => h-4 - (Math.max(-25, Math.min(10, v)) + 25)/35*(h-8);
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'); svg.setAttribute('width', w); svg.setAttribute('height', h); svg.setAttribute('viewBox', '0 0 '+w+' '+h);
+  const pl = (pts, c, sw, dash) => { const e = document.createElementNS(ns, 'polyline'); e.setAttribute('points', pts.join(' ')); e.setAttribute('fill', 'none'); e.setAttribute('stroke', c); e.setAttribute('stroke-width', sw); if(dash) e.setAttribute('stroke-dasharray', dash); return e; };
+  const zero = pl([4+','+Yt(0), (w-4)+','+Yt(0)], 'rgba(127,127,127,.35)', 1, '2 3');
+  const past = ser.filter(o => !o[4]), fut = ser.filter(o => o[4]), j = fut.length && past.length ? [past[past.length-1], ...fut] : fut;
+  svg.append(zero, pl(ser.map(o => X(o[0])+','+Yt(o[3])), 'rgba(127,127,127,.55)', 1), pl(ser.map(o => X(o[0])+','+Yt(o[2])), '#3b6fb6', 1.4),
+    pl(past.map(o => X(o[0])+','+Ys(o[1])), '#2e7d4f', 2), j.length > 1 ? pl(j.map(o => X(o[0])+','+Ys(o[1])), '#2e7d4f', 2, '4 3') : '');
+  return svg;
+}
+function winterBlock(n, y){
+  const w = winterOf(n, y); if(!w) return null;
+  const dm = d => d ? d.slice(8,10)+'.'+d.slice(5,7)+'.'+d.slice(2,4) : '', N = w.now, L = w.loss || {};
+  const lost = [['мороз', L.frost], ['льодяна кірка', L.ice], ['випрівання', L.vypr], ['вимокання', L.wet]].filter(x => x[1] >= 0.5).map(x => x[0]+' '+nf(x[1], 0)+' %');
+  const box = el('div', {class:'card', style:'margin:8px 0;padding:10px'},
+    el('div', {style:'display:flex;gap:10px;align-items:baseline;flex-wrap:wrap'}, el('b', {}, '🌾 Перезимівля (урожай '+y+')'),
+      el('span', {style:'font-size:18px;padding:0 6px;border-radius:4px;'+WST(N.s)}, nf(N.s, 0)+' %'), el('span', {class:'note'}, 'на '+dm(N.d)+(w.done ? ' · перезимівля завершена' : ''))),
+    el('div', {class:'note', style:'margin-top:4px'}, 'Сівба '+dm(w.sow)+' · розвиток на 1 грудня: '+w.cls+' (межа загартування '+nf(w.cap, 0)+'°) · загартованість зараз LT50 '+nf(N.lt, 0)+'° · мін. t на вузлі кущіння '+nf(N.tn, 0)+'°'),
+    el('div', {class:'note'}, 'Втрати: '+(lost.length ? lost.join(', ') : 'немає')+(w.ahead ? ' · прогноз до '+dm(w.ahead.to)+': мінімум '+nf(w.ahead.s, 0)+' %, загартованість дійде до '+nf(w.ahead.lt, 0)+'°' : '')),
+    el('div', {style:'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:4px'}, winterChart(w.ser || []),
+      el('div', {class:'note', style:'line-height:1.5'}, el('div', {}, el('span', {style:'color:#2e7d4f'}, '━'), ' стан, % (пунктир — прогноз)'), el('div', {}, el('span', {style:'color:#3b6fb6'}, '━'), ' загартованість LT50, °C'), el('div', {}, el('span', {style:'color:#999'}, '━'), ' мін. t на вузлі кущіння'), el('div', {}, 'шкала t: −25…+10 °C'))));
+  if((w.events || []).length) box.append(el('div', {class:'note', style:'margin-top:4px'}, 'Події: '+w.events.slice(-6).map(e => dm(e.d)+' '+e.what).join(' · ')));
+  box.append(el('div', {class:'note', style:'margin-top:4px'}, '🧊 Моноліти: '+((w.obs || []).length ? w.obs.map(o => dm(o.d)+' — живих '+o.alive+' %').join(', ') : 'ще не відбирали')+'. Агроном у січні–лютому відбирає 2–3 моноліти з поля, відігріває, через 10–14 днів рахує живі рослини — модель прив\'язується до заміру.'));
+  if(ROLE==='o' || ROLE==='a') box.append(monolithForm(n, y));
+  box.append(el('div', {class:'note', style:'opacity:.7;margin-top:4px'}, 'Модель (спрощений FROSTOL): загартування при 0…+8 °C на вузлі, втрата загартування у відлигу; втрати — мороз нижче LT50, льодяна кірка понад 10 днів, сніг ≥ 20 см на талому ґрунті понад 30 днів, перезволоження понад 7 днів. Оцінка ризику (сітка 9–25 км), не замір.'));
+  return box;
+}
+function monolithForm(n, y){
+  const d = el('input', {type:'date', value:isoToday(), style:'width:140px'}), a = el('input', {type:'number', min:'0', max:'100', step:'1', placeholder:'% живих', style:'width:90px'}),
+    note = el('input', {type:'text', placeholder:'примітка (скільки монолітів, рослин)', style:'flex:1;min-width:160px'}), msg = el('span', {class:'note'});
+  const save = async () => {
+    const v = +a.value; if(!(v >= 0 && v <= 100) || a.value==='') { msg.textContent = 'Вкажіть % живих рослин 0–100'; return; }
+    msg.textContent = 'Зберігаю…';
+    try{ const doc = (await getJSON('ref/monoliths.json')) || {kind:'monoliths', items:[]};
+      doc.items = (doc.items || []).filter(o => !(o.field===n && o.d===d.value)); doc.items.push({field:n, d:d.value, alive:v, note:note.value.trim(), by:ROLE_NAMES[ROLE] || ROLE, at:new Date().toISOString()});
+      doc.items.sort((p, q) => (p.field+p.d).localeCompare(q.field+q.d));
+      await putJSON('ref/monoliths.json', doc, 'Моноліт: '+n+' '+d.value+' — '+v+' %'); msg.textContent = '✓ Збережено. Модель врахує при найближчому оновленні погоди (~06:00 / ~18:30).'; a.value = ''; note.value = ''; }
+    catch(e){ msg.textContent = 'Не збережено: '+e.message; }
+  };
+  return el('div', {style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px'}, el('span', {class:'note'}, 'Додати моноліт:'), d, a, note, el('button', {class:'btn small', onclick:save}, 'Зберегти'), msg);
 }
 function ndviRec(n){ const F = (NDVI.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
 function ndviSeason(n, y){ const r = ndviRec(n); return r ? (r.series || []).filter(o => o.d >= (y-1)+'-09-01' && o.d <= y+'-08-31') : []; }   // сезон «під урожай року»: вересень попереднього — серпень
