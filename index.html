@@ -1245,7 +1245,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '22.11c Звіт дня';
+const APP_VER = '22.11d Погода: два господарства';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2914,8 +2914,13 @@ const WST = s => s==null ? '' : s >= 90 ? 'color:var(--good);font-weight:600' : 
 function nodeLevel(t, weak){ if(t==null) return 0; const k = weak ? 2 : 0; return t <= -16+k ? 3 : t <= -12+k ? 2 : t <= -10+k ? 1 : 0; }
 const NODE_ST = ['', 'color:var(--warn);font-weight:600', 'color:#fff;background:#d9822b;font-weight:600', 'color:#fff;background:var(--bad);font-weight:600'];
 // агрометео на 7 днів від дня плану — усе в одній таблиці; середнє двох моделей (ECMWF/ICON) і точок погоди, статуси — найгірший
+// перемикач господарства для погоди (Долинське — точки Захід/Схід і поля; інші — з ref/farms.json → geo/weather.json farms)
+let WXF = (() => { try{ return localStorage.getItem('dl_wx_farm') || 'dolynske'; }catch(e){ return 'dolynske'; } })();
+function wxFarms(){ const F = (FWX.data || {}).farms || {}; return [['dolynske', 'Долинське'], ...Object.entries(F).map(([k, v]) => [k, v.name || k])]; }
 function planWeather(from, P){
-  const PTS = Object.values((FWX.data || {}).points || {}).filter(p => p.forecast || p.plow); if(!PTS.length) return null;
+  const FS = wxFarms(); if(!FS.some(f => f[0]===WXF)) WXF = 'dolynske';
+  const isD = WXF==='dolynske', srcPts = isD ? (FWX.data || {}).points : ((((FWX.data || {}).farms || {})[WXF] || {}).points);
+  const PTS = Object.values(srcPts || {}).filter(p => p.forecast || p.plow); if(!PTS.length) return null;
   const fd = (p, d) => ((p.forecast || {}).days || []).find(x => x.d===d) || {}, pd = (p, d) => ((p.plow || {}).days || []).find(x => x.d===d) || {};
   const gd = (p, d) => { const g = ((p.forecast || {}).gd || []).find(x => x.d===d); const v = g ? Object.values(g.m || {}) : []; return v.length ? {fog: d3.sum(v, x => x.fog || 0)/v.length} : {}; };
   const dates = [...new Set(PTS.flatMap(p => ((p.forecast || {}).days || []).map(x => x.d)))].filter(d => d >= from).sort().slice(0, 7); if(!dates.length) return null;
@@ -2927,7 +2932,7 @@ function planWeather(from, P){
     return o; });
   D.forEach((o, i) => { const prev = i ? D[i-1] : null;    // льодяна кірка: рідкий дощ по мерзлому ґрунту (або сьогодні мерзлий, або вчора був) і мороз слідом
     o.ice = o.p >= 1 && o.tx!=null && o.tx > 0.5 && ((o.ts!=null && o.ts <= 0) || (prev && prev.fdp > 0)) && o.tn!=null && o.tn < 0; });
-  const WF = winterFields();
+  const WF = isD ? winterFields() : [];
   D.forEach((o, i) => {
     const lv = f => { const x = f.w && wAt(f.w, o.d); if(!x || o.tsn==null) return nodeLevel(o.tsn, f.weak);   // модель: запас до LT50 поля
       const m = o.tsn - x[2]; return m <= 0 ? 3 : m <= 2 ? 2 : m <= 4 ? 1 : 0; };
@@ -2964,7 +2969,7 @@ function planWeather(from, P){
   WF.filter(f => f.w).forEach((f, k) => rows.splice(ni+1+k, 0, ['🌾 '+f.n+' · стан', o => { const x = wAt(f.w, o.d); return x ? el('span', {title:'загартованість LT50 '+nf(x[2], 0)+'°, мін. t на вузлі '+nf(x[3], 0)+'° · '+f.cls}, nf(x[1], 0)+' %') : '—'; },
     o => { const x = wAt(f.w, o.d); return x ? WST(x[1]) : ''; }]));
   // волога зерна незібраних культур — одразу під оранкою, ті самі 7 днів (межа косіння = база елеватора + 2 %)
-  const GC = grainCrops((P || {}).grain_outlook, ((P || {}).backlog || {}).harvest || []), gnotes = [];
+  const GC = isD ? grainCrops((P || {}).grain_outlook, ((P || {}).backlog || {}).harvest || []) : {}, gnotes = [];
   Object.entries(GC).forEach(([c, {o}]) => { const by = {}; (o.days || []).forEach(x => by[x.d] = x);
     rows.push(['💧 '+c+' (межа '+o.max+' %)', d => { const x = by[d.d]; return x ? el('span', {title:nf(x.m, 1)+' % (моделі '+nf(x.lo, 0)+'–'+nf(x.hi, 0)+')'+(x.p >= 1 ? ' · дощ '+nf(x.p, 0)+' мм' : '')+' · '+x.why}, nf(x.m, 0)+' %') : '—'; },
       d => by[d.d] ? 'color:#fff;background:'+(PST[by[d.d].st] || '#999') : '']);
@@ -2975,10 +2980,12 @@ function planWeather(from, P){
   const tb = el('table', {style:'border-collapse:collapse;font-size:12px;width:100%'}, rows.map(([lab, f, sf], ri) => el('tr', {style:ri ? 'border-top:1px solid var(--line)' : ''},
     el('td', {style:'padding:3px 6px 3px 0;white-space:nowrap;position:sticky;left:0;background:var(--card, var(--bg))'}, lab), D.map(o => cell(f(o), sf ? sf(o) : '')))));
   const upd = (FWX.data || {}).updated ? new Date(FWX.data.updated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
-  return el('div', {class:'card'}, el('h3', {style:'margin-top:0'}, '🌦 Погода і ґрунт на 7 днів'), el('div', {style:'overflow-x:auto'}, tb),
+  const sw = FS.length > 1 ? el('div', {class:'chips', role:'group', 'aria-label':'Господарство', style:'margin:-4px 0 8px'}, ...FS.map(([k, n]) =>
+    el('button', {class:'chip', 'aria-pressed':String(k===WXF), onclick:() => { WXF = k; try{ localStorage.setItem('dl_wx_farm', k); }catch(e){} renderPlan(); }}, n))) : '';
+  return el('div', {class:'card'}, el('h3', {style:'margin-top:0'}, '🌦 Погода і ґрунт на 7 днів'+(FS.length > 1 ? ' · '+(FS.find(f => f[0]===WXF) || [, ''])[1] : '')), sw, el('div', {style:'overflow-x:auto'}, tb),
     gnotes.length ? el('div', {class:'note', style:'margin-top:6px'}, '💧 '+gnotes.join(' · ')+'. Волога зерна — оцінка за погодою; межа косіння = база елеватора + 2 %.') : '',
     el('div', {class:'note', style:'margin-top:4px'}, 'Оновлюється щодня ~06:00 і ~18:30'+(upd ? ' · останнє '+upd : '')+'. Середнє моделей ECMWF/ICON. Запас — продуктивна волога (понад в\'янення). Вузол кущіння — мін. t ґрунту 0–7 см (сніг уже врахований моделлю); колір — запас до загартованості (LT50) найвразливішого поля: жовтий ≤ 4°, помаранчевий ≤ 2°, червоний — мороз нижче LT50. Відлига — ≥ 3 дні вище +5 °C у грудні–лютому (втрата загартування). Випрівання — сніг ≥ 30 см на непромерзлому ґрунті. Льодяна кірка — дощ по мерзлому ґрунту з морозом слідом; небезпечна, якщо тримається понад 10–15 днів.'),
-    winterNote(D));
+    isD ? winterNote(D) : el('div', {class:'note', style:'margin-top:4px'}, 'Поля цього господарства ще не внесені — показано погоду й ґрунт у точці '+PTS.map(p => nf(p.lat, 3)+', '+nf(p.lon, 3)).join('; ')+'. Стан озимини й волога зерна з\'являться, коли додамо поля.'));
 }
 function winterNote(D){
   const WF = winterFields(); if(!WF.length) return '';
