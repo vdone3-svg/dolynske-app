@@ -2834,8 +2834,12 @@ async function renderPlan(){
   $('#plan-src').textContent = 'склав розрахунок '+new Date(P.generated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+(P.approved_at ? ' · затвердив '+(P.approved_by || 'власник')+' '+new Date(P.approved_at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '');
   const out = [el('div', {style:'margin:6px 0 10px'}, el('span', {class:'pill', style:'color:'+st[1]+';background:color-mix(in srgb,'+st[1]+' 15%,transparent)'}, st[0]),
     !own && X.status!=='approved' ? el('span', {class:'note', style:'margin-left:8px'}, 'чекає затвердження власником — може змінитися') : '')];
-  const wx = planWeather(P.date); if(wx) out.push(wx);
-  if(P.ai && P.ai.text) out.push(el('div', {class:'card', style:'border-left:3px solid var(--accent)'}, el('h3', {}, '🤖 Коментар Claude'), el('p', {style:'margin:0;line-height:1.5'}, P.ai.text)));
+  const wx = planWeather(P.date, P); if(wx) out.push(wx);
+  if(P.ai && P.ai.text){ const at = P.ai.at || P.generated, atD = at ? at.slice(0, 10) : '', ft = t => new Date(t).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+    const stale = atD && atD < P.date;     // написано напередодні ввечері, ранкового оновлення ще не було
+    out.push(el('div', {class:'card', style:'border-left:3px solid var(--accent)'}, el('h3', {}, '🤖 Коментар Claude'),
+      at ? el('div', {class:'note', style:'margin:-4px 0 6px'+(stale && PLAN.day===isoToday() ? ';color:var(--warn)' : '')}, 'написано '+ft(at)+(stale ? ' — напередодні ввечері'+(PLAN.day===isoToday() ? '; ранкового оновлення ще не було' : '') : '')) : '',
+      el('p', {style:'margin:0;line-height:1.5'}, P.ai.text))); }
   // роботи
   const groups = [['harvest', '🌽 Збирання'], ['plow', '🚜 Оранка']];
   const people = [...new Set(Object.values(P.resources || {}).flatMap(r => Object.values(r).flatMap(t => t.workers || [])))].sort();
@@ -2868,7 +2872,6 @@ async function renderPlan(){
     out.push(card);
   });
   if(!out.some(x => x.dataset && x.dataset.work)) out.push(el('p', {class:'note'}, 'На цей день робіт у полі немає — погода не дозволяє.'));
-  if(P.grain_outlook && Object.keys(P.grain_outlook).length) out.push(el('div', {class:'card'}, grainOutlook(P.grain_outlook, (P.backlog || {}).harvest || [])));
   if(own){
     const acts = el('div', {class:'acts', style:'justify-content:flex-start;margin-top:10px'});
     if(X.status!=='approved'){
@@ -2887,7 +2890,7 @@ function grainLine(g){
     (g.lo!=null && Math.round(g.hi) > Math.round(g.lo) ? ' · моделі '+nf(g.lo, 0)+'–'+nf(g.hi, 0)+' %' : ''));
 }
 // агрометео на 7 днів від дня плану — усе в одній таблиці; середнє двох моделей (ECMWF/ICON) і точок погоди, статуси — найгірший
-function planWeather(from){
+function planWeather(from, P){
   const PTS = Object.values((FWX.data || {}).points || {}).filter(p => p.forecast || p.plow); if(!PTS.length) return null;
   const fd = (p, d) => ((p.forecast || {}).days || []).find(x => x.d===d) || {}, pd = (p, d) => ((p.plow || {}).days || []).find(x => x.d===d) || {};
   const gd = (p, d) => { const g = ((p.forecast || {}).gd || []).find(x => x.d===d); const v = g ? Object.values(g.m || {}) : []; return v.length ? {fog: d3.sum(v, x => x.fog || 0)/v.length} : {}; };
@@ -2918,26 +2921,27 @@ function planWeather(from){
     ['⚠ Льодяна кірка', o => o.ice ? 'ризик' : '—', o => o.ice ? 'color:var(--bad);font-weight:600' : ''],
     ['🚜 Оранка', o => o.st || '—', o => o.st ? 'color:#fff;background:'+C[o.st] : ''],
   ];
+  // волога зерна незібраних культур — одразу під оранкою, ті самі 7 днів (межа косіння = база елеватора + 2 %)
+  const GC = grainCrops((P || {}).grain_outlook, ((P || {}).backlog || {}).harvest || []), gnotes = [];
+  Object.entries(GC).forEach(([c, {o}]) => { const by = {}; (o.days || []).forEach(x => by[x.d] = x);
+    rows.push(['💧 '+c+' (межа '+o.max+' %)', d => { const x = by[d.d]; return x ? el('span', {title:nf(x.m, 1)+' % (моделі '+nf(x.lo, 0)+'–'+nf(x.hi, 0)+')'+(x.p >= 1 ? ' · дощ '+nf(x.p, 0)+' мм' : '')+' · '+x.why}, nf(x.m, 0)+' %') : '—'; },
+      d => by[d.d] ? 'color:#fff;background:'+(PST[by[d.d].st] || '#999') : '']);
+    const inT = (o.days || []).filter(x => dates.includes(x.d)), ok = inT.filter(x => x.st==='так'), lim = inT.filter(x => x.st==='обмежено');
+    gnotes.push(c+': '+(ok.length ? 'можна косити '+ok.map(x => day(x.d).toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'})).join(', ')
+      : lim.length ? 'на межі '+lim.map(x => day(x.d).toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'})).join(', ')+' — перевірити першим бункером'
+      : 'за 7 днів вологість не опускається до '+o.max+' % — чекає в полі')); });
   const tb = el('table', {style:'border-collapse:collapse;font-size:12px;width:100%'}, rows.map(([lab, f, sf], ri) => el('tr', {style:ri ? 'border-top:1px solid var(--line)' : ''},
     el('td', {style:'padding:3px 6px 3px 0;white-space:nowrap;position:sticky;left:0;background:var(--card, var(--bg))'}, lab), D.map(o => cell(f(o), sf ? sf(o) : '')))));
   const upd = (FWX.data || {}).updated ? new Date(FWX.data.updated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
   return el('div', {class:'card'}, el('h3', {style:'margin-top:0'}, '🌦 Погода і ґрунт на 7 днів'), el('div', {style:'overflow-x:auto'}, tb),
+    gnotes.length ? el('div', {class:'note', style:'margin-top:6px'}, '💧 '+gnotes.join(' · ')+'. Волога зерна — оцінка за погодою; межа косіння = база елеватора + 2 %.') : '',
     el('div', {class:'note', style:'margin-top:4px'}, 'Оновлюється щодня ~06:00 і ~18:30'+(upd ? ' · останнє '+upd : '')+'. Середнє моделей ECMWF/ICON. Запас — продуктивна волога (понад в\'янення). Вузол кущіння — мін. t ґрунту 0–7 см; для озимої пшениці критично ≈ −16…−18 °C. Льодяна кірка — дощ по мерзлому ґрунту з морозом слідом.'));
 }
-function grainOutlook(GO, bl){
-  const dm = d => new Date(d+'T12:00:00').toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'});
-  const box = el('div', {}, el('h3', {style:'margin-top:0'}, '💧 Волога зерна на 14 днів'));
-  const crops = {};      // культура → точка погоди, де найбільше незібраного (точки в плані не показуємо)
-  Object.entries(GO).forEach(([pt, cr]) => Object.entries(cr).forEach(([c, o]) => { const ha = d3.sum(bl.filter(b => b.point===pt && b.crop===c), b => b.left);
+function grainCrops(GO, bl){      // культура → прогноз у точці погоди, де найбільше незібраного (точки в плані не показуємо)
+  const crops = {};
+  Object.entries(GO || {}).forEach(([pt, cr]) => Object.entries(cr).forEach(([c, o]) => { const ha = d3.sum(bl.filter(b => b.point===pt && b.crop===c), b => b.left);
     if(!crops[c] || ha > crops[c].ha) crops[c] = {o, ha}; }));
-  Object.entries(crops).forEach(([c, {o}]) => {
-    const w = o.window;
-    box.append(el('div', {class:'note', style:'margin-top:4px'}, c+' · межа '+o.max+' % · '+(w ? 'можна косити: '+dm(w.from)+(w.days > 1 ? '–'+dm(w.to) : '')+(w.sure ? '' : ' (на межі)') : 'вікна ≤ '+o.max+' % у прогнозі немає — чекає в полі')),
-      el('div', {style:'display:flex;gap:3px;flex-wrap:wrap;margin-top:3px'}, o.days.map(x => el('span', {title:dm(x.d)+': '+nf(x.m, 1)+' % (моделі '+nf(x.lo, 0)+'–'+nf(x.hi, 0)+')'+(x.p >= 1 ? ' · дощ '+nf(x.p, 0)+' мм' : '')+' · '+x.why,
-        style:'min-width:44px;text-align:center;border-radius:4px;padding:2px 3px;font-size:12px;color:#fff;background:'+(PST[x.st] || '#999')}, dm(x.d).slice(0, 5), el('br'), nf(x.m, 0)+'%'+(x.p >= 3 ? ' 🌧' : '')))));
-  });
-  box.append(el('div', {class:'note'}, 'Оцінка за погодою. Зелене — можна косити; жовте — на межі, перевірити першим бункером; червоне — чекає в полі або дощ.'));
-  return box;
+  return crops;
 }
 function planEdit(P, fn){ if(!PLAN.edit || PLAN.edit.date!==P.date) PLAN.edit = JSON.parse(JSON.stringify(P)); fn(PLAN.edit); renderPlan(); }
 async function savePlan(doc, status){
