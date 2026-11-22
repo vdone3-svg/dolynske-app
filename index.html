@@ -1245,7 +1245,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '22.11e Топило: волога кукурудзи';
+const APP_VER = '22.11f Погода завжди з сьогодні';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2841,7 +2841,7 @@ async function renderPlan(){
   $('#plan-src').textContent = 'склав розрахунок '+new Date(P.generated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+(P.approved_at ? ' · затвердив '+(P.approved_by || 'власник')+' '+new Date(P.approved_at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '');
   const out = [el('div', {style:'margin:6px 0 10px'}, el('span', {class:'pill', style:'color:'+st[1]+';background:color-mix(in srgb,'+st[1]+' 15%,transparent)'}, st[0]),
     !own && X.status!=='approved' ? el('span', {class:'note', style:'margin-left:8px'}, 'чекає затвердження власником — може змінитися') : '')];
-  const wx = planWeather(P.date, P); if(wx) out.push(wx);
+  const wx = planWeather(isoToday(), P); if(wx) out.push(wx);   // погода — завжди з сьогодні, незалежно від дня плану
   if(P.ai && P.ai.text){ const at = P.ai.at || P.generated, atD = at ? at.slice(0, 10) : '', ft = t => new Date(t).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
     const stale = atD && atD < P.date;     // написано напередодні ввечері, ранкового оновлення ще не було
     out.push(el('div', {class:'card', style:'border-left:3px solid var(--accent)'}, el('h3', {}, '🤖 Коментар Claude'),
@@ -2969,7 +2969,7 @@ function planWeather(from, P){
   WF.filter(f => f.w).forEach((f, k) => rows.splice(ni+1+k, 0, ['🌾 '+f.n+' · стан', o => { const x = wAt(f.w, o.d); return x ? el('span', {title:'загартованість LT50 '+nf(x[2], 0)+'°, мін. t на вузлі '+nf(x[3], 0)+'° · '+f.cls}, nf(x[1], 0)+' %') : '—'; },
     o => { const x = wAt(f.w, o.d); return x ? WST(x[1]) : ''; }]));
   // волога зерна незібраних культур — одразу під оранкою, ті самі 7 днів (межа косіння = база елеватора + 2 %)
-  const GC = isD ? grainCrops((P || {}).grain_outlook, ((P || {}).backlog || {}).harvest || []) : Object.fromEntries(Object.entries(((((FWX.data || {}).farms || {})[WXF] || {}).grain) || {}).map(([c, o]) => [c, {o}])), gnotes = [];
+  const GC = isD ? grainCrops((FWX.data || {}).grain || (P || {}).grain_outlook, ((P || {}).backlog || {}).harvest || []) : Object.fromEntries(Object.entries(((((FWX.data || {}).farms || {})[WXF] || {}).grain) || {}).map(([c, o]) => [c, {o}])), gnotes = [];
   Object.entries(GC).forEach(([c, {o}]) => { const by = {}; (o.days || []).forEach(x => by[x.d] = x);
     rows.push(['💧 '+c+' (межа '+o.max+' %)', d => { const x = by[d.d]; return x ? el('span', {title:nf(x.m, 1)+' % (моделі '+nf(x.lo, 0)+'–'+nf(x.hi, 0)+')'+(x.p >= 1 ? ' · дощ '+nf(x.p, 0)+' мм' : '')+' · '+x.why}, nf(x.m, 0)+' %') : '—'; },
       d => by[d.d] ? 'color:#fff;background:'+(PST[by[d.d].st] || '#999') : '']);
