@@ -1246,7 +1246,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '22.11g NDRE і NDMI';
+const APP_VER = '22.11h Супутник: зведення по полях';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2786,11 +2786,28 @@ let NDIDX = (() => { try{ const v = localStorage.getItem('dl_ndvi_idx'); return 
 async function ensureNdvi(){ if(NDVI.data===undefined){ try{ [NDVI.data, NDVI.ai] = await Promise.all([getJSON('geo/ndvi.json'), getJSON('geo/ndvi_ai.json').catch(() => null)]); }catch(e){ NDVI.data = null; } } return NDVI.data; }
 const NDVI_ST = {'проблема':['#c0392b','🔴'], 'увага':['#d68910','🟠'], 'норма':['#1e8449','🟢'], 'немає даних':['#7f8c8d','⚪']};
 function ndviAiOf(n){ const F = (NDVI.ai || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
+// Колір значення індексу за його шкалою (та сама, що на карті)
+function ndxColor(k, v){ const X = NDX[k]; if(v==null) return '#eee'; const t = Math.max(0, Math.min(1, (v - X.lo)/(X.hi - X.lo)));
+  const R = X.ramp; let i = 1; while(i < R.length-1 && t > R[i][0]) i++; const [a, ca] = R[i-1], [b, cb] = R[i], u = (t - a)/((b - a) || 1);
+  const h = c => [1,3,5].map(j => parseInt(c.slice(j, j+2), 16)), A = h(ca), B = h(cb); return 'rgb('+A.map((x, j) => Math.round(x + (B[j]-x)*u)).join(',')+')'; }
+const NDX_ICON = {ndvi:'🌿 NDVI — маса', ndre:'🧪 NDRE — азот', ndmi:'💧 NDMI — волога'};
+function ndviLast(n){ const r = ndviRec(n), ser = (r && r.series) || []; const o = ser[ser.length-1]; if(!o) return null;
+  const back = ser.filter(x => { const d = (new Date(o.d) - new Date(x.d))/864e5; return d >= 12 && d <= 30; }).pop();
+  const v = (x, k) => x && (k==='ndvi' ? x.mean : (x[NDX[k].key] || [])[0]);
+  return {d:o.d, v:k => v(o, k), dv:k => (back && v(back, k)!=null && v(o, k)!=null) ? v(o, k) - v(back, k) : null, spread:o.p90 - o.p10}; }
+function ndxCell(k, L){ const v = L && L.v(k); if(v==null) return el('td', {style:'text-align:center;color:#999'}, '—');
+  const dv = L.dv(k), ar = dv==null ? '' : (dv > .03 ? ' ↑' : dv < -.03 ? ' ↓' : ' →');
+  const bg = ndxColor(k, v), dark = k==='ndmi' ? (v > .25 || v < -.2) : (v < .15 || v > (k==='ndre' ? .45 : .7));
+  return el('td', {style:'text-align:center;background:'+bg+';color:'+(dark ? '#fff' : '#222')+';font-variant-numeric:tabular-nums', title:dv==null ? '' : 'зміна за 2–4 тижні: '+(dv > 0 ? '+' : '')+dv.toFixed(2)}, v.toFixed(2).replace('.', ',')+ar); }
+function ndviIdxLines(a, n){ const L = ndviLast(n);
+  return ['ndvi', 'ndre', 'ndmi'].map(k => { const t = a && a[k]; const v = L && L.v(k);
+    return el('div', {class:'note', style:'margin-top:2px'}, el('b', {}, NDX_ICON[k]+(v!=null ? ' '+v.toFixed(2).replace('.', ',') : '')+': '), t || (v==null ? 'даних ще немає' : 'опис з\'явиться після найближчого висновку Claude')); }); }
 function ndviAiBlock(n, full=true){
   const a = ndviAiOf(n); if(!a) return null; const [c, ic] = NDVI_ST[a.status] || NDVI_ST['немає даних'];
   return el('div', {style:'border-left:3px solid '+c+';padding:4px 8px;margin:6px 0;background:rgba(0,0,0,.02)'},
     el('div', {}, el('b', {style:'color:'+c}, ic+' '+a.status), ' · ', el('b', {}, a.headline || '')),
-    full ? el('div', {class:'note', style:'margin-top:2px'}, a.text || '') : '',
+    full ? ndviIdxLines(a, n) : '',
+    full ? el('div', {class:'note', style:'margin-top:4px'}, el('b', {}, 'Висновок: '), a.text || '') : '',
     full && a.action ? el('div', {class:'note', style:'margin-top:2px'}, '👉 '+a.action) : '');
 }
 function renderNdviAi(){
@@ -2800,14 +2817,27 @@ function renderNdviAi(){
   const list = Object.entries(ai.fields || {}).sort((a, b) => (ord[a[1].status] ?? 9) - (ord[b[1].status] ?? 9) || a[0].localeCompare(b[0], 'uk'));
   const go = n => { const l = MAPV.fl && MAPV.fl.getLayers().find(x => fieldsOf(x.feature).includes(n)); if(l){ MAPV.map.fitBounds(l.getBounds(), {padding:[30, 30], maxZoom:16}); l.openPopup(); $('#map').scrollIntoView({behavior:'smooth', block:'center'}); } };
   const at = (ai.at || '').slice(0, 10).split('-').reverse().join('.'), bo = (ai.based_on || '').split('-').reverse().join('.');
+  const bi = ai.by_index || {};
+  const th = t => el('th', {style:'padding:4px 6px;text-align:left;font-size:12px;border-bottom:1px solid var(--line)'}, t);
+  const table = el('div', {style:'overflow-x:auto;margin:8px 0'}, el('table', {style:'border-collapse:collapse;width:100%;font-size:13px'},
+    el('thead', {}, el('tr', {}, th('Поле'), th('Знімок'), th('NDVI маса'), th('NDRE азот'), th('NDMI волога'), th('Стан'))),
+    el('tbody', {}, ...list.map(([n, a]) => { const L = ndviLast(n), [c, ic] = NDVI_ST[a.status] || NDVI_ST['немає даних'];
+      return el('tr', {style:'cursor:pointer;border-bottom:1px solid var(--line)', onclick:() => { const d = document.getElementById('ndai-'+n); if(d){ d.open = true; d.scrollIntoView({behavior:'smooth', block:'center'}); } }},
+        el('td', {style:'padding:4px 6px'}, el('b', {}, n)), el('td', {style:'padding:4px 6px'}, L ? L.d.slice(8,10)+'.'+L.d.slice(5,7) : '—'),
+        ndxCell('ndvi', L), ndxCell('ndre', L), ndxCell('ndmi', L),
+        el('td', {style:'padding:4px 6px;color:'+c}, ic+' '+a.status)); }))));
   box.replaceChildren(el('div', {class:'card', style:'margin-top:10px'},
-    el('h3', {style:'margin:0 0 4px'}, 'Висновок Claude по NDVI'),
-    el('div', {class:'note'}, 'Оновлено '+at+' · знімки до '+bo+' · пишеться автоматично після кожного оновлення знімків'),
+    el('h3', {style:'margin:0 0 4px'}, 'Супутник: висновок Claude по полях (NDVI · NDRE · NDMI)'),
+    el('div', {class:'note'}, 'Оновлено '+at+' · знімки до '+bo+' · пишеться автоматично після кожного оновлення знімків. Перемикач над картою змінює лише кольори карти — опис нижче завжди по всіх трьох показниках.'),
     el('p', {style:'margin:8px 0'}, ai.overall || ''),
+    (bi.ndvi || bi.ndre || bi.ndmi) ? el('div', {style:'margin:6px 0'}, ...['ndvi', 'ndre', 'ndmi'].filter(k => bi[k]).map(k => el('div', {class:'note', style:'margin:2px 0'}, el('b', {}, NDX_ICON[k]+': '), bi[k]))) : '',
+    table,
+    el('div', {class:'note'}, 'Значення — середнє по полю на останній чистий знімок; стрілка — зміна за 2–4 тижні (наведіть, щоб побачити число); клік по рядку — опис поля нижче.'),
     ...list.map(([n, a]) => { const [c, ic] = NDVI_ST[a.status] || NDVI_ST['немає даних'];
-      return el('details', {style:'border-left:3px solid '+c+';padding:4px 8px;margin:4px 0'},
+      return el('details', {id:'ndai-'+n, style:'border-left:3px solid '+c+';padding:4px 8px;margin:4px 0'},
         el('summary', {style:'cursor:pointer'}, el('b', {}, ic+' '+n), ' — '+(a.headline || '')),
-        el('div', {class:'note', style:'margin:4px 0'}, a.text || ''), a.action ? el('div', {class:'note'}, '👉 '+a.action) : '',
+        ...ndviIdxLines(a, n),
+        el('div', {class:'note', style:'margin:4px 0'}, el('b', {}, 'Висновок: '), a.text || ''), a.action ? el('div', {class:'note'}, '👉 '+a.action) : '',
         el('button', {class:'btn small', style:'margin-top:4px', onclick:() => go(n)}, 'Показати на карті')); })));
 }
 async function ghBlobUrl(path){ if(NDVI.urls[path]) return NDVI.urls[path];
