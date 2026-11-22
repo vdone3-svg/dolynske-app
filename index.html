@@ -1238,7 +1238,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '21.11i План робіт';
+const APP_VER = '22.11a Озимина: ризики кольором';
 const TABS = [['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2889,6 +2889,19 @@ function grainLine(g){
     '💧 Зерно: '+(g.m!=null ? '~'+nf(g.m, 1)+' %' : 'невідомо')+' · '+(g.how || '')+(g.max!=null ? ' · межа '+g.max+' %, база '+g.base+' %' : '')+(g.m > g.max ? ' · чекає в полі (на елеватор не сушимо)' : '')+
     (g.lo!=null && Math.round(g.hi) > Math.round(g.lo) ? ' · моделі '+nf(g.lo, 0)+'–'+nf(g.hi, 0)+' %' : ''));
 }
+// озимина поточного сезону: розвиток до зими за Σ ефективних t (>5 °C) від сівби → чутливість до морозу
+// < 250° — слабкі (до 3 листків, без кущіння); 250–550° — норма (1–4 пагони); > 550° — перерослі. Слабкі й перерослі гинуть раніше → пороги на 2° вище.
+const WINTER_RX = /пшениц|ячмін|жито|тритикал|ріпак/i;
+function winterFields(){
+  const F = (FWX.data || {}).fields || {}, now = new Date(), sy = String(now.getMonth() >= 7 ? now.getFullYear()+1 : now.getFullYear());
+  return Object.entries(F).map(([n, f]) => { const s = (f || {})[sy];
+    if(!s || !s.sow || !WINTER_RX.test(s.crop || '') || +s.sow.slice(5, 7) < 8) return null;
+    const g = s.gdd_eff || 0, cls = g < 250 ? 'слабкі' : g > 550 ? 'перерослі' : 'норма';
+    return {n, crop:s.crop, sow:s.sow, g, cls, weak:cls!=='норма'}; }).filter(Boolean);
+}
+// рівень загрози морозу на вузлі кущіння: 0 безпечно, 1 увага, 2 загроза слабким, 3 загроза навіть загартованим
+function nodeLevel(t, weak){ if(t==null) return 0; const k = weak ? 2 : 0; return t <= -16+k ? 3 : t <= -12+k ? 2 : t <= -10+k ? 1 : 0; }
+const NODE_ST = ['', 'color:var(--warn);font-weight:600', 'color:#fff;background:#d9822b;font-weight:600', 'color:#fff;background:var(--bad);font-weight:600'];
 // агрометео на 7 днів від дня плану — усе в одній таблиці; середнє двох моделей (ECMWF/ICON) і точок погоди, статуси — найгірший
 function planWeather(from, P){
   const PTS = Object.values((FWX.data || {}).points || {}).filter(p => p.forecast || p.plow); if(!PTS.length) return null;
@@ -2903,6 +2916,16 @@ function planWeather(from, P){
     return o; });
   D.forEach((o, i) => { const prev = i ? D[i-1] : null;    // льодяна кірка: рідкий дощ по мерзлому ґрунту (або сьогодні мерзлий, або вчора був) і мороз слідом
     o.ice = o.p >= 1 && o.tx!=null && o.tx > 0.5 && ((o.ts!=null && o.ts <= 0) || (prev && prev.fdp > 0)) && o.tn!=null && o.tn < 0; });
+  const WF = winterFields();
+  D.forEach((o, i) => {
+    o.nl = WF.length ? Math.max(...WF.map(f => nodeLevel(o.tsn, f.weak))) : nodeLevel(o.tsn, false);
+    o.nf = WF.filter(f => nodeLevel(o.tsn, f.weak) >= 1).map(f => f.n);
+    const m = +o.d.slice(5, 7), win = m===12 || m <= 2, warm = x => x && x.tx!=null && x.tx > 5;
+    let run = 0; for(let j = i; j >= 0 && warm(D[j]); j--) run++; for(let j = i+1; j < D.length && warm(D[j]); j++) run++;
+    o.risk = [];
+    if(WF.length && win && run >= 3) o.risk.push('відлига');        // ≥3 дні > +5 °C у грудні–лютому — втрата загартування
+    if(WF.length && o.sn >= 30 && !(o.fdp >= 1)) o.risk.push('випрівання');   // глибокий сніг на непромерзлому ґрунті
+  });
   const day = d => new Date(d+'T12:00:00'), C = {'так':'#2e7d4f', 'обмежено':'#d4a017', 'ні':'#b3372e'};
   const cell = (txt, st) => el('td', {style:'text-align:center;padding:3px 4px;white-space:nowrap'+(st ? ';'+st : '')}, txt);
   const ic = o => o.p >= 0.5 ? (o.tx!=null && o.tx <= 0.5 ? '🌨' : o.p >= 3 ? '🌧' : '🌦') : o.cl==null ? '·' : o.cl > 70 ? '☁' : o.cl > 30 ? '⛅' : '☀';
@@ -2916,8 +2939,11 @@ function planWeather(from, P){
     ['❄ Сніг', o => o.sn >= 1 ? nf(o.sn, 0)+' см' : '—'],
     ['🧊 Промерзання', o => o.fdp >= 1 ? nf(o.fdp, 0)+' см' : (o.tsn!=null && o.tsn < 0 ? 'кірка' : '—')],
     ['🌱 Волога 0–28 см', o => o.r!=null ? nf(o.r, 0)+' % НВ' : '—', o => o.r > 95 ? 'color:var(--bad)' : o.r > 85 ? 'color:var(--warn)' : ''],
-    ['💧 Запас вологи 0–28 / 0–100 см', o => o.w28!=null ? nf(o.w28, 0)+(o.w100!=null ? ' / '+nf(o.w100, 0) : '')+' мм' : '—'],
-    ['🌾 Озимі: вузол кущіння', o => node(o.tsn), o => o.tsn!=null && o.tsn <= -16 ? 'color:#fff;background:var(--bad)' : o.tsn!=null && o.tsn <= -12 ? 'color:var(--warn);font-weight:600' : ''],
+    ['💧 Запас вологи 0–28 / 0–100 см', o => o.w28!=null ? el('span', {title:'0–28 см: >50 мм добре, 30–50 задовільно, <30 погано · 0–100 см: >150 добре, 100–150 задовільно, <100 погано'},
+        el('span', {style:o.w28 < 30 ? 'color:var(--bad);font-weight:600' : o.w28 < 50 ? 'color:var(--warn)' : ''}, nf(o.w28, 0)),
+        o.w100!=null ? ' / ' : '', o.w100!=null ? el('span', {style:o.w100 < 100 ? 'color:var(--bad);font-weight:600' : o.w100 < 150 ? 'color:var(--warn)' : ''}, nf(o.w100, 0)) : '', ' мм') : '—'],
+    ['🌾 Озимі: вузол кущіння', o => o.tsn==null ? '—' : el('span', {title:o.nf.length ? 'Під загрозою: '+o.nf.join(', ') : 'безпечно'}, node(o.tsn)), o => NODE_ST[o.nl || 0]],
+    ['🌾 Озимі: відлига / сніг', o => o.risk.length ? o.risk.join(', ') : '—', o => o.risk.length ? 'color:#fff;background:var(--bad);font-weight:600' : ''],
     ['⚠ Льодяна кірка', o => o.ice ? 'ризик' : '—', o => o.ice ? 'color:var(--bad);font-weight:600' : ''],
     ['🚜 Оранка', o => o.st || '—', o => o.st ? 'color:#fff;background:'+C[o.st] : ''],
   ];
@@ -2935,7 +2961,15 @@ function planWeather(from, P){
   const upd = (FWX.data || {}).updated ? new Date(FWX.data.updated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
   return el('div', {class:'card'}, el('h3', {style:'margin-top:0'}, '🌦 Погода і ґрунт на 7 днів'), el('div', {style:'overflow-x:auto'}, tb),
     gnotes.length ? el('div', {class:'note', style:'margin-top:6px'}, '💧 '+gnotes.join(' · ')+'. Волога зерна — оцінка за погодою; межа косіння = база елеватора + 2 %.') : '',
-    el('div', {class:'note', style:'margin-top:4px'}, 'Оновлюється щодня ~06:00 і ~18:30'+(upd ? ' · останнє '+upd : '')+'. Середнє моделей ECMWF/ICON. Запас — продуктивна волога (понад в\'янення). Вузол кущіння — мін. t ґрунту 0–7 см; для озимої пшениці критично ≈ −16…−18 °C. Льодяна кірка — дощ по мерзлому ґрунту з морозом слідом.'));
+    el('div', {class:'note', style:'margin-top:4px'}, 'Оновлюється щодня ~06:00 і ~18:30'+(upd ? ' · останнє '+upd : '')+'. Середнє моделей ECMWF/ICON. Запас — продуктивна волога (понад в\'янення). Вузол кущіння — мін. t ґрунту 0–7 см (сніг уже врахований моделлю): жовтий ≤ −10°, помаранчевий ≤ −12° (загроза слабким посівам), червоний ≤ −16° (загроза навіть загартованим); для слабких і перерослих полів пороги на 2° вище. Відлига — ≥ 3 дні вище +5 °C у грудні–лютому (втрата загартування). Випрівання — сніг ≥ 30 см на непромерзлому ґрунті. Льодяна кірка — дощ по мерзлому ґрунту з морозом слідом; небезпечна, якщо тримається понад 10–15 днів.'),
+    winterNote(D));
+}
+function winterNote(D){
+  const WF = winterFields(); if(!WF.length) return '';
+  const dm = d => new Date(d+'T12:00:00').toLocaleDateString('uk-UA', {day:'2-digit', month:'2-digit'});
+  const bad = WF.map(f => ({f, l:Math.max(0, ...D.map(o => nodeLevel(o.tsn, f.weak)))})).filter(x => x.l >= 2);
+  return el('div', {class:'note', style:'margin-top:4px'}, '🌾 Озимина: '+WF.map(f => f.n+' — сівба '+dm(f.sow)+', Σеф '+nf(f.g, 0)+'° ('+f.cls+(f.weak ? ', пороги +2°' : '')+')').join('; ')+'.',
+    bad.length ? el('b', {style:'color:var(--bad)'}, ' Під загрозою морозу за 7 днів: '+bad.map(x => x.f.n).join(', ')+' — оглянути після морозу (відрощування пагонів у теплі через 10–14 днів).') : '');
 }
 function grainCrops(GO, bl){      // культура → прогноз у точці погоди, де найбільше незібраного (точки в плані не показуємо)
   const crops = {};
