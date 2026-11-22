@@ -373,6 +373,12 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   </main>
 
   <!-- АГРОЗВІТ: один дашборд власника + звірка з агрозвітом бухгалтера -->
+  <main class="pane" id="pane-report">
+    <section class="card">
+      <div class="toolbar"><h2 style="margin:0">Звіт дня</h2><div class="chips" id="rep-days" role="group" aria-label="День звіту"></div></div>
+      <div id="rep-body"></div>
+    </section>
+  </main>
   <main class="pane" id="pane-plan">
     <section class="card">
       <div class="toolbar"><h2 style="margin:0">План робіт</h2><div class="chips" id="plan-days" role="group" aria-label="День плану"></div><span class="note" id="plan-src"></span></div>
@@ -1239,18 +1245,18 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '22.11b Перезимівля озимини, %';
-const TABS = [['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
+const APP_VER = '22.11c Звіт дня';
+const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
 
 // ---------- вкладки
 function renderTabs(){
   const nav = $('#tabs'); nav.replaceChildren();
-  TABS.filter(([id]) => (id!=='settings' && id!=='agro' && id!=='batt') || ROLE==='o').forEach(([id, t]) => nav.append(el('a', {href:'#'+id, 'aria-current': id===TAB ? 'page' : 'false'}, t)));
+  TABS.filter(([id]) => (id!=='settings' && id!=='agro' && id!=='batt' && id!=='report') || ROLE==='o').forEach(([id, t]) => nav.append(el('a', {href:'#'+id, 'aria-current': id===TAB ? 'page' : 'false'}, t)));
 }
 function showTab(id){
-  if(!TABS.some(t => t[0]===id) || ((id==='settings' || id==='agro' || id==='batt') && ROLE!=='o')) id = 'day';
+  if(!TABS.some(t => t[0]===id) || ((id==='settings' || id==='agro' || id==='batt' || id==='report') && ROLE!=='o')) id = 'day';
   TAB = id; document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id==='pane-'+id));
   renderTabs(); renderAll();
 }
@@ -1258,7 +1264,7 @@ window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
-    fields:() => { renderFields(); renderFieldCard(); }, plan:renderPlan, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
+    fields:() => { renderFields(); renderFieldCard(); }, plan:renderPlan, report:renderReport, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
     fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:renderJournal, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
@@ -3019,6 +3025,33 @@ function plowBlock(n){
   box.append(el('div', {}, P.summary || ''));
   if(P.cal) box.append(el('div', {style:'opacity:.7'}, 'Орний шар 0–28 см; % НВ — для ґрунтового класу моделі «'+P.cal.name+'» (НВ '+P.cal.fc+' м³/м³, '+P.cal.how+'). Стиглість ~50–85 % НВ. Модель ~9 км — перед виїздом перевірте ком ґрунту в долоні.'+(P.simplified ? ' Прогноз ґрунту недоступний — спрощений розрахунок.' : '')));
   return box;
+}
+// ======= ЗВІТ ДНЯ (ai/daily/РРРР-ММ-ДД.json — tools/daily.py щоранку в workflow «Погода полів…»), лише власник
+const REP = {list:null, day:null, docs:{}};
+function mdLite(t){            // простий Markdown звіту: ## заголовки, «- » пункти, **жирний**
+  const out = [], inl = s => { const sp = el('span'); s.split(/(\*\*[^*]+\*\*)/).forEach(x => sp.append(x.startsWith('**') && x.endsWith('**') ? el('b', {}, x.slice(2, -2)) : x)); return sp; };
+  let ul = null;
+  String(t || '').split('\n').forEach(line => { const l = line.trimEnd();
+    if(/^#{1,4}\s/.test(l)){ ul = null; out.push(el('h3', {style:'margin:14px 0 4px'}, inl(l.replace(/^#+\s*/, '')))); }
+    else if(/^\s*[-•*]\s+/.test(l)){ if(!ul){ ul = el('ul', {style:'margin:2px 0 6px 18px;padding:0;line-height:1.5'}); out.push(ul); } ul.append(el('li', {style:/^\s{2,}/.test(l) ? 'margin-left:16px' : ''}, inl(l.replace(/^\s*[-•*]\s+/, '')))); }
+    else if(l.trim()){ ul = null; out.push(el('p', {style:'margin:4px 0;line-height:1.5'}, inl(l))); }
+    else ul = null; });
+  return out;
+}
+async function renderReport(){
+  const body = $('#rep-body'); body.replaceChildren(el('p', {class:'note'}, 'Завантажую звіт…'));
+  if(!REP.list){ try{ REP.list = (await listDir('ai/daily')).map(f => f.name.replace('.json', '')).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort().reverse(); }catch(e){ REP.list = []; } }
+  if(!REP.list.length){ $('#rep-days').replaceChildren(); body.replaceChildren(el('p', {class:'note'}, 'Звітів ще немає. Перший з\'явиться вранці (~06:00–07:00) після оновлення погоди, або запустіть вручну: GitHub → dolynske-data → Actions → «Погода полів…» → Run workflow.')); return; }
+  if(!REP.day || !REP.list.includes(REP.day)) REP.day = REP.list[0];
+  const dl = d => new Date(d+'T12:00:00').toLocaleDateString('uk-UA', {weekday:'short', day:'2-digit', month:'2-digit'});
+  $('#rep-days').replaceChildren(...REP.list.slice(0, 10).map(d => el('button', {class:'chip', 'aria-pressed':String(REP.day===d), onclick:() => { REP.day = d; renderReport(); }}, dl(d))));
+  if(!(REP.day in REP.docs)){ try{ REP.docs[REP.day] = await getJSON('ai/daily/'+REP.day+'.json'); }catch(e){ REP.docs[REP.day] = null; } }
+  const R = REP.docs[REP.day]; if(!R){ body.replaceChildren(el('p', {class:'note'}, 'Не вдалося завантажити звіт.')); return; }
+  const m = R.meta || {};
+  body.replaceChildren(el('div', {class:'note'}, 'Склав Claude '+new Date(R.at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+
+      ' · день '+(m.closed ? 'закрито в застосунку' : 'у застосунку не закрито')+' · агрозвіт бухгалтера: '+(m.agro_report ? 'дані на '+m.agro_report : (m.agro_err || 'немає'))),
+    el('div', {style:'max-width:900px'}, ...mdLite(R.text)),
+    el('details', {style:'margin-top:12px'}, el('summary', {class:'note'}, 'Факти, з яких складено звіт'), el('pre', {style:'white-space:pre-wrap;font-size:11px;max-height:480px;overflow:auto'}, R.facts || '')));
 }
 // ======= ПЕРЕЗИМІВЛЯ: картка поля (модель tools/winter.py + моноліти ref/monoliths.json)
 function winterChart(ser, w=320, h=90){
