@@ -437,6 +437,16 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
         <div class="line"><div><label class="note" for="rp-m">Техніка</label><select id="rp-m"></select></div><div><label class="note" for="rp-k">Вид</label><select id="rp-k"><option>ТО</option><option>Ремонт</option><option>Поломка</option><option>Заміна масла</option><option>Заміна фільтрів</option></select></div>
           <div style="grid-column:1/-1"><label class="note" for="rp-w">Що зроблено, запчастини</label><input id="rp-w"></div><div><label class="note" for="rp-i">Простій, днів</label><input id="rp-i" type="number" min="0"></div><div><label class="note" for="rp-n">Наступне ТО, м-год</label><input id="rp-n" type="number" min="0"></div><button class="btn primary" id="rp-add">Додати</button></div>
         <div class="tablewrap"><table id="rp-table"></table></div></section>
+
+      <!-- ТО-модуль -->
+      <section class="card span12" id="to-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+          <h2 style="margin:0">🔧 Графік технічного обслуговування</h2>
+          <span class="note" id="to-updated"></span>
+        </div>
+        <div class="note" style="margin-bottom:12px">Введіть поточний показник лічильника для кожної машини — застосунок розрахує, яке ТО наближається або прострочено.</div>
+        <div id="to-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px"></div>
+      </section>
     </div>
   </main>
 
@@ -1921,9 +1931,133 @@ function renderTech(){
   $('#rp-table').replaceChildren(el('thead', {}, el('tr', {}, ['Дата','Техніка','Вид','Що зроблено','Простій, дн.','Наст. ТО'].map((h,i) => el('th', {class:i<4?'l':''}, h)))),
     el('tbody', {}, rp.length ? rp.map(r => el('tr', {}, el('td', {class:'l'}, dateTxt(r.d.n)), el('td', {class:'l'}, r.m), el('td', {class:'l'}, r.k), el('td', {class:'l', style:'white-space:normal'}, r.w), el('td', {}, nf(r.i, fmt0)), el('td', {}, r.n ? nf(r.n, fmt0) : '—')))
       : el('tr', {}, el('td', {class:'l empty', colspan:'6'}, 'Ще немає записів.'))));
+  renderTO();
 }
 $('#mh-add').addEventListener('click', () => { const v = +$('#mh-v').value; if(!v){ toast('Вкажіть показник лічильника'); return; } saveEvent({'Мотогодини':[{'Дата':toSerial($('#mh-d').value||DAY), 'Техніка':$('#mh-m').value, 'Показник лічильника, м-год':v}]}, 'мотогодини').then(() => { $('#mh-v').value = ''; renderTech(); toast('Показник збережено'); }); });
 $('#rp-add').addEventListener('click', () => { if(!$('#rp-w').value){ toast('Опишіть, що зроблено'); return; } saveEvent({'Ремонти і ТО':[{'Дата':toSerial(DAY), 'Техніка':$('#rp-m').value, 'Вид':$('#rp-k').value, 'Що зроблено':$('#rp-w').value, 'Простій, днів':+$('#rp-i').value||null, 'Наступне ТО при м-год':+$('#rp-n').value||null}]}, 'ремонт').then(() => { ['#rp-w','#rp-i','#rp-n'].forEach(s => $(s).value = ''); renderTech(); toast('Запис збережено'); }); });
+
+// ---------- ТО-модуль (Графік технічного обслуговування)
+let TO_DATA = null; // ref/machinery.json — завантажується lazy
+
+const TO_LS_KEY = id => 'to_mh_' + id;   // localStorage ключ для мотогодин машини
+
+function toStatusColor(pct){
+  // pct = відсоток від поточного до наступного: 0=тільки зроблено, 1=час прийшов
+  if(pct >= 1) return '#c0392b';     // прострочено — червоний
+  if(pct >= 0.8) return '#e67e22';  // ≤20% залишилось — помаранчевий
+  if(pct >= 0.6) return '#f1c40f';  // ≤40% залишилось — жовтий
+  return '#27ae60';                  // зелений — є запас
+}
+
+function renderToCard(machine, currentMh){
+  const card = el('div', {style:'border:1px solid var(--border,#ddd);border-radius:8px;padding:12px;background:var(--bg-card,#fff)'});
+
+  // Заголовок машини
+  const head = el('div', {style:'display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px'});
+  head.append(
+    el('div', {},
+      el('div', {style:'font-weight:700;font-size:1.05em'}, machine.name),
+      el('div', {class:'note', style:'margin-top:2px'}, machine.engine || machine.fullName || '')
+    )
+  );
+  card.append(head);
+
+  // Поле вводу мотогодин
+  const inputWrap = el('div', {style:'display:flex;gap:6px;align-items:center;margin-bottom:12px'});
+  const inp = el('input', {type:'number', min:'0', step:'1', placeholder:'Введіть м-год…', style:'flex:1;padding:4px 8px;border:1px solid var(--border,#ccc);border-radius:4px;font-size:0.95em', value: currentMh !== null ? String(currentMh) : ''});
+  const saveBtn = el('button', {class:'btn', style:'white-space:nowrap;padding:4px 10px;font-size:0.9em'}, 'Зберегти');
+  saveBtn.addEventListener('click', () => {
+    const v = parseInt(inp.value, 10);
+    if(isNaN(v) || v < 0){ toast('Введіть коректне число мотогодин'); return; }
+    localStorage.setItem(TO_LS_KEY(machine.id), String(v));
+    renderTO();
+    toast('Показник збережено: ' + machine.name);
+  });
+  inputWrap.append(el('label', {class:'note', style:'white-space:nowrap'}, 'Поточний лічильник, м-год:'), inp, saveBtn);
+  card.append(inputWrap);
+
+  if(currentMh === null){
+    card.append(el('div', {class:'note', style:'font-style:italic;color:#888'}, 'Введіть показник лічильника, щоб побачити статус ТО.'));
+    return card;
+  }
+
+  // Розрахунок і відображення інтервалів
+  const intervals = machine.intervals || [];
+  const statusList = el('div', {style:'display:flex;flex-direction:column;gap:6px'});
+
+  intervals.forEach(interval => {
+    const h = interval.hours;
+    // Скільки разів вже виконано: floor(currentMh / h)
+    const doneCount = Math.floor(currentMh / h);
+    // Коли наступне ТО
+    const nextDue = (doneCount + 1) * h;
+    const remaining = nextDue - currentMh;
+    const pct = 1 - remaining / h;  // 0 = тільки зроблено, 1 = прострочено
+
+    const color = toStatusColor(pct);
+    const isOverdue = currentMh >= nextDue;
+
+    const row = el('div', {style:'display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;background:var(--bg,#f8f8f8)'});
+
+    // Кольоровий індикатор
+    const dot = el('div', {style:`width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0`});
+
+    // Текст
+    const textWrap = el('div', {style:'flex:1;min-width:0'});
+    const labelLine = el('div', {style:'font-weight:600;font-size:0.9em'}, `ТО-${h} (${interval.label})`);
+    let statusText;
+    if(isOverdue){
+      statusText = `⚠️ Прострочено на ${Math.abs(remaining)} м-год (мало бути при ${nextDue - h} м-год)`;
+    } else {
+      statusText = `Залишилось: ${remaining} м-год → наступне при ${nextDue} м-год`;
+    }
+    const statusLine = el('div', {class:'note', style:`color:${color};font-size:0.82em;margin-top:1px`}, statusText);
+    textWrap.append(labelLine, statusLine);
+
+    // Розгорнути список завдань
+    const toggle = el('button', {class:'btn', style:'padding:2px 7px;font-size:0.8em;flex-shrink:0'}, '▼');
+    const taskList = el('ul', {hidden:true, style:'margin:6px 0 0 18px;padding:0;font-size:0.82em;color:var(--text-muted,#555)'});
+    (interval.tasks || []).forEach(t => { const li = el('li', {style:'margin-bottom:2px'}, t); taskList.append(li); });
+    toggle.addEventListener('click', () => { taskList.hidden = !taskList.hidden; toggle.textContent = taskList.hidden ? '▼' : '▲'; });
+
+    row.append(dot, textWrap);
+    if((interval.tasks||[]).length) row.append(toggle);
+
+    statusList.append(row);
+    if(!taskList.hidden || (interval.tasks||[]).length) statusList.append(taskList);
+  });
+
+  card.append(statusList);
+  return card;
+}
+
+function renderTO(){
+  const container = $('#to-cards');
+  if(!container) return;
+
+  if(!TO_DATA){
+    // Machinery.json завантажується як частина DOCS у loadAll
+    const raw = DOCS && DOCS['ref/machinery.json'];
+    if(raw && raw.machines){ TO_DATA = raw; }
+    else {
+      container.replaceChildren(el('div', {class:'note', style:'padding:16px'}, 'Завантажую дані технічного обслуговування…'));
+      // спробуємо lazy load
+      getJSON('ref/machinery.json').then(d => { if(d && d.machines){ TO_DATA = d; renderTO(); } }).catch(() => {});
+      return;
+    }
+  }
+
+  const cards = container;
+  cards.replaceChildren();
+
+  TO_DATA.machines.forEach(machine => {
+    const stored = localStorage.getItem(TO_LS_KEY(machine.id));
+    const currentMh = stored !== null ? parseInt(stored, 10) : null;
+    cards.append(renderToCard(machine, currentMh));
+  });
+
+  $('#to-updated').textContent = 'Дані з localStorage · ' + new Date().toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+}
 
 // ---------- АКБ (акумулятори)
 let BATT = {batteries:[], log:[]};
