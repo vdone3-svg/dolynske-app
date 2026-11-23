@@ -4031,7 +4031,9 @@ async function flushScouts(){
 }
 window.addEventListener('online', () => flushScouts());
 setInterval(() => { if(OUTQ.length && navigator.onLine) flushScouts(); }, 60000);
-function renderScQueue(){ const q = $('#sc-queue'); if(q) q.textContent = OUTQ.length ? 'Очікують відправки: '+OUTQ.length+' огляд(и) — відправляться, щойно з’явиться зв’язок' : ''; }
+function renderScQueue(){ const q = $('#sc-queue'); if(q) q.textContent = OUTQ.length ? `Очікують відправки: ${OUTQ.length} огляд(и) — відправляться, щойно з’явиться зв’язок` : ''; }
+// тест-хук: виставляємо внутрішні змінні на window для E2E-тестів (тільки при dl_test=1)
+if(LS.get('dl_test')==='1'){ window._DL_TEST = { get OUTBOX(){ return OUTBOX; }, get TOKEN(){ return TOKEN; }, get OUTQ(){ return OUTQ; }, set OUTQ(v){ OUTQ=v; }, setTOKEN(v){ TOKEN=v; }, flushScouts, renderScQueue, saveScout, get SC(){ return SC; }, setSC(v){ SC=v; } }; }
 
 // --- фото з приватного сховища (через ключ доступу)
 const IMGC = {};
@@ -4447,6 +4449,7 @@ function scoutSummary(ss){   // останній стан поля за огля
 }
 function renderScList(){
   const box = $('#sc-list'); if(!box) return; box.replaceChildren();
+  if(!REF) return;
   const list = allScouts().filter(d => d.season===YEAR && (!SCF || d.field===SCF));
   const fsel = $('#sc-field'); fsel.replaceChildren(el('option', {value:''}, 'усі'), ...REF.allFields.map(f => el('option', f.n===SCF ? {value:f.n, selected:''} : {value:f.n}, f.n)));
   if(!list.length){ box.append(remindersBlock(), el('p', {class:'note'}, 'За сезон «урожай '+YEAR+'»'+(SCF ? ' по полю «'+SCF+'»' : '')+' оглядів ще немає. Натисніть «+ Новий огляд» прямо в полі — місце і поле визначаться за GPS.')); return; }
