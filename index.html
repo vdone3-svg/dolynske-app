@@ -280,6 +280,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialog.sc-full img{max-width:96vw;max-height:92vh;display:block;border-radius:8px}dialog.sc-full::backdrop{background:rgba(0,0,0,.8)}
 @media (max-width:600px){.sc-prob{grid-template-columns:1fr 90px}.sc-prob input:last-child{grid-column:1/-1}}
 @media (max-width:640px){.sc-big{grid-template-columns:repeat(2,1fr)}.sc-vt-tile{width:100%;height:120px}.sc-bigbtn{min-height:72px}}
+.outq{margin:4px 0;padding:6px 10px;border-radius:8px;font-size:.9em;border-left:4px solid var(--warn)}.outq.bad{border-left-color:var(--bad)}.outq a{margin-left:6px}
 </style>
 </head>
 <body>
@@ -310,6 +311,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   </header>
   <nav class="tabs" id="tabs" aria-label="Розділи"></nav>
   <div class="sync" id="sync" role="status"></div>
+  <div id="outq" class="outq" role="status" hidden></div>
   <div id="alerts" class="alerts" role="region" aria-label="Тривоги" hidden></div>
 
   <!-- ДЕНЬ -->
@@ -499,7 +501,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <div class="toolbar"><h2 style="margin:0">Огляди полів</h2>
         <button class="btn primary" id="sc-new">+ Новий огляд</button>
         <label class="note" for="sc-field">Поле</label><select id="sc-field"><option value="">усі</option></select>
-        <span class="pill" id="sc-gps"></span><span class="note" id="sc-queue"></span></div>
+        <span class="pill" id="sc-gps"></span></div><div class="note" id="sc-queue"></div>
       <div id="sc-form"></div>
       <div id="sc-list" class="sc-list"></div>
     </section>
@@ -1261,7 +1263,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '23.11d Нагадування мотогодин';
+const APP_VER = '23.11e Черга оглядів';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1274,7 +1276,7 @@ function renderTabs(){
 function showTab(id){
   if(!TABS.some(t => t[0]===id) || ((id==='settings' || id==='agro' || id==='batt' || id==='report') && ROLE!=='o')) id = 'day';
   TAB = id; document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id==='pane-'+id));
-  renderTabs(); renderAll();
+  renderTabs(); renderAll(); renderScQueue();
 }
 window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 function renderAll(){
@@ -2951,8 +2953,12 @@ let TOKEN = LS.get('dl_token'), OFFLINE = false, OFFLINE_AT = null;
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 function syncState(t, kind=''){ const s = $('#sync'); s.textContent = t; s.className = 'sync '+kind; }
 async function gh(path, opts={}){
-  const r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+(path ? '/'+path : ''), {method:opts.method||'GET', body:opts.body, cache:'no-store',
-    headers:{'Authorization':'Bearer '+TOKEN, 'Accept': opts.raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28', ...(opts.body ? {'Content-Type':'application/json'} : {})}});
+  const ac = opts.timeout ? new AbortController() : null, tm = ac ? setTimeout(() => ac.abort(), opts.timeout) : null;
+  let r;
+  try{ r = await fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+(path ? '/'+path : ''), {method:opts.method||'GET', body:opts.body, cache:'no-store', ...(ac ? {signal:ac.signal} : {}),
+    headers:{'Authorization':'Bearer '+TOKEN, 'Accept': opts.raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28', ...(opts.body ? {'Content-Type':'application/json'} : {})}}); }
+  catch(e){ if(e.name==='AbortError'){ const x = new Error('немає відповіді сервера '+Math.round(opts.timeout/1000)+' с (слабкий зв’язок)'); x.net = true; throw x; } e.net = true; throw e; }
+  finally{ if(tm) clearTimeout(tm); }
   if(r.headers.get('x-offline')){ OFFLINE = true; const cd = r.headers.get('x-cache-date'); if(cd && (!OFFLINE_AT || cd < OFFLINE_AT)) OFFLINE_AT = cd; }
   if(r.status===404) return null;
   if(r.status===401 || r.status===403){ const e = new Error('Ключ доступу не підходить або закінчився ('+r.status+')'); e.auth = true; throw e; }
@@ -4251,27 +4257,49 @@ const OUTBOX = {db:null,
 let OUTQ = [];   // копія черги для показу
 function blobB64(b){ return new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => no(r.error); r.readAsDataURL(b); }); }
 async function putBin(path, blob, msg){
-  try{ await gh('contents/'+enc(path), {method:'PUT', body:JSON.stringify({message:msg, content: await blobB64(blob), branch:GH.branch})}); }
+  try{ await gh('contents/'+enc(path), {method:'PUT', timeout:(window._DL_TEST && window._DL_TEST.putTimeout) || (60000 + Math.round(blob.size/1024)*40), body:JSON.stringify({message:msg, content: await blobB64(blob), branch:GH.branch})}); }
   catch(e){ if(e.status===422) return; throw e; }   // файл уже є (повторна відправка) — вважаємо відправленим
 }
 let FLUSHING = false;
+const scParts = d => [...(d.photos || []), ...(d.voice || []), ...(d.videos || []).flatMap(v => v.parts || [])];
 async function flushScouts(){
-  if(FLUSHING || !TOKEN) return; FLUSHING = true;
-  try{ for(const it of await OUTBOX.all()){
-      const parts = d => [...d.photos, ...(d.voice || []), ...(d.videos || []).flatMap(v => v.parts)];
-      for(const ph of parts(it.doc)){ if(ph.done) continue; await putBin(ph.path, it.blobs[ph.k], (ph.vpart ? 'Відео огляду (частина): ' : ph.dur!=null ? 'Голосова нотатка: ' : 'Фото огляду: ')+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); }
-      const doc = JSON.parse(JSON.stringify(it.doc)); parts(doc).forEach(p => { delete p.done; delete p.k; delete p.vpart; });
-      await putJSON(it.path, doc, 'Огляд: '+doc.field+' '+doc.date+' ('+doc.author+', '+doc.by+')');
-      SCOUTS[it.path] = doc; await OUTBOX.del(it.id);
-      it.urls && it.urls.forEach(u => IMGC[u.path] = u.url); VPOLL = true;
-  } }catch(e){ if(e.auth) syncState(e.message, 'bad'); }
+  if(FLUSHING || !TOKEN) return; FLUSHING = true; renderScQueue();
+  try{
+    const items = (await OUTBOX.all()).sort((a, b) => (a.tries||0) - (b.tries||0) || String(a.id).localeCompare(String(b.id)));   // «важкі» огляди — в кінець, щоб не блокували решту
+    for(const it of items){
+      try{
+        for(const ph of scParts(it.doc)){ if(ph.done) continue; await putBin(ph.path, it.blobs[ph.k], (ph.vpart ? 'Відео огляду (частина): ' : ph.dur!=null ? 'Голосова нотатка: ' : 'Фото огляду: ')+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); renderScQueue(); }
+        const doc = JSON.parse(JSON.stringify(it.doc)); scParts(doc).forEach(p => { delete p.done; delete p.k; delete p.vpart; });
+        await putJSON(it.path, doc, 'Огляд: '+doc.field+' '+doc.date+' ('+doc.author+', '+doc.by+')');
+        SCOUTS[it.path] = doc; await OUTBOX.del(it.id);
+        it.urls && it.urls.forEach(u => IMGC[u.path] = u.url); VPOLL = true;
+      }catch(e){
+        if(e.auth) throw e;
+        it.tries = (it.tries||0) + 1; it.err = e.message; it.errAt = isoNow(); await OUTBOX.put(it).catch(() => {});
+        if(e.net) break;   // зв'язку немає — решту не мучимо, спробуємо пізніше
+      }
+    }
+  }catch(e){ if(e.auth) syncState(e.message, 'bad'); }
   finally{ FLUSHING = false; OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); if(TAB==='scout') renderScList(); if(TAB==='map' && MAPV.map) drawScoutPins(); }
 }
 window.addEventListener('online', () => flushScouts());
 setInterval(() => { if(OUTQ.length && navigator.onLine) flushScouts(); }, 60000);
-function renderScQueue(){ const q = $('#sc-queue'); if(q) q.textContent = OUTQ.length ? `Очікують відправки: ${OUTQ.length} огляд(и) — відправляться, щойно з’явиться зв’язок` : ''; }
+function scQueueInfo(it){ const ps = scParts(it.doc), done = ps.filter(p => p.done).length;
+  return (it.doc.field || '?')+' '+String(it.doc.date||'').split('-').reverse().join('.')+' — файлів '+done+' з '+ps.length+(it.err ? ' · помилка ('+(it.tries||1)+'×): '+it.err.slice(0, 90) : ''); }
+function renderScQueue(){
+  const n = OUTQ.length, err = OUTQ.filter(i => i.err).length;
+  const g = $('#outq');
+  if(g){ g.hidden = !n; g.className = 'outq '+(err ? 'bad' : 'warn');
+    g.replaceChildren(n ? el('span', {}, (FLUSHING ? '⏳ Відправляю огляди: ' : '📤 Не відправлено оглядів: ')+n+(err ? ' (з помилкою: '+err+')' : '')+' ') : '',
+      n && TAB!=='scout' ? el('a', {href:'#scout'}, 'деталі') : ''); }
+  const q = $('#sc-queue'); if(!q) return;
+  if(!n){ q.replaceChildren(); return; }
+  q.replaceChildren(el('div', {}, `Очікують відправки: ${n} огляд(и) — `+(FLUSHING ? 'відправляю…' : navigator.onLine ? 'відправляться автоматично (повтор щохвилини)' : 'відправляться, щойно з’явиться зв’язок')+' ',
+      FLUSHING ? '' : el('button', {class:'btn small', onclick:() => flushScouts()}, 'Відправити зараз')),
+    el('ul', {style:'margin:4px 0 0 18px;padding:0'}, OUTQ.map(it => el('li', {style:it.err ? 'color:var(--bad)' : ''}, scQueueInfo(it)))));
+}
 // тест-хук: виставляємо внутрішні змінні на window для E2E-тестів (тільки при dl_test=1)
-if(LS.get('dl_test')==='1'){ window._DL_TEST = { get OUTBOX(){ return OUTBOX; }, get TOKEN(){ return TOKEN; }, get OUTQ(){ return OUTQ; }, set OUTQ(v){ OUTQ=v; }, setTOKEN(v){ TOKEN=v; }, flushScouts, renderScQueue, saveScout, get SC(){ return SC; }, setSC(v){ SC=v; } }; }
+if(LS.get('dl_test')==='1'){ window._DL_TEST = { get OUTBOX(){ return OUTBOX; }, get TOKEN(){ return TOKEN; }, get OUTQ(){ return OUTQ; }, set OUTQ(v){ OUTQ=v; }, setTOKEN(v){ TOKEN=v; }, flushScouts, renderScQueue, saveScout, putTimeout:0, get FLUSHING(){ return FLUSHING; }, get SC(){ return SC; }, setSC(v){ SC=v; } }; }
 
 // --- фото з приватного сховища (через ключ доступу)
 const IMGC = {};
