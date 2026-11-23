@@ -511,7 +511,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   <main class="pane" id="pane-map">
     <section class="card">
       <div class="toolbar"><h2 style="margin:0">Карта полів</h2>
-        <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button><button class="chip" data-m="ndvi">NDVI (супутник)</button><button class="chip" data-m="plow">Оранка</button></div>
+        <div class="chips" id="map-mode" role="group" aria-label="Розфарбування"><button class="chip" data-m="crop">Культура</button><button class="chip" data-m="yield">Урожайність ц/га</button><button class="chip" data-m="ndvi">NDVI (супутник)</button><button class="chip" data-m="plow">Оранка</button><button class="chip" data-m="prod">Зони продуктивності</button></div>
         <div class="chips" id="ndvi-idx" role="group" aria-label="Супутниковий індекс" hidden style="margin-top:6px"><button class="chip" data-i="ndvi">NDVI — маса</button><button class="chip" data-i="ndre">NDRE — азот</button><button class="chip" data-i="ndmi">NDMI — волога</button></div>
         <button class="btn small" id="map-loc">Де я</button>
         <button class="btn small" id="map-off">Зберегти карту офлайн</button>
@@ -859,6 +859,7 @@ function renderFieldCard(){
   box.append(el('div', {class:'toolbar'}, el('h2', {}, 'Картка поля'), el('label', {for:'field-sel', class:'note'}, 'Поле'), sel));
   const ndl = ndviLine(f, YEAR); if(ndl) box.append(ndl);
   const nab = ndviAiBlock(f); if(nab) box.append(nab);
+  const pzl = pzLine(f, true); if(pzl) box.append(pzl); else if(PZ.data===undefined) ensurePz().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f && pzLine(f)) renderFieldCard(); });
   const fwb = fwxBlock(f, YEAR); if(fwb) box.append(fwb);
   const wib = winterBlock(f, YEAR); if(wib) box.append(wib);
   else if(FWX.data===undefined) ensureFwx().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f) renderFieldCard(); });
@@ -1263,7 +1264,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '23.11e Черга оглядів';
+const APP_VER = '23.11f Зони продуктивності';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -3671,10 +3672,48 @@ async function drawNdviLayer(){
   if(miss) $('#map-info').textContent = 'Карти '+NDX[NDIDX].t+' ще немає для '+miss+' пол.: з\'являться після найближчого оновлення супутникових даних (раз на 2 дні, ~07:17)';
   NDVI.layer = g.addTo(MAPV.map); if(MAPV.fl) MAPV.fl.bringToFront(); renderMapLegend(); renderNdviAi();
 }
+// ======= Зони продуктивності (етап 3): geo/prodzones.json + geo/prodzones/<поле>.png, рахує workflow «Зони продуктивності»
+const PZ = {data:undefined, layer:null};
+const PZCOL = {0:'#d73027', 1:'#e6c23a', 2:'#1a9850'};
+async function ensurePz(){ if(PZ.data===undefined){ try{ PZ.data = await getJSON('geo/prodzones.json'); }catch(e){ PZ.data = null; } } return PZ.data; }
+function pzOf(n){ const F = (PZ.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
+const gmaps = ll => 'https://www.google.com/maps/dir/?api=1&destination='+ll[1]+','+ll[0];
+function pzLine(n, full){
+  const z = pzOf(n); if(!z) return null;
+  const Z = z.zones, yrs = Object.keys(z.dates || {}).join(', ');
+  const box = el('div', {class:'note', style:'margin:4px 0'},
+    el('b', {}, 'Зони продуктивності: '), 'слабка '+nf(Z[0].share, 0)+' % ('+nf(Z[0].ha, 1)+' га) · середня '+nf(Z[1].share, 0)+' % · сильна '+nf(Z[2].share, 0)+' % ('+nf(Z[2].ha, 1)+' га)',
+    z.uniform ? ' · поле однорідне' : '', z.stable!=null ? ' · збіг зон між роками '+Math.round(z.stable*100)+' %' : '', ' · урожаї '+yrs,
+    (z.mixed || []).length ? el('span', {style:'color:var(--warn)'}, ' · ⚠ у '+z.mixed.join(', ')+' на полі було дві культури — зони менш надійні') : '');
+  if(full && (z.points || []).length) box.append(el('div', {}, 'Точки проб і огляду: ', ...z.points.map((p, i) => el('span', {}, i ? ' · ' : '',
+    el('a', {href:gmaps(p.ll), target:'_blank', rel:'noopener'}, p.id), ' ('+['слабка', 'середня', 'сильна'][p.zone]+', '+nf((p.patch_rel ?? p.rel)*100, 0)+' %, пляма '+nf(p.patch_ha, 1)+' га)'))));
+  return box;
+}
+async function drawPzLayer(){
+  if(PZ.layer){ PZ.layer.remove(); PZ.layer = null; }
+  if(MAPV.mode!=='prod') return;
+  await ensurePz(); if(MAPV.mode!=='prod') return;
+  renderMapLegend();
+  if(!PZ.data) return;
+  const g = L.layerGroup();
+  for(const [n, z] of Object.entries(PZ.data.fields || {})){
+    if(z.img){ const url = await ghBlobUrl(z.img.file); const b = z.img.bbox; if(url) L.imageOverlay(url, [[b[1], b[0]], [b[3], b[2]]], {opacity:.85, interactive:false}).addTo(g); }
+    (z.points || []).forEach(p => {
+      const m = L.circleMarker([p.ll[1], p.ll[0]], {radius:7, weight:2, color:'#fff', fillColor:PZCOL[p.zone], fillOpacity:1});
+      m.bindTooltip(p.id, {permanent:true, direction:'right', className:'map-lbl'});
+      m.bindPopup(() => el('div', {class:'mpop'}, el('b', {}, n+' · точка '+p.id),
+        el('div', {class:'note'}, 'Зона: '+['слабка', 'середня', 'сильна'][p.zone]+' · '+nf((p.patch_rel ?? p.rel)*100, 0)+' % від середнього поля (середнє плями) · суцільна пляма '+nf(p.patch_ha, 1)+' га'),
+        el('div', {class:'note'}, p.ll[1].toFixed(5)+', '+p.ll[0].toFixed(5)),
+        el('div', {class:'acts', style:'justify-content:flex-start;margin-top:4px'}, el('a', {class:'btn small', href:gmaps(p.ll), target:'_blank', rel:'noopener'}, 'Маршрут'))));
+      m.addTo(g); });
+  }
+  if(MAPV.mode!=='prod') return;
+  PZ.layer = g.addTo(MAPV.map); if(MAPV.fl) MAPV.fl.bringToFront(); PZ.layer.eachLayer(l => l.bringToFront && l.bringToFront());
+}
 function fieldStyle(f){
   const n = fieldsOf(f)[0], base = {weight:2, color:'#ffffff', opacity:.9, fillOpacity:.55};
   if(MAPV.mode==='yield'){ const yc = yieldClass(n, YEAR); return {...base, fillColor:YCOL(yc && yc.d)}; }
-  if(MAPV.mode==='ndvi') return {...base, fillOpacity:0, weight:1.5};
+  if(MAPV.mode==='ndvi' || MAPV.mode==='prod') return {...base, fillOpacity:0, weight:1.5};
   if(MAPV.mode==='plow') return {...base, fillColor:plowColor(n), fillOpacity:.65};
   const cs = cropsOfField(n, YEAR); return {...base, fillColor: cs.length ? cropColor(cs[0].c) : '#9aa0a6', dashArray: f.properties.flag ? '6 4' : null};
 }
@@ -3692,6 +3731,7 @@ function fieldPopup(f){
   box.append(el('div', {class:'note'}, 'Контур: '+nf(p.ha_geom)+' га'+(p.parts ? ' ('+p.parts+')' : '')+(p.ha_gps && p.ha_gps!==p.ha_geom ? ' · GPS '+nf(p.ha_gps)+' га' : '')+' · '+(p.source || '')));
   if(MAPV.mode==='plow') fieldsOf(f).forEach(n => { const pb = plowBlock(n); if(pb) box.append(el('div', {class:'note'}, pb)); });
   fieldsOf(f).forEach(n => { const nl = ndviLine(n, YEAR); if(nl) box.append(nl); const ab = MAPV.mode==='ndvi' && ndviAiBlock(n); if(ab) box.append(ab); });
+  fieldsOf(f).forEach(n => { const pl = pzLine(n); if(pl) box.append(pl); });
   fieldsOf(f).forEach(n => box.append(...zonePopupPart(n)));
   if(p.flag) box.append(el('div', {class:'note', style:'color:var(--warn)'}, '⚠ '+p.flag));
   return box;
@@ -3705,7 +3745,7 @@ function drawFields(){
   drawZones();
   if(MAPV.paiL) MAPV.paiL.bringToFront();
   renderMapLegend();
-  drawNdviLayer();
+  drawNdviLayer(); drawPzLayer();
 }
 function renderMapLegend(){
   const lg = $('#map-legend'); lg.replaceChildren();
@@ -3715,6 +3755,9 @@ function renderMapLegend(){
     lg.append(el('span', {class:'lg'}, el('i', {style:'width:120px;background:linear-gradient(90deg,'+X.ramp.map(([v, c]) => c+' '+v*100+'%').join(',')+')'}), ' '+X.t+' '+String(X.lo).replace('.', ',')+' → '+String(X.hi).replace('.', ',')));
     const ds = Object.values((NDVI.data || {}).fields || {}).map(r => r.img && r.img.d).filter(Boolean).sort();
     lg.append(el('span', {class:'note'}, ds.length ? ' знімки '+ds[0].slice(8,10)+'.'+ds[0].slice(5,7)+(ds[0]!==ds[ds.length-1] ? '–'+ds[ds.length-1].slice(8,10)+'.'+ds[ds.length-1].slice(5,7) : '')+' · '+X.hint+'; без кольору — хмари або немає даних' : ' знімків ще немає'));
+  } else if(MAPV.mode==='prod'){
+    lg.append(sw('rgb(215,48,39)', 'слабка (< 93 % середнього поля)'), sw('rgb(254,224,139)', 'середня'), sw('rgb(26,152,80)', 'сильна (> 107 %)'));
+    lg.append(el('span', {class:'note'}, PZ.data ? ' · за NDVI піку вегетації 2025–2026 · точки С/Р/В — де брати проби ґрунту й оглядати' : PZ.data===null ? ' · зони ще не пораховані (запуск «Зони продуктивності» у сховищі даних)' : ' · завантажую…'));
   } else if(MAPV.mode==='plow'){
     if(FWX.data===undefined){ ensureFwx().then(() => { if(MAPV.mode==='plow') drawFields(); }); lg.append(el('span', {class:'note'}, 'Завантажую ґрунт і прогноз…')); }
     else { const P = ((FWX.data || {}).points || {})['Захід'], pl = P && P.plow;
