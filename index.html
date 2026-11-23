@@ -321,6 +321,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       </div>
       <div class="kpis" id="kpis"></div>
     </header>
+    <section class="card" id="mh-remind" hidden></section>
     <section class="card" id="people">
       <div class="sechead"><div><h2>Люди і техніка</h2><div class="note">Оберіть роботу — техніка й одиниця підставляться за звичкою. Заправку і масло пишіть у тому ж рядку.</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" id="all-yesterday">Усім «як учора»</button><button class="btn" id="add-person">+ Людина</button></div></div>
@@ -1260,7 +1261,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '23.11c Прибрати рядок';
+const APP_VER = '23.11d Нагадування мотогодин';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1651,7 +1652,7 @@ function dayTotals(){
 function renderDay(){
   const d = new Date(DAY+'T12:00:00'); $('#date').value = DAY;
   $('#day-title').textContent = d.toLocaleDateString('uk-UA', {weekday:'long', day:'numeric', month:'long', year:'numeric'}).replace(/^./, c => c.toUpperCase());
-  renderShifts(); renderRows(); renderAppl(); renderZav(); renderSide(); renderDips(); renderGrainTabs();
+  renderShifts(); renderRows(); renderAppl(); renderZav(); renderSide(); renderDips(); renderGrainTabs(); renderMhRemind();
   const t = dayTotals(), closed = isClosed(DAY) && !DS.editing;
   $('#kpis').replaceChildren(...[['Люди заповнено', t.people+' / '+t.total], ['Роботи в полі', nf(t.ha)+' га'], ['ДП за день', nf(t.dp, fmt0)+' л'], ['Бензин', nf(t.bz, fmt0)+' л'],
     ['Масла', nf(t.oil)+' л'], ['Обприскано', nf(t.zzr)+' га'], ['Відвантажено', nf(t.ship/1000)+' т']].map(([a, b]) => el('div', {class:'kpi'}, a, el('b', {}, b))));
@@ -1956,7 +1957,7 @@ function toStatusColor(pct){
   return '#27ae60';                  // є запас — зелений
 }
 
-function renderToCard(machine, currentMh, machRefName){
+function renderToCard(machine, currentMh, machRefName, est){
   const card = el('div', {style:'border:1px solid var(--border,#ddd);border-radius:8px;padding:12px;background:var(--bg-card,#fff)'});
 
   // Заголовок
@@ -1987,6 +1988,8 @@ function renderToCard(machine, currentMh, machRefName){
   });
   mhLine.append(inp, addBtn);
   card.append(mhLine);
+  if(est && est.last && est.add >= 1)
+    card.append(el('div', {class:'note', style:'margin:-4px 0 10px'}, `≈ зараз ~${nf(est.est, fmt0)} м-год (+${nf(est.add, fmt0)} за роботами після ${dateTxt(est.last.n)} — орієнтовно)`));
 
   if(currentMh === null){
     card.append(el('div', {class:'note', style:'color:#888;font-style:italic'}, 'Статус ТО з\'явиться після першого запису мотогодин.'));
@@ -2033,6 +2036,106 @@ function renderToCard(machine, currentMh, machRefName){
   return card;
 }
 
+// ---------- Оцінка мотогодин за «Роботами» і нагадування обліковцю
+const TO_ALIAS = {'deutz-x720':'Deutz великий', 'khta-200':'ХТА 200', 'case-5088':'CASE 5088', 'jcb-541-70':'JCB 541-70', 'deutz-small':'Deutz малий', 'estar-bes110':'Дизельний генератор'};
+const normMach = s => String(s||'').toLowerCase().replace(/[^a-zа-яіїєґ0-9]/g, '');
+// назва машини з ref/machinery.json → назва в довіднику техніки / журналах (Роботи, Мотогодини)
+function toRefName(machine){
+  const names = REF.mach.map(m => m.n), ali = TO_ALIAS[machine.id];
+  if(ali){ const a = names.find(n => normMach(n)===normMach(ali)); if(a) return a; }
+  const nm = normMach(machine.name);
+  return names.find(n => normMach(n)===nm) || names.find(n => normMach(n).includes(nm) || nm.includes(normMach(n))) || ali || machine.name;
+}
+// орієнтовна продуктивність, га за мотогодину (з урахуванням розворотів і переїздів); machine.haPerHour може перевизначити
+const TO_RATE = [[/оранк/i, 1.0], [/комбайн|збиран|косін/i, 2.5], [/посів|сівб/i, 2.5], [/дискув|культив|борон|міжряд|лущ|подрібн/i, 3.0], [/обприск/i, 8]];
+function opHours(op, u, q, machine){
+  q = +q || 0; op = String(op||'');
+  if(q <= 0 || /ремонт/i.test(op)) return 0;
+  if(u==='год') return Math.min(q, 24);
+  if(u==='т') return Math.min(q/20, 12);
+  if(u==='га'){
+    if(/підвез/i.test(op)) return 8;
+    const own = machine && machine.haPerHour ? Object.entries(machine.haPerHour).find(([k]) => op.toLowerCase().includes(k.toLowerCase())) : null;
+    const rate = own ? +own[1] : ((TO_RATE.find(([re]) => re.test(op)) || [0, 3.0])[1]);
+    return Math.min(q/rate, 14);
+  }
+  return 8;
+}
+// {last:{n,v}|null, add, est, worked:[дні з роботою], next:{h,label,due,remain}|null}
+function toEstimate(machine, refName){
+  const mh = rowsOf(RAW, 'Мотогодини').map(r => ({d:dt(r['Дата']), m:str(r['Техніка']), v:num(r['Показник лічильника, м-год'])}))
+    .filter(r => r.d && r.m===refName && r.v > 0).sort((a, b) => b.d.n - a.d.n || b.v - a.v);
+  const last = mh.length ? {n:mh[0].d.n, v:mh[0].v} : null;
+  // генератор живить ЗАВ-50 — його години беремо з роботи ЗАВ (один оператор = одна зміна)
+  const src = machine.type==='generator' ? 'ЗАВ-50' : refName;
+  const byDay = {};
+  rowsOf(RAW, 'Роботи').forEach(r => { const d = dt(r['Дата']); if(!d || str(r['Техніка'])!==src) return;
+    const h = opHours(r['Операція'], str(r['Од.']), r['Обсяг'], machine);
+    if(machine.type==='generator') byDay[d.n] = Math.max(byDay[d.n]||0, h); else byDay[d.n] = (byDay[d.n]||0) + h; });
+  const days = Object.keys(byDay).map(Number).filter(n => byDay[n] > 0);
+  const after = days.filter(n => !last || n > last.n);
+  const add = d3.sum(after, n => Math.min(byDay[n], 24));
+  const est = last ? last.v + add : null;
+  let next = null;
+  if(est != null) (machine.intervals || []).filter(iv => iv.hours >= 50).forEach(iv => { const due = (Math.floor(est/iv.hours)+1)*iv.hours, lastDue = due - iv.hours;
+    // якщо орієнтовно вже перейшли рубіж після останнього показника — ТО «пропущене за розрахунком»
+    const passed = last && lastDue > last.v;
+    const cand = passed ? {h:iv.hours, label:iv.label, due:lastDue, remain:lastDue - est} : {h:iv.hours, label:iv.label, due, remain:due - est};
+    if(!next || cand.remain < next.remain - .01 || (Math.abs(cand.remain - next.remain) < .01 && cand.h > next.h)) next = cand; });
+  return {last, add, est, worked:days, after, next};
+}
+function toRemindThr(h){ return Math.min(20, h*0.2); }
+// список нагадувань: [{machine, refName, level:'warn'|'bad', text, est}]
+function toReminders(){
+  if(!TO_DATA || !RAW) return [];
+  const today = toSerial(isoToday()), out = [];
+  TO_DATA.machines.forEach(machine => { const refName = toRefName(machine), e = toEstimate(machine, refName);
+    if(!e.last){
+      const recent = e.worked.filter(n => n >= today - 14);
+      if(recent.length) out.push({machine, refName, level:'warn', est:e, text:`${refName}: лічильник мотогодин ще жодного разу не записаний, а техніка працювала ${recent.length} дн. за 2 тижні. Підійдіть до машини і запишіть показник — інакше графік ТО не порахується.`});
+      return; }
+    if(e.next && e.add >= 1 && e.next.remain <= toRemindThr(e.next.h)){
+      const over = e.next.remain <= 0;
+      out.push({machine, refName, level: over ? 'bad' : 'warn', est:e,
+        text:`${refName}: за роботами зараз ~${nf(e.est, fmt0)} м-год (останній запис ${nf(e.last.v, fmt0)} — ${dateTxt(e.last.n)}). `+
+          (over ? `Орієнтовно вже пройдено ${e.next.label} (рубіж ${nf(e.next.due, fmt0)} м-год).` : `До ${e.next.label} лишилось ~${nf(e.next.remain, fmt0)} м-год (при ${nf(e.next.due, fmt0)}).`)+
+          ` Підійдіть до машини і запишіть реальний показник лічильника.`});
+      return; }
+    if(e.add >= 30 && e.last.n < today - 30)
+      out.push({machine, refName, level:'warn', est:e, text:`${refName}: показник не записували з ${dateTxt(e.last.n)}, з того часу ~${nf(e.add, fmt0)} м-год роботи. Запишіть лічильник, щоб графік ТО не «плив».`});
+  });
+  return out;
+}
+function ensureTO(){
+  if(TO_DATA) return true;
+  const raw = DOCS && DOCS['ref/machinery.json'];
+  if(raw && raw.machines){ TO_DATA = raw; return true; }
+  if(!ensureTO.busy){ ensureTO.busy = true; getJSON('ref/machinery.json').then(d => { if(d && d.machines){ TO_DATA = d; if(TAB==='day') renderMhRemind(); } }).catch(() => {}).finally(() => { ensureTO.busy = false; }); }
+  return false;
+}
+function renderMhRemind(){
+  const box = $('#mh-remind'); if(!box) return;
+  if(DAY !== isoToday() || !ensureTO()){ box.hidden = true; return; }
+  const list = toReminders();
+  if(!list.length){ box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  box.replaceChildren(el('h2', {style:'margin:0 0 4px'}, '🔧 Записати мотогодини'),
+    el('div', {class:'note', style:'margin-bottom:8px'}, 'Розрахунок орієнтовний — за гектарами й годинами з табеля. Після запису реального показника нагадування зникне, графік ТО перерахується.'));
+  list.forEach(x => {
+    const inp = el('input', {type:'number', min:'0', step:'1', inputmode:'numeric', placeholder:'Показник, м-год', style:'width:140px'});
+    const btn = el('button', {class:'btn primary'}, 'Записати');
+    btn.addEventListener('click', () => { const v = parseInt(inp.value, 10);
+      if(isNaN(v) || v <= 0){ toast('Введіть показник лічильника'); return; }
+      if(x.est.last && v < x.est.last.v){ toast(`Показник ${v} менший за попередній (${x.est.last.v}) — перевірте`); return; }
+      btn.disabled = true; btn.textContent = '…';
+      saveEvent({'Мотогодини':[{'Дата':toSerial(DAY), 'Техніка':x.refName, 'Показник лічильника, м-год':v, 'Примітка':'за нагадуванням'}]}, 'мотогодини')
+        .then(() => { toast('Показник збережено: '+x.refName); renderDay(); })
+        .catch(e => { toast('Помилка збереження: '+e.message); btn.disabled = false; btn.textContent = 'Записати'; }); });
+    box.append(el('div', {class:'line', style:`border-left:4px solid var(--${x.level==='bad' ? 'bad' : 'warn'});padding:6px 10px;margin:6px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap`},
+      el('div', {style:'flex:1;min-width:220px'}, x.text), inp, btn));
+  });
+}
+
 function renderTO(){
   const container = $('#to-cards');
   if(!container || !RAW) return;
@@ -2047,24 +2150,11 @@ function renderTO(){
     }
   }
 
-  // Будуємо мапу: назва техніки в machinery.json → назва в журналі Мотогодини (REF.mach)
-  // Шукаємо за частиною назви (case-insensitive)
-  const machNames = REF.mach.map(m => m.n);
-  function matchMachName(machine){
-    // Пряма відповідність або часткова (напр. 'Deutz X720' → 'Deutz великий')
-    const direct = machNames.find(n => n.toLowerCase().includes(machine.name.toLowerCase()) || machine.name.toLowerCase().includes(n.toLowerCase()));
-    if(direct) return direct;
-    // За id: deutz-x720 → шукаємо ключові слова
-    const idMap = {'deutz-x720':'Deutz великий', 'khta-200':'ХТА-200', 'case-5088':'CASE 5088', 'jcb-541-70':'JCB 541-70', 'deutz-small':'Deutz малий', 'estar-bes110':'Estar BES'};
-    const mapped = idMap[machine.id];
-    return machNames.find(n => mapped && n.toLowerCase().includes(mapped.toLowerCase())) || mapped || machine.name;
-  }
-
   container.replaceChildren();
   TO_DATA.machines.forEach(machine => {
-    const refName = matchMachName(machine);
+    const refName = toRefName(machine);
     const currentMh = toLastMh(refName);
-    container.append(renderToCard(machine, currentMh, refName));
+    container.append(renderToCard(machine, currentMh, refName, toEstimate(machine, refName)));
   });
 
   // Дата останнього запису мотогодин
