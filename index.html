@@ -117,6 +117,7 @@ select{font:500 13px var(--body);padding:6px 8px;border-radius:8px;border:1px so
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:6px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+@media print{body.print-zzr *{visibility:hidden}body.print-zzr #zzr-card,body.print-zzr #zzr-card *{visibility:visible}body.print-zzr #zzr-card{position:absolute;left:0;top:0;width:100%}body.print-zzr .no-print{display:none!important}body.print-zzr .tablewrap{overflow:visible!important;max-height:none!important}.zzr-t{font-size:9pt}@page{size:A4 landscape;margin:10mm}}
 
 .app{max-width:1520px;margin:0 auto;padding:12px clamp(12px,3vw,28px) 110px;display:grid;gap:14px;position:relative}
 .topbar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between}
@@ -477,6 +478,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <div class="toolbar"><label class="note" for="jr-type">Що</label><select id="jr-type"><option>Роботи</option><option>Внесення</option><option>Пальне</option><option>Урожай</option><option>Відвантаження</option><option>Рух зерна</option><option>Склад</option></select>
         <label class="note" for="jr-q">Пошук</label><input id="jr-q" placeholder="поле, людина, техніка, препарат…" style="max-width:260px"><span class="note" id="jr-count"></span></div>
       <div class="tablewrap"><table id="jr-table"></table></div></section>
+    <section class="card" id="zzr-card"><h2>🧪 Журнал застосування ЗЗР</h2><div id="zzr-body"></div></section>
   </main>
 
   <!-- ДОВІДНИКИ -->
@@ -627,7 +629,7 @@ function compute(raw){
     const yin = num(r['Урожай року (вручну)']); const y = yin || d.y+(d.m>=8);
     const f = str(r['Поле']); const c = resolve(y, f, str(r['Культура (лише якщо поле поділене)']));
     const mat = str(r['Матеріал']); const mm = mats[mat]||{};
-    const a = {d, y, f, c, op:str(r['Операція']), mat, cat:mm.cat||'?', u:mm.u||'', ha:num(r['Оброблено, га'])||0, q:num(r['Кількість всього'])||0};
+    const a = {d, y, f, c, op:str(r['Операція']), mat, cat:mm.cat||'?', u:mm.u||'', ha:num(r['Оброблено, га'])||0, q:num(r['Кількість всього'])||0, note:str(r['Примітка'])};
     const key = [d.n,f,a.op,a.cat,c].join('|'); a.first = !seen.has(key); seen.add(key);
     if((f && !fieldsDir.has(f)) || a.cat==='?' || c==='поділене' || c==='немає' || !a.ha) warn.appl++;
     if(str(r['Перевірити (перенесення)'])) warn.aflags++;
@@ -1248,7 +1250,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '22.11i Тривоги';
+const APP_VER = '23.11a Журнал ЗЗР';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1268,7 +1270,7 @@ function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
     fields:() => { renderFields(); renderFieldCard(); }, plan:renderPlan, report:renderReport, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
-    fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:renderJournal, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
+    fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:() => { renderJournal(); renderZzr(); }, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
 $('#role-b').addEventListener('click', () => { ROLE = 'b'; $('#role-b').setAttribute('aria-pressed','true'); $('#role-o').setAttribute('aria-pressed','false'); showTab(TAB); });
@@ -2534,6 +2536,102 @@ function renderJournal(){
     el('tbody', {}, rows.slice(0, 300).map(r => el('tr', {}, r.map((v, i) => el('td', {class:'l', style:'white-space:normal'}, i===0 && typeof v==='number' ? dateTxt(v) : (typeof v==='number' ? nf(v, fmt1) : (v ?? ''))))))));
 }
 $('#jr-type').addEventListener('change', renderJournal); $('#jr-q').addEventListener('input', renderJournal);
+
+// ======= 🧪 ЖУРНАЛ ЗАСТОСУВАННЯ ЗЗР (етап 0c дорожньої карти Cropwise). Джерела: «Внесення» (обприскування) → бакова суміш на поле/дату;
+// виконавець і техніка — «Роботи» того ж дня й поля; погода — geo/weather.json (середньодобово, точка поля); препарати — ref/zzr_ref.json (tools/zzr_ref.py).
+// Перевірки: норма поза етикеткою, повтор однієї групи HRAC/FRAC/IRAC на полі в сезоні, дощ ≥ 5 мм у день або наступного дня, спека > 25° для гербіцидів, вітер > 4 м/с.
+const ZZR = {ref:undefined, y:null, f:''};
+async function ensureZzrRef(){ if(ZZR.ref===undefined){ try{ ZZR.ref = (await getJSON('ref/zzr_ref.json') || {}).items || {}; }catch(e){ ZZR.ref = {}; } } return ZZR.ref; }
+const isoOfN = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
+function zzrWx(f, n){
+  const W = FWX.data; if(!W) return null;
+  const pt = ((W.fields || {})[f] || {}).point || 'Захід', days = (((W.points || {})[pt] || {}).daily) || [];
+  const iso = isoOfN(n), nx = isoOfN(n+1), a = days.find(x => x.d===iso), b = days.find(x => x.d===nx);
+  return a ? {pt, t:a.t, tx:a.tx, tn:a.tn, ws:a.ws, rh:a.rh, p:a.p, pn:b ? b.p : null} : null;
+}
+function zzrRate(R, crop){                                    // норма з етикетки для культури: [min, max, од.]
+  const r = (R || {}).rate || {}, u = r.u || ''; const c = String(crop || '').toLowerCase(); if(!c) return null;
+  const roots = [c.slice(0, 5)]; if(/пшениц|ячм|жит|овес/.test(c)) roots.push('зернов', 'колос');
+  const k = Object.keys(r).find(k => k!=='u' && Array.isArray(r[k]) && roots.some(x => k.toLowerCase().includes(x)));
+  return k ? [r[k][0], r[k][r[k].length-1], u] : null;
+}
+function zzrUnitK(lu, u){                                    // множник: одиниця обліку (л/кг) → одиниця етикетки (л/га, мл/га, кг/га, г/га)
+  const a = String(lu || '').toLowerCase().split('/')[0].trim(), b = String(u || '').toLowerCase().trim();
+  if(!a || !b) return null; if(a===b) return 1;
+  if(a==='г' && b==='кг') return 1000; if(a==='мл' && b==='л') return 1000; if(a==='кг' && b==='г') return 0.001; if(a==='л' && b==='мл') return 0.001;
+  if((a==='л' && b==='кг') || (a==='кг' && b==='л')) return 1;   // рідкі/сухі форми в обліку інколи плутають — порівнюємо як є
+  return null;
+}
+const zzrAi = R => (R && R.ai || []).map(a => a.n+(a.c!=null ? ' '+String(a.c).replace('.', ',')+' '+(a.u || '') : '')).join(' + ');
+const zzrMoa = R => [...new Set((R && R.ai || []).map(a => a.moa).filter(m => m && /^(HRAC|FRAC|IRAC)/.test(m)))];
+function zzrBuild(){
+  const ref = ZZR.ref || {};
+  const ap = MODEL.appl.filter(a => a.op==='Обприскування (ЗЗР)' || a.cat==='ЗЗР');
+  const groups = d3.groups(ap, a => a.d.n+'|'+a.f+'|'+a.c).map(([k, v]) => {
+    const a0 = v[0], ha = d3.max(v, a => a.ha) || 0;
+    const items = d3.groups(v, a => a.mat).map(([m, vv]) => { const q = d3.sum(vv, a => a.q), R = ref[m] || {};
+      return {m, q, u:vv[0].u, rate: ha ? q/ha : null, R, type:R.type || (MAT[m] || {}).cat || '', ai:zzrAi(R), moa:zzrMoa(R)}; });
+    const ww = MODEL.works.filter(w => w.d.n===a0.d.n && /обприск/i.test(w.op) && (w.f===a0.f || !w.f));
+    return {n:a0.d.n, y:a0.y, f:a0.f, c:a0.c, ha, items, note:[...new Set(v.map(a => a.note).filter(Boolean))].join('; '),
+      who:[...new Set(ww.map(w => w.p).filter(Boolean))].join(', '), mach:[...new Set(ww.map(w => w.m).filter(Boolean))].join(', '), wx:zzrWx(a0.f, a0.d.n)};
+  }).sort((a, b) => a.n - b.n);
+  const used = {};                                              // повтор груп дії на полі в сезоні
+  groups.forEach(g => { g.flags = [];
+    g.items.forEach(it => { const lr = zzrRate(it.R, g.c);
+      const k = zzrUnitK(lr && lr[2], it.u), rr = it.rate!=null && k ? it.rate*k : null;   // норма обліку в одиницях етикетки (кг→г, л→мл)
+      if(lr && rr!=null && (rr < lr[0]*0.9 || rr > lr[1]*1.1)) g.flags.push(it.m+': норма '+nf(rr, rr < 10 ? 2 : 0)+' '+lr[2]+' поза етикеткою '+nf(lr[0], 2)+(lr[1]!==lr[0] ? '–'+nf(lr[1], 2) : '')+' '+lr[2]);
+      it.moa.forEach(mo => { const key = g.y+'|'+g.f+'|'+mo, u = used[key] || (used[key] = {k:0, last:{}});
+        const prev = u.last[it.m]; u.last[it.m] = g.n; if(prev!=null && g.n - prev <= 7) return;   // той самий препарат до 7 дн. — продовження проходу, не повтор
+        u.k++; if(u.k >= 2) g.flags.push(mo+' — '+u.k+'-й прохід на полі за сезон ('+it.m+'), ризик резистентності'); });
+      if(!it.R.found) g.flags.push(it.m+': немає в довіднику ЗЗР'); });
+    const w = g.wx;
+    if(w){ const rain = (w.p || 0) + (w.pn || 0);
+      if(rain >= 5) g.flags.push('опади '+nf(w.p, 1)+' мм у день і '+nf(w.pn, 1)+' мм наступного — ризик змиву');
+      if(w.tx > 25 && g.items.some(it => /гербіц/i.test(it.type))) g.flags.push('спека до '+nf(w.tx, 0)+'° — гербіцид краще вночі/вранці');
+      if(w.ws > 4) g.flags.push('середній вітер '+nf(w.ws, 1)+' м/с — ризик знесення'); }
+    else g.flags.push('погоди за цей день немає');
+  });
+  return groups;
+}
+async function renderZzr(){
+  const box = $('#zzr-body'); if(!box || !MODEL) return;
+  if(ZZR.ref===undefined || FWX.data===undefined){ box.replaceChildren(el('p', {class:'note'}, 'Завантажую довідник ЗЗР і погоду…')); await Promise.all([ensureZzrRef(), ensureFwx()]); }
+  const all = zzrBuild(), ys = [...new Set(all.map(g => g.y))].sort((a, b) => b - a);
+  if(!ZZR.y || !ys.includes(ZZR.y)) ZZR.y = ys[0];
+  const fs = [...new Set(all.filter(g => g.y===ZZR.y).map(g => g.f))].sort((a, b) => a.localeCompare(b, 'uk'));
+  if(ZZR.f && !fs.includes(ZZR.f)) ZZR.f = '';
+  const L = all.filter(g => g.y===ZZR.y && (!ZZR.f || g.f===ZZR.f));
+  const ys_ = el('select', {onchange:ev => { ZZR.y = +ev.target.value; renderZzr(); }}, ys.map(y => el('option', y===ZZR.y ? {value:y, selected:''} : {value:y}, 'урожай '+y)));
+  const fs_ = el('select', {onchange:ev => { ZZR.f = ev.target.value; renderZzr(); }}, el('option', {value:''}, 'усі поля'), fs.map(f => el('option', f===ZZR.f ? {value:f, selected:''} : {value:f}, f)));
+  const ha = d3.sum(L, g => g.ha), nfl = d3.sum(L, g => g.flags.length);
+  const tb = el('table', {class:'zzr-t'}, el('thead', {}, el('tr', {}, ['Дата','Поле, культура','Га','Препарати (бакова суміш): норма · д.р. · група','Призначення','Виконавець, техніка','Погода дня','Зауваження'].map(h => el('th', {class:'l'}, h)))),
+    el('tbody', {}, L.map(g => el('tr', {},
+      el('td', {class:'l'}, dateTxt(g.n)), el('td', {class:'l'}, el('b', {}, g.f || '—'), el('br'), g.c || ''), el('td', {}, nf(g.ha, 1)),
+      el('td', {class:'l', style:'white-space:normal;min-width:260px'}, g.items.map(it => el('div', {}, el('b', {}, it.m), ' — ', it.rate!=null ? nf(it.rate, 3)+' '+(it.u || '')+'/га' : '—', ' (', nf(it.q, 1), ' ', it.u || '', ')',
+        it.ai ? el('div', {class:'note'}, (it.type ? it.type+': ' : '')+it.ai+(it.moa.length ? ' · '+it.moa.join(', ') : '')) : ''))),
+      el('td', {class:'l', style:'white-space:normal;max-width:220px'}, g.note || '—'),
+      el('td', {class:'l', style:'white-space:normal'}, g.who || '—', g.mach ? el('div', {class:'note'}, g.mach) : ''),
+      el('td', {class:'l', style:'white-space:normal'}, g.wx ? [nf(g.wx.tn, 0)+'…'+nf(g.wx.tx, 0)+'°, сер. '+nf(g.wx.t, 0)+'°', el('br'), 'вітер '+nf(g.wx.ws, 1)+' м/с, RH '+nf(g.wx.rh, 0)+' %', el('br'), 'опади '+nf(g.wx.p, 1)+' / наст. день '+nf(g.wx.pn, 1)+' мм'] : '—'),
+      el('td', {class:'l', style:'white-space:normal;max-width:260px;color:'+(g.flags.length ? 'var(--warn)' : 'inherit')}, g.flags.length ? g.flags.map(x => el('div', {}, '• '+x)) : '✓')))));
+  box.replaceChildren(
+    el('div', {class:'toolbar no-print'}, el('label', {class:'note'}, 'Сезон'), ys_, el('label', {class:'note'}, 'Поле'), fs_,
+      el('button', {class:'btn small', type:'button', onclick:zzrExcel}, '⬇ Excel'), el('button', {class:'btn small', type:'button', onclick:zzrPrint}, '🖨 Друк')),
+    el('p', {class:'note'}, 'ТОВ «Долинське» · урожай '+ZZR.y+(ZZR.f ? ' · поле '+ZZR.f : ' · усі поля')+' · обробок: '+L.length+', оброблено '+nf(ha, 1)+' га (з повторами) · зауважень: '+nfl+
+      '. Погода — середньодобова за точкою поля (Open-Meteo/ERA5), час внесення в обліку не вказаний. Норма = кількість ÷ площа з обліку.'),
+    L.length ? el('div', {class:'tablewrap'}, tb) : el('p', {class:'note'}, 'За цей сезон обробок ЗЗР в обліку немає.'));
+}
+function zzrExcel(){
+  const L = zzrBuild().filter(g => g.y===ZZR.y && (!ZZR.f || g.f===ZZR.f));
+  const H = ['Дата','Поле','Культура','Оброблено, га','Препарат','Тип','Діюча речовина','Група дії','Норма, од./га','Од.','Кількість всього','Препаратів у баковій суміші','Призначення','Виконавець','Техніка','t мін, °C','t макс, °C','t сер., °C','Вітер сер., м/с','Вологість, %','Опади в день, мм','Опади наступного дня, мм','Зауваження'];
+  const rows = []; L.forEach(g => g.items.forEach(it => rows.push([g.n, g.f, g.c, +(+g.ha).toFixed(2), it.m, it.type, it.ai, it.moa.join(', '), it.rate!=null ? +it.rate.toFixed(3) : null, it.u, +it.q.toFixed(3), g.items.length, g.note, g.who, g.mach,
+    g.wx ? g.wx.tn : null, g.wx ? g.wx.tx : null, g.wx ? g.wx.t : null, g.wx ? g.wx.ws : null, g.wx ? g.wx.rh : null, g.wx ? g.wx.p : null, g.wx ? g.wx.pn : null, g.flags.join('; ')])));
+  const ws = XLSX.utils.aoa_to_sheet([['Журнал застосування засобів захисту рослин — ТОВ «Долинське»'], ['Урожай '+ZZR.y+(ZZR.f ? ', поле '+ZZR.f : ', усі поля')+' · сформовано '+new Date().toLocaleDateString('uk-UA')], H, ...rows]);
+  for(let r = 3; r < rows.length+3; r++){ const c = ws[XLSX.utils.encode_cell({r, c:0})]; if(c) c.z = 'dd.mm.yyyy'; }
+  ws['!cols'] = H.map((h, i) => ({wch: [11,14,12,9,16,18,40,16,10,5,10,8,40,22,22,7,7,7,8,8,8,8,60][i] || 10})); ws['!freeze'] = {xSplit:0, ySplit:3};
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Журнал ЗЗР');
+  XLSX.writeFile(wb, 'Журнал_ЗЗР_Долинське_'+ZZR.y+(ZZR.f ? '_'+ZZR.f.replace(/[^\wА-Яа-яІіЇїЄє]+/g, '_') : '')+'.xlsx');
+}
+function zzrPrint(){ document.body.classList.add('print-zzr'); const off = () => { document.body.classList.remove('print-zzr'); window.removeEventListener('afterprint', off); }; window.addEventListener('afterprint', off); setTimeout(() => window.print(), 50); }
 
 // ---------- ДОВІДНИКИ
 function renderSettings(){
