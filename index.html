@@ -1250,7 +1250,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '23.11b Норми ЗЗР';
+const APP_VER = '23.11c Прибрати рядок';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1543,6 +1543,15 @@ async function closeShift(sh, st){
   delete DS.sh[sh.id]; markDirty(); renderDay();
   toast((ok ? 'Зміну закрито' : 'Зміну збережено на пристрої, відправлю пізніше')+(devs.length ? ' · відхилення від плану: '+devs.join(', ') : ''));
 }
+function rowRemove(r){                               // прибрати додатковий рядок («+» ще одна робота) або доданого вручну працівника; 6 с — «Повернути»
+  const i = DS.rows.indexOf(r); if(i < 0) return;
+  DS.rows.splice(i, 1); markDirty(); renderDay();
+  const x = toastEl(); clearTimeout(toast.t);
+  x.replaceChildren((r.p || 'Рядок')+(r.op ? ' — «'+r.op+'»' : '')+' прибрано ',
+    el('button', {class:'btn small', type:'button', style:'margin-left:8px', on:{click: () => { DS.rows.splice(Math.min(i, DS.rows.length), 0, r); markDirty(); renderDay(); x.style.opacity = 0; x.style.pointerEvents = 'none'; }}}, '↶ Повернути'));
+  x.style.opacity = 1; x.style.pointerEvents = 'auto';
+  toast.t = setTimeout(() => { x.style.opacity = 0; x.style.pointerEvents = 'none'; }, 6000);
+}
 function renderRows(){
   const box = $('#rows'); box.replaceChildren(); const lock = isClosed(DAY) && !DS.editing;
   DS.rows.forEach(r => {
@@ -1564,7 +1573,8 @@ function renderRows(){
       el('div', {class:'acts'},
         el('button', {class:'btn small mobile-only', on:{click: () => { r.showOil = !r.showOil; renderDay(); }}}, r.showOil ? '− масло' : '+ масло'),
         el('button', {class:'btn small', title:'Скопіювати роботу з останнього дня', on:{click: () => { const d = yesterday(r); toast(d ? r.p+': як '+d.split('-').reverse().join('.') : 'Немає попередніх записів'); renderDay(); }}}, '⟲ вчора'),
-        el('button', {class:'btn small', title:'Ще одна робота цієї людини', on:{click: () => { DS.rows.splice(DS.rows.indexOf(r)+1, 0, {...blankRow(r.p, true), st:'працює'}); renderDay(); }}}, '+')));
+        el('button', {class:'btn small', title:'Ще одна робота цієї людини', on:{click: () => { DS.rows.splice(DS.rows.indexOf(r)+1, 0, {...blankRow(r.p, true), st:'працює'}); renderDay(); }}}, '+'),
+        (r.sub || r.newp) ? el('button', {class:'btn small', title:'Прибрати цей рядок', 'aria-label':'Прибрати рядок '+(r.p || ''), style:'color:var(--bad)', on:{click: () => rowRemove(r)}}, '✕') : ''));
     if(lock) row.style.pointerEvents = 'none';
     box.append(row);
     const pl = passLine(r); if(pl){ if(lock) pl.style.pointerEvents = 'none'; box.append(pl); }
