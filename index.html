@@ -860,6 +860,7 @@ function renderFieldCard(){
   const ndl = ndviLine(f, YEAR); if(ndl) box.append(ndl);
   const nab = ndviAiBlock(f); if(nab) box.append(nab);
   const pzl = pzLine(f, true); if(pzl) box.append(pzl); else if(PZ.data===undefined) ensurePz().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f && pzLine(f)) renderFieldCard(); });
+  const ycb = ycBlock(f); if(ycb) box.append(ycb); else if(YC.data===undefined && (ROLE==='o' || ROLE==='a')) ensureYc().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f && ycOf(f)) renderFieldCard(); });
   const fwb = fwxBlock(f, YEAR); if(fwb) box.append(fwb);
   const wib = winterBlock(f, YEAR); if(wib) box.append(wib);
   else if(FWX.data===undefined) ensureFwx().then(d => { const s = document.getElementById('field-sel'); if(d && s && s.value===f) renderFieldCard(); });
@@ -1264,7 +1265,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '23.11f Зони продуктивності';
+const APP_VER = '23.11g Прогноз урожайності';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -3688,6 +3689,57 @@ function pzLine(n, full){
   if(full && (z.points || []).length) box.append(el('div', {}, 'Точки проб і огляду: ', ...z.points.map((p, i) => el('span', {}, i ? ' · ' : '',
     el('a', {href:gmaps(p.ll), target:'_blank', rel:'noopener'}, p.id), ' ('+['слабка', 'середня', 'сильна'][p.zone]+', '+nf((p.patch_rel ?? p.rel)*100, 0)+' %, пляма '+nf(p.patch_ha, 1)+' га)'))));
   return box;
+}
+// ======= Прогноз урожайності (етап 4): geo/yieldcast.json рахує tools/yieldcast.py у workflow «NDVI по полях» (раз на 2 дні)
+// бачать власник і агроном; оцінка агронома з поля → yieldcheck/<рік>/<поле>.json
+const YC = {data:undefined, checks:{}};
+async function ensureYc(){ if(YC.data===undefined){ try{ YC.data = await getJSON('geo/yieldcast.json'); }catch(e){ YC.data = null; } } return YC.data; }
+function ycOf(n){ const F = (YC.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
+const ycPath = (y, n) => 'yieldcheck/'+y+'/'+n.replace(/[\\/:*?"<>|]/g, '_')+'.json';
+async function ycCheck(y, n){ const k = y+'|'+n; if(!(k in YC.checks)){ try{ YC.checks[k] = await getJSON(ycPath(y, n)); }catch(e){ YC.checks[k] = null; } } return YC.checks[k]; }
+const YCQ = {'добра':'var(--ok, #2e7d32)', 'середня':'var(--warn)', 'низька':'var(--bad)'};
+function ycBlock(n){
+  if(ROLE!=='o' && ROLE!=='a') return null;
+  const recs = ycOf(n); if(!recs || !recs.length) return null;
+  const M = (YC.data || {}).models || {};
+  const box = el('div', {class:'note', style:'margin:4px 0'});
+  recs.slice().sort((a, b) => b.year - a.year).forEach(r => {
+    const m = M[r.crop];
+    const head = el('div', {}, el('b', {}, 'Прогноз урожайності '+r.year+' · '+r.crop+': '));
+    if(r.status==='прогноз'){
+      head.append(el('b', {}, '~'+nf(r.forecast)+' ц/га'), ' (діапазон '+nf(r.lo)+'–'+nf(r.hi)+')',
+        r.ha ? ' · ≈ '+nf(r.forecast*r.ha/10, 0)+' т на '+nf(r.ha, 0)+' га' : '');
+      if(r.fact!=null) head.append(' · факт '+nf(r.fact)+' ц/га'+(r.fact_ha && r.ha && r.fact_ha < r.ha*0.9 ? ' (скошено '+nf(r.fact_ha, 0)+' з '+nf(r.ha, 0)+' га)' : '')
+        +(r.fact>=r.lo && r.fact<=r.hi ? ' — у діапазоні' : ' — поза діапазоном'));
+    } else head.append(r.status==='рано' ? 'ще рано' : 'немає');
+    box.append(head);
+    if(r.note) box.append(el('div', {}, r.note));
+    if(m && r.status==='прогноз') box.append(el('div', {}, 'Точність моделі: ', el('b', {style:'color:'+(YCQ[m.quality] || 'inherit')}, m.quality),
+      ' — '+m.quality_text+' (перевірка на '+m.n+' полях 2025–2026, кожне поле — без його власного урожаю). NDVI не бачить вовчок, птахів, втрати при збиранні; погода окремо не врахована.'));
+    if(r.status==='прогноз' && r.fact==null){
+      const slot = el('div', {}); box.append(slot);
+      ycCheck(r.year, n).then(c => slot.replaceChildren(...ycCheckUi(r, n, c)));
+    }
+  });
+  return box;
+}
+function ycCheckUi(r, n, c){
+  const out = [];
+  if(c) out.push(el('div', {}, 'Оцінка агронома ('+(c.by || '')+', '+String(c.at || '').slice(0, 10)+'): ', el('b', {}, c.verdict),
+    c.value!=null ? ' · '+nf(c.value)+' ц/га' : '', c.note ? ' · '+c.note : ''));
+  if(ROLE==='a' || ROLE==='o'){
+    const val = el('input', {type:'number', step:'0.5', min:'0', placeholder:'ц/га', style:'width:80px', value:c && c.value!=null ? c.value : ''});
+    const note = el('input', {type:'text', placeholder:'чому (з поля)', style:'min-width:160px;flex:1', value:c && c.note || ''});
+    const save = v => { const doc = {kind:'yieldcheck', year:r.year, field:n, crop:r.crop, forecast:r.forecast, lo:r.lo, hi:r.hi, verdict:v,
+      value:val.value==='' ? null : +val.value, note:note.value.trim() || null, by:ROLE_NAMES[ROLE] || ROLE, at:new Date().toISOString()};
+      YC.checks[r.year+'|'+n] = doc; saveDoc(ycPath(r.year, n), doc, 'Оцінка урожаю: '+n+' '+r.year); toast('Оцінку збережено'); renderFieldCard(); };
+    out.push(el('div', {class:'acts', style:'justify-content:flex-start;flex-wrap:wrap;gap:6px;margin-top:4px'},
+      el('span', {}, c ? 'Змінити оцінку:' : 'Агроном, з поля:'),
+      el('button', {class:'btn small', onclick:() => save('згоден')}, 'Згоден'),
+      el('button', {class:'btn small', onclick:() => save('буде менше')}, 'Буде менше'),
+      el('button', {class:'btn small', onclick:() => save('буде більше')}, 'Буде більше'), val, note));
+  }
+  return out;
 }
 async function drawPzLayer(){
   if(PZ.layer){ PZ.layer.remove(); PZ.layer = null; }
