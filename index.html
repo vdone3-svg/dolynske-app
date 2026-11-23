@@ -1939,124 +1939,138 @@ $('#rp-add').addEventListener('click', () => { if(!$('#rp-w').value){ toast('О�
 // ---------- ТО-модуль (Графік технічного обслуговування)
 let TO_DATA = null; // ref/machinery.json — завантажується lazy
 
-const TO_LS_KEY = id => 'to_mh_' + id;   // localStorage ключ для мотогодин машини
-
-function toStatusColor(pct){
-  // pct = відсоток від поточного до наступного: 0=тільки зроблено, 1=час прийшов
-  if(pct >= 1) return '#c0392b';     // прострочено — червоний
-  if(pct >= 0.8) return '#e67e22';  // ≤20% залишилось — помаранчевий
-  if(pct >= 0.6) return '#f1c40f';  // ≤40% залишилось — жовтий
-  return '#27ae60';                  // зелений — є запас
+// Мотогодини беруться з RAW['Мотогодини'] — той самий журнал, що й #mh-table.
+// Повертає останній показник для техніки за іменем (name) або null.
+function toLastMh(machName){
+  const rows = rowsOf(RAW, 'Мотогодини')
+    .map(r => ({d: dt(r['Дата']), m: str(r['Техніка']), v: num(r['Показник лічильника, м-год'])}))
+    .filter(r => r.d && r.m === machName && r.v > 0)
+    .sort((a, b) => b.d.n - a.d.n);
+  return rows.length ? rows[0].v : null;
 }
 
-function renderToCard(machine, currentMh){
+function toStatusColor(pct){
+  if(pct >= 1)   return '#c0392b';  // прострочено — червоний
+  if(pct >= 0.8) return '#e67e22';  // ≤20% залишилось — помаранчевий
+  if(pct >= 0.6) return '#f1c40f';  // ≤40% залишилось — жовтий
+  return '#27ae60';                  // є запас — зелений
+}
+
+function renderToCard(machine, currentMh, machRefName){
   const card = el('div', {style:'border:1px solid var(--border,#ddd);border-radius:8px;padding:12px;background:var(--bg-card,#fff)'});
 
-  // Заголовок машини
-  const head = el('div', {style:'display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px'});
-  head.append(
-    el('div', {},
-      el('div', {style:'font-weight:700;font-size:1.05em'}, machine.name),
-      el('div', {class:'note', style:'margin-top:2px'}, machine.engine || machine.fullName || '')
-    )
+  // Заголовок
+  card.append(
+    el('div', {style:'font-weight:700;font-size:1.05em;margin-bottom:2px'}, machine.name),
+    el('div', {class:'note', style:'margin-bottom:10px'}, machine.engine || machine.fullName || '')
   );
-  card.append(head);
 
-  // Поле вводу мотогодин
-  const inputWrap = el('div', {style:'display:flex;gap:6px;align-items:center;margin-bottom:12px'});
-  const inp = el('input', {type:'number', min:'0', step:'1', placeholder:'Введіть м-год…', style:'flex:1;padding:4px 8px;border:1px solid var(--border,#ccc);border-radius:4px;font-size:0.95em', value: currentMh !== null ? String(currentMh) : ''});
-  const saveBtn = el('button', {class:'btn', style:'white-space:nowrap;padding:4px 10px;font-size:0.9em'}, 'Зберегти');
-  saveBtn.addEventListener('click', () => {
+  // Поточний показник + кнопка «Додати показник»
+  const mhLine = el('div', {style:'display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap'});
+  if(currentMh !== null){
+    mhLine.append(el('span', {style:'font-size:0.95em'}, `🔢 Останній показник: `), el('strong', {}, nf(currentMh, fmt0) + ' м-год'));
+  } else {
+    mhLine.append(el('span', {class:'note', style:'font-style:italic'}, 'Показника ще немає — додайте перший запис нижче'));
+  }
+
+  // Швидкий ввід нового показника прямо з картки (зберігається через saveEvent як і #mh-add)
+  const inp = el('input', {type:'number', min:'0', step:'1', placeholder:'Новий показник, м-год', style:'width:150px;padding:3px 7px;border:1px solid var(--border,#ccc);border-radius:4px;font-size:0.9em'});
+  const addBtn = el('button', {class:'btn primary', style:'padding:3px 10px;font-size:0.9em'}, '+ Додати');
+  addBtn.addEventListener('click', () => {
     const v = parseInt(inp.value, 10);
-    if(isNaN(v) || v < 0){ toast('Введіть коректне число мотогодин'); return; }
-    localStorage.setItem(TO_LS_KEY(machine.id), String(v));
-    renderTO();
-    toast('Показник збережено: ' + machine.name);
+    if(isNaN(v) || v <= 0){ toast('Введіть коректне число мотогодин'); return; }
+    if(currentMh !== null && v < currentMh){ toast(`Нове значення (${v}) менше за попереднє (${currentMh}) — перевірте`); return; }
+    addBtn.disabled = true; addBtn.textContent = '…';
+    saveEvent({'Мотогодини':[{'Дата': toSerial(DAY), 'Техніка': machRefName, 'Показник лічильника, м-год': v}]}, 'мотогодини')
+      .then(() => { inp.value = ''; renderTech(); toast('Показник збережено: ' + machRefName); })
+      .catch(e => { toast('Помилка збереження: ' + e.message); addBtn.disabled = false; addBtn.textContent = '+ Додати'; });
   });
-  inputWrap.append(el('label', {class:'note', style:'white-space:nowrap'}, 'Поточний лічильник, м-год:'), inp, saveBtn);
-  card.append(inputWrap);
+  mhLine.append(inp, addBtn);
+  card.append(mhLine);
 
   if(currentMh === null){
-    card.append(el('div', {class:'note', style:'font-style:italic;color:#888'}, 'Введіть показник лічильника, щоб побачити статус ТО.'));
+    card.append(el('div', {class:'note', style:'color:#888;font-style:italic'}, 'Статус ТО з\'явиться після першого запису мотогодин.'));
     return card;
   }
 
-  // Розрахунок і відображення інтервалів
-  const intervals = machine.intervals || [];
-  const statusList = el('div', {style:'display:flex;flex-direction:column;gap:6px'});
-
-  intervals.forEach(interval => {
+  // Інтервали ТО
+  const statusList = el('div', {style:'display:flex;flex-direction:column;gap:5px'});
+  (machine.intervals || []).forEach(interval => {
     const h = interval.hours;
-    // Скільки разів вже виконано: floor(currentMh / h)
-    const doneCount = Math.floor(currentMh / h);
-    // Коли наступне ТО
-    const nextDue = (doneCount + 1) * h;
+    const nextDue = (Math.floor(currentMh / h) + 1) * h;
     const remaining = nextDue - currentMh;
-    const pct = 1 - remaining / h;  // 0 = тільки зроблено, 1 = прострочено
-
+    const pct = 1 - remaining / h;
     const color = toStatusColor(pct);
-    const isOverdue = currentMh >= nextDue;
+    const isOverdue = pct >= 1;
 
-    const row = el('div', {style:'display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;background:var(--bg,#f8f8f8)'});
+    const row = el('div', {style:'display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;background:var(--bg,#f5f5f5)'});
+    row.append(el('div', {style:`width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0`}));
 
-    // Кольоровий індикатор
-    const dot = el('div', {style:`width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0`});
-
-    // Текст
     const textWrap = el('div', {style:'flex:1;min-width:0'});
-    const labelLine = el('div', {style:'font-weight:600;font-size:0.9em'}, `ТО-${h} (${interval.label})`);
-    let statusText;
-    if(isOverdue){
-      statusText = `⚠️ Прострочено на ${Math.abs(remaining)} м-год (мало бути при ${nextDue - h} м-год)`;
+    textWrap.append(
+      el('div', {style:'font-weight:600;font-size:0.9em'}, `ТО-${h} · ${interval.label}`),
+      el('div', {class:'note', style:`color:${color};font-size:0.82em;margin-top:1px`},
+        isOverdue
+          ? `⚠️ Прострочено на ${Math.abs(remaining)} м-год (мало бути при ${nextDue - h} м-год)`
+          : `Залишилось ${remaining} м-год → наступне при ${nextDue} м-год`)
+    );
+    row.append(textWrap);
+
+    // Розгортання завдань
+    const tasks = interval.tasks || [];
+    if(tasks.length){
+      const toggle = el('button', {class:'btn', style:'padding:2px 7px;font-size:0.8em;flex-shrink:0'}, '▼');
+      const taskList = el('ul', {hidden:true, style:'margin:5px 0 0 18px;padding:0;font-size:0.82em;color:var(--text-muted,#555)'});
+      tasks.forEach(t => taskList.append(el('li', {style:'margin-bottom:2px'}, t)));
+      toggle.addEventListener('click', () => { taskList.hidden = !taskList.hidden; toggle.textContent = taskList.hidden ? '▼' : '▲'; });
+      row.append(toggle);
+      statusList.append(row, taskList);
     } else {
-      statusText = `Залишилось: ${remaining} м-год → наступне при ${nextDue} м-год`;
+      statusList.append(row);
     }
-    const statusLine = el('div', {class:'note', style:`color:${color};font-size:0.82em;margin-top:1px`}, statusText);
-    textWrap.append(labelLine, statusLine);
-
-    // Розгорнути список завдань
-    const toggle = el('button', {class:'btn', style:'padding:2px 7px;font-size:0.8em;flex-shrink:0'}, '▼');
-    const taskList = el('ul', {hidden:true, style:'margin:6px 0 0 18px;padding:0;font-size:0.82em;color:var(--text-muted,#555)'});
-    (interval.tasks || []).forEach(t => { const li = el('li', {style:'margin-bottom:2px'}, t); taskList.append(li); });
-    toggle.addEventListener('click', () => { taskList.hidden = !taskList.hidden; toggle.textContent = taskList.hidden ? '▼' : '▲'; });
-
-    row.append(dot, textWrap);
-    if((interval.tasks||[]).length) row.append(toggle);
-
-    statusList.append(row);
-    if(!taskList.hidden || (interval.tasks||[]).length) statusList.append(taskList);
   });
-
   card.append(statusList);
   return card;
 }
 
 function renderTO(){
   const container = $('#to-cards');
-  if(!container) return;
+  if(!container || !RAW) return;
 
   if(!TO_DATA){
-    // Machinery.json завантажується як частина DOCS у loadAll
     const raw = DOCS && DOCS['ref/machinery.json'];
     if(raw && raw.machines){ TO_DATA = raw; }
     else {
       container.replaceChildren(el('div', {class:'note', style:'padding:16px'}, 'Завантажую дані технічного обслуговування…'));
-      // спробуємо lazy load
       getJSON('ref/machinery.json').then(d => { if(d && d.machines){ TO_DATA = d; renderTO(); } }).catch(() => {});
       return;
     }
   }
 
-  const cards = container;
-  cards.replaceChildren();
+  // Будуємо мапу: назва техніки в machinery.json → назва в журналі Мотогодини (REF.mach)
+  // Шукаємо за частиною назви (case-insensitive)
+  const machNames = REF.mach.map(m => m.n);
+  function matchMachName(machine){
+    // Пряма відповідність або часткова (напр. 'Deutz X720' → 'Deutz великий')
+    const direct = machNames.find(n => n.toLowerCase().includes(machine.name.toLowerCase()) || machine.name.toLowerCase().includes(n.toLowerCase()));
+    if(direct) return direct;
+    // За id: deutz-x720 → шукаємо ключові слова
+    const idMap = {'deutz-x720':'Deutz великий', 'khta-200':'ХТА-200', 'case-5088':'CASE 5088', 'jcb-541-70':'JCB 541-70', 'deutz-small':'Deutz малий', 'estar-bes110':'Estar BES'};
+    const mapped = idMap[machine.id];
+    return machNames.find(n => mapped && n.toLowerCase().includes(mapped.toLowerCase())) || mapped || machine.name;
+  }
 
+  container.replaceChildren();
   TO_DATA.machines.forEach(machine => {
-    const stored = localStorage.getItem(TO_LS_KEY(machine.id));
-    const currentMh = stored !== null ? parseInt(stored, 10) : null;
-    cards.append(renderToCard(machine, currentMh));
+    const refName = matchMachName(machine);
+    const currentMh = toLastMh(refName);
+    container.append(renderToCard(machine, currentMh, refName));
   });
 
-  $('#to-updated').textContent = 'Дані з localStorage · ' + new Date().toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+  // Дата останнього запису мотогодин
+  const allMh = rowsOf(RAW, 'Мотогодини').map(r => dt(r['Дата'])).filter(Boolean);
+  const lastDate = allMh.length ? dateTxt(d3.max(allMh, d => d.n)) : 'записів немає';
+  $('#to-updated').textContent = `Дані з журналу · останній запис: ${lastDate}`;
 }
 
 // ---------- АКБ (акумулятори)
