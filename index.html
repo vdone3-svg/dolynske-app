@@ -119,7 +119,7 @@ select{font:500 13px var(--body);padding:6px 8px;border-radius:8px;border:1px so
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 @media print{body.print-zzr *{visibility:hidden}body.print-zzr #zzr-card,body.print-zzr #zzr-card *{visibility:visible}body.print-zzr #zzr-card{position:absolute;left:0;top:0;width:100%}body.print-zzr .no-print{display:none!important}body.print-zzr .tablewrap{overflow:visible!important;max-height:none!important}.zzr-t{font-size:9pt}@page{size:A4 landscape;margin:10mm}}
 
-.app{max-width:1520px;margin:0 auto;padding:12px clamp(12px,3vw,28px) 110px;display:grid;gap:14px;position:relative}
+.app{max-width:1520px;margin:0 auto;padding:12px clamp(12px,3vw,28px) 110px;display:grid;gap:14px;position:relative}.app>*{min-width:0} /* елемент сітки не розтягує сторінку на телефоні (рядок тривог nowrap робив її ~770 px) */
 .topbar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between}
 .brand{display:flex;flex-direction:column}.brand b{font:600 20px var(--display)}
 .topctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
@@ -229,7 +229,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .alerts{margin:4px 0 8px;border-radius:10px;border:1px solid var(--line, rgba(127,127,127,.3))}.alerts.crit{border-color:var(--bad);background:color-mix(in srgb, var(--bad) 12%, transparent)}.alerts.warn{border-color:var(--warn);background:color-mix(in srgb, var(--warn) 10%, transparent)}.alerts-head{all:unset;box-sizing:border-box;cursor:pointer;display:flex;gap:10px;align-items:center;width:100%;padding:8px 10px}.alerts.crit .alerts-head b{color:var(--bad)}
 .sync{font-size:12px;color:var(--muted);min-height:16px}.sync.ok{color:var(--good)}.sync.warn{color:var(--warn);font-weight:600}.sync.bad{color:var(--bad);font-weight:600}
 .login{position:fixed;inset:0;background:var(--bg);z-index:20;display:grid;place-items:center;padding:16px}
-.login[hidden]{display:none}.card[hidden]{display:none!important}
+.login[hidden]{display:none}[hidden]{display:none!important}
 .login-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:420px;width:100%;display:grid;gap:10px}
 .login-card h1{font:600 22px var(--display);margin:0}
 .login-card select{width:100%}
@@ -1274,8 +1274,8 @@ const toastEl = () => document.getElementById('toast');
 function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; clearTimeout(toast.t); toast.t = setTimeout(() => x.style.opacity = 0, 2200); }
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
-let ROLE = 'b', TAB = 'day';
-const APP_VER = '24.11f Ролі: підтвердження га, нагадування «день не закрито»';
+let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
+const APP_VER = '24.11g Перегляд власника: як Каріна / як Вова';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -3785,6 +3785,7 @@ function alertRow(a, seen){
 }
 function renderAlerts(){
   const box = $('#alerts'); if(!box) return;
+  if(ROLE==='k'){ box.hidden = true; return; }   // обліковцю тривог немає (ТЗ ролей)
   const seen = alrSeen(), list = alertList(), fresh = list.filter(a => !seen[a.id]);
   const stale = ALR.doc && ALR.doc.date && (new Date(isoToday()) - new Date(ALR.doc.date))/864e5 > 2;
   if(!list.length && !stale && !ALR.leaseLocked){ box.hidden = true; return; }
@@ -5153,7 +5154,7 @@ const OWN_PATH = 'ref/owner.enc.json', OWN_CHECK = 'dolynske-owner-v1';
 const TAB_ROLES = {report:'o', tasks:'oa', day:'ok', plan:'oka', map:'oka', scout:'oa', agro:'o', history:'oka', overview:'o', fields:'oka', inputs:'oa',
   fuel:'ok', tech:'oka', batt:'ok', stock:'ok', journal:'oa', settings:'o'};
 const ROLE_HOME = {o:'report', k:'day', a:'tasks'};
-const whoName = () => LS.get('dl_name') || ROLE_NAMES[ROLE] || ROLE;
+const whoName = () => (LS.get('dl_name') || ROLE_NAMES[ROLE] || ROLE) + (REAL_ROLE==='o' && ROLE!=='o' ? ' (перегляд: '+ROLE_NAMES[ROLE]+')' : '');
 let OWN_KEY = null;
 async function ownKeyFromPass(pass, doc){ return paiKey(pass, b64u8(doc.salt), doc.iter); }
 async function ownVerify(doc, key){ try{ const o = await paiDecrypt(doc, key); return o && o.check===OWN_CHECK; }catch(e){ return false; } }
@@ -5193,8 +5194,24 @@ function ownerGate(){
     document.body.append(box); (name.value ? p1 : name).focus();
   });
 }
+// ТИМЧАСОВО (24.11, на прохання власника): перемикач «Я / як Каріна / як Вова» — власник перевіряє на телефоні, що побачать
+// обліковець і керуючий, не виходячи з ролі. Прибрати після перевірки: REAL_ROLE, dl_view, ownerPreviewUi().
+const VIEW_LABEL = {o:'👤 Я (власник)', k:'👁 Як Каріна', a:'👁 Як Вова'};
+function setView(v){ if(v==='o') LS.del('dl_view'); else LS.set('dl_view', v); LS.del('dl_day'); location.hash = ''; location.reload(); }
+function ownerPreviewUi(){
+  if(REAL_ROLE!=='o') return;
+  const sel = el('select', {id:'view-as', 'aria-label':'Показати застосунок як', style:'width:auto;padding:4px 8px;font-weight:600',
+    on:{change:ev => setView(ev.target.value)}}, ['o', 'k', 'a'].map(v => el('option', {value:v, ...(v===ROLE ? {selected:''} : {})}, VIEW_LABEL[v])));
+  $('#role-name').replaceWith(sel);
+  if(ROLE==='o') return;
+  document.body.prepend(el('div', {id:'view-bar', role:'status', style:'position:sticky;top:0;z-index:60;background:var(--warn);color:#fff;padding:6px 12px;font-weight:600;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap'},
+    el('span', {}, (ROLE==='k' ? '👁 Ви бачите застосунок як Каріна (обліковець)' : '👁 Ви бачите застосунок як Вова (керуючий)')+'. Записи справжні — підпис «'+whoName()+'».'),
+    el('button', {class:'btn small', type:'button', onclick:() => setView('o')}, '↩ Повернутись до себе')));
+}
 function applyRoleUi(){
   $('#role-name').textContent = ROLE==='o' ? 'Власник · '+(LS.get('dl_name') || '') : ROLE==='k' ? 'Обліковець'+(LS.get('dl_name') ? ' · '+LS.get('dl_name') : '') : 'Керуючий'+(LS.get('dl_name') ? ' · '+LS.get('dl_name') : '');
+  $('#btn-xlsx').hidden = ROLE!=='o';   // вивантаження всіх журналів — лише власникам
+  ownerPreviewUi();
   // Каріні на карті — без супутника, зон і оглядів
   if(ROLE==='k') ['#map-mode [data-m="ndvi"]', '#map-mode [data-m="prod"]', '#map-sc', '#ndvi-idx'].forEach(s => document.querySelectorAll(s).forEach(x => x.hidden = true));
 }
@@ -5390,7 +5407,7 @@ function renderHaConf(){
   const box = $('#hc-card'); if(!box) return;
   if(!'oa'.includes(ROLE) || !DOCS){ box.hidden = true; return; }
   const L = hcDays(), pend = L.filter(x => x.st.none || x.st.bad), done = L.filter(x => !x.st.none && !x.st.bad);
-  if(!L.length){ box.hidden = ROLE!=='a'; box.replaceChildren(el('h2', {style:'margin:0 0 4px'}, '🚜 Гектари на підтвердження'), el('p', {class:'note'}, 'Закритих днів з польовими роботами за '+HC_DAYS+' днів немає.')); return; }
+  if(!L.length){ box.hidden = true; box.replaceChildren(); return; }   // нічого підтверджувати — не показуємо порожню картку
   box.hidden = false;
   const dayBlock = x => el('div', {style:'border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:grid;gap:6px'},
     el('div', {style:'display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center'},
@@ -5459,11 +5476,12 @@ $('#login-go').addEventListener('click', async () => {
     LS.set('dl_token', t); LS.set('dl_role', $('#login-role').value); if($('#login-name').value.trim()) LS.set('dl_name', $('#login-name').value.trim()); $('#login').hidden = true; start(); }
   catch(e){ TOKEN = null; $('#login-msg').textContent = e.message; }
 });
-$('#btn-logout').addEventListener('click', () => { if(navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear-api'); if(window.caches) caches.delete('api-v1'); LS.del('dl_token'); LS.del('dl_ownkey'); TOKEN = null; location.hash = ''; location.reload(); });
+$('#btn-logout').addEventListener('click', () => { if(navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear-api'); if(window.caches) caches.delete('api-v1'); LS.del('dl_token'); LS.del('dl_ownkey'); LS.del('dl_view'); TOKEN = null; location.hash = ''; location.reload(); });
 $('#btn-xlsx').addEventListener('click', () => { if(!RAW){ toast('Дані ще не завантажені'); return; } exportExcel(); });
 async function start(){
   ROLE = LS.get('dl_role') || 'k'; if(!'oka'.includes(ROLE) || ROLE.length!==1){ ROLE = 'k'; LS.set('dl_role', 'k'); }   // бригадира прибрано (24.11)
   if(ROLE==='o'){ try{ await ownerGate(); }catch(e){ if(e.auth){ LS.del('dl_token'); showLogin(e.message); } return; } }
+  REAL_ROLE = ROLE; if(ROLE==='o'){ const v = LS.get('dl_view'); if(v==='k' || v==='a') ROLE = v; }   // ТИМЧАСОВО (24.11): перегляд власника
   applyRoleUi();
   try{ await loadAll(); }
   catch(e){ syncState(e.message, 'bad'); if(e.auth){ LS.del('dl_token'); showLogin(e.message); } return; }
