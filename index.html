@@ -442,7 +442,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   <!-- ТЕХНІКА -->
   <main class="pane" id="pane-tech">
     <div class="grid">
-      <section class="card span12"><h2>Техніка за календарний рік</h2><div class="note" id="tech-note"></div><div class="tablewrap"><table id="tech-table"></table></div></section>
+      <section class="card span12" id="tech-year"><h2>Техніка за календарний рік</h2><div class="note" id="tech-note"></div><div class="tablewrap"><table id="tech-table"></table></div></section>
       <section class="card span6"><h2>Мотогодини</h2><div class="note">Deutz великий, Deutz малий, JCB 541-70, дизельний генератор.</div>
         <div class="line"><div><label class="note" for="mh-m">Техніка</label><select id="mh-m"></select></div><div><label class="note" for="mh-v">Показник, м-год</label><input id="mh-v" type="number" min="0"></div><div><label class="note" for="mh-d">Дата</label><input id="mh-d" type="date"></div><button class="btn primary" id="mh-add">Додати</button></div>
         <div class="tablewrap"><table id="mh-table"></table></div></section>
@@ -1275,7 +1275,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '24.11g Перегляд власника: як Каріна / як Вова';
+const APP_VER = '24.11h Каріна: без Полів, Складу, техніки за рік; ХТА без мотогодин';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1703,7 +1703,7 @@ function checks(){
   const zd = DS.zav.filter(z => +z.dr && +z.dr > (+z.kg||0)); if(zd.length) out.push(['bad', 'На доробіток більше, ніж усього на склад: '+zd.map(z => z.f==='*' ? 'кілька полів' : z.f).join(', '), '«У т.ч. на доробіток» — це частина ваги на склад, не окрема цифра.']);
   const short = stockShort();
   if(short.length) out.push(['block', 'Не вистачає на складі — день не закриється: '+short.map(x => x.m+' — потрібно '+nf(x.q, x.u==='кг' ? 0 : 2)+' '+x.u+', '+(!x.known ? 'немає в довіднику матеріалів' : !x.inv ? 'на складі не оприбутковано' : 'є '+nf(Math.max(x.av, 0), x.u==='кг' ? 0 : 2)+' '+x.u)).join('; '),
-    'Виправте кількість або спершу внесіть прихід на склад (вкладка «Склад» → «Прихід за накладною»).']);
+    ROLE==='o' ? 'Виправте кількість або спершу внесіть прихід на склад (вкладка «Склад» → «Прихід за накладною»).' : 'Виправте кількість або скажіть власнику: прихід на склад вносить він.']);
   const passBad = DS.rows.map(r => [r, passInfo(r)]).filter(([r, p]) => p && p.isLead && (p.type==='repeat' || p.type==='over') && !p.ok);
   if(passBad.length) out.push(['warn', 'Повторна обробка не підтверджена: '+passBad.map(([r, p]) => 'поле '+r.f+' — '+r.op.charAt(0).toLowerCase()+r.op.slice(1)+' ('+(p.type==='repeat' ? 'уже '+nf(p.done, 1)+' га при площі '+nf(p.area, 1) : 'прохід '+(p.full+1)+': '+nf(p.total, 1)+' з '+nf(p.area, 1)+' га')+')').join('; '), 'Підтвердіть «це N-й прохід» у рядку або виправте гектари.']);
   const ppl = [...new Set(DS.rows.map(r => r.p))].filter(p => p && !DS.rows.some(r => r.p===p && r.st));
@@ -2100,10 +2100,11 @@ function toEstimate(machine, refName){
 }
 function toRemindThr(h){ return Math.min(20, h*0.2); }
 // список нагадувань: [{machine, refName, level:'warn'|'bad', text, est}]
+const MH_NO_REMIND = /ХТА/i;   // ХТА 200: лічильника мотогодин немає — нагадувати нічого (власник, 24.11)
 function toReminders(){
   if(!TO_DATA || !RAW) return [];
   const today = toSerial(isoToday()), out = [];
-  TO_DATA.machines.forEach(machine => { const refName = toRefName(machine), e = toEstimate(machine, refName);
+  TO_DATA.machines.forEach(machine => { const refName = toRefName(machine); if(MH_NO_REMIND.test(refName)) return; const e = toEstimate(machine, refName);
     if(!e.last){
       const recent = e.worked.filter(n => n >= today - 14);
       if(recent.length) out.push({machine, refName, level:'warn', est:e, text:`${refName}: лічильник мотогодин ще жодного разу не записаний, а техніка працювала ${recent.length} дн. за 2 тижні. Підійдіть до машини і запишіть показник — інакше графік ТО не порахується.`});
@@ -5151,8 +5152,8 @@ function drawScoutPins(){
 // той самий ключ шифруватиме гроші (етап 3). Ключ запам'ятовується на пристрої власника (dl_ownkey), на інших — ні.
 const OWN_PATH = 'ref/owner.enc.json', OWN_CHECK = 'dolynske-owner-v1';
 // хто бачить вкладку: o — усе; k — облік; a — поля й агрономія. Гроші — лише шифровані (власникам).
-const TAB_ROLES = {report:'o', tasks:'oa', day:'ok', plan:'oka', map:'oka', scout:'oa', agro:'o', history:'oka', overview:'o', fields:'oka', inputs:'oa',
-  fuel:'ok', tech:'oka', batt:'ok', stock:'ok', journal:'oa', settings:'o'};
+const TAB_ROLES = {report:'o', tasks:'oa', day:'ok', plan:'oka', map:'oka', scout:'oa', agro:'o', history:'oka', overview:'o', fields:'oa', inputs:'oa',
+  fuel:'ok', tech:'oka', batt:'ok', stock:'o', journal:'oa', settings:'o'};
 const ROLE_HOME = {o:'report', k:'day', a:'tasks'};
 const whoName = () => (LS.get('dl_name') || ROLE_NAMES[ROLE] || ROLE) + (REAL_ROLE==='o' && ROLE!=='o' ? ' (перегляд: '+ROLE_NAMES[ROLE]+')' : '');
 let OWN_KEY = null;
@@ -5210,7 +5211,8 @@ function ownerPreviewUi(){
 }
 function applyRoleUi(){
   $('#role-name').textContent = ROLE==='o' ? 'Власник · '+(LS.get('dl_name') || '') : ROLE==='k' ? 'Обліковець'+(LS.get('dl_name') ? ' · '+LS.get('dl_name') : '') : 'Керуючий'+(LS.get('dl_name') ? ' · '+LS.get('dl_name') : '');
-  $('#btn-xlsx').hidden = ROLE!=='o';   // вивантаження всіх журналів — лише власникам
+  $('#btn-xlsx').hidden = ROLE!=='o';
+  $('#tech-year').hidden = ROLE!=='o';   // пальне й роботи техніки за рік — лише власникам (24.11, Каріні не потрібно; Вова пального не бачить)   // вивантаження всіх журналів — лише власникам
   ownerPreviewUi();
   // Каріні на карті — без супутника, зон і оглядів
   if(ROLE==='k') ['#map-mode [data-m="ndvi"]', '#map-mode [data-m="prod"]', '#map-sc', '#ndvi-idx'].forEach(s => document.querySelectorAll(s).forEach(x => x.hidden = true));

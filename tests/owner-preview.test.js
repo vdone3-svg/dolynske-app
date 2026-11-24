@@ -42,7 +42,8 @@ async function run(role, extra, fake, fn){
     await pg.selectOption('#view-as', 'k'); await pg.waitForLoadState(); await pg.waitForFunction(() => /завантажено/.test((document.querySelector('#sync')||{}).textContent||''), null, {timeout:60000});
     const tk = await pg.$$eval('#tabs a', a => a.map(x => x.textContent.trim()));
     ok(await pg.isVisible('#view-bar') && (await pg.textContent('#view-bar')).includes('Каріна'), 'смуга «як Каріна»');
-    ok(!tk.some(t => /Звіт дня|Завдання|Огляди|Агрозвіт|Довідники/.test(t)) && tk.some(t => t==='День'), 'вкладки Каріни: '+tk.join(', '));
+    ok(!tk.some(t => /Звіт дня|Завдання|Огляди|Агрозвіт|Довідники|^Поля$|Склад/.test(t)) && tk.some(t => t==='День'), 'вкладки Каріни: '+tk.join(', '));
+    await pg.evaluate(() => { location.hash = 'tech'; }); await pg.waitForTimeout(500); ok(!(await pg.isVisible('#tech-year')) && await pg.isVisible('#to-section'), 'Техніка: без «за календарний рік», ТО є'); ok(!(await pg.evaluate(() => toReminders().some(r => /ХТА/.test(r.refName)))), 'ХТА без нагадування мотогодин'); await pg.evaluate(() => { location.hash = 'day'; }); await pg.waitForTimeout(300);
     ok((await pg.evaluate(() => TAB))==='day', 'стартова — День');
     ok((await pg.evaluate(() => whoName())).includes('перегляд: обліковець'), 'підпис записів: '+await pg.evaluate(() => whoName()));
     ok(!(await pg.isVisible('#btn-reopen')) && !(await pg.isVisible('#alerts')) && !(await pg.isVisible('#btn-xlsx')), 'у Каріни немає «Виправити день», тривог, Excel'); await pg.screenshot({path:require('os').tmpdir()+'/pv.png'});
