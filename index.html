@@ -1275,7 +1275,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '24.11h Каріна: без Полів, Складу, техніки за рік; ХТА без мотогодин';
+const APP_VER = '24.11i Вова: без Полів і Гібридів; без вибору року в Каріни й Вови';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -5152,7 +5152,7 @@ function drawScoutPins(){
 // той самий ключ шифруватиме гроші (етап 3). Ключ запам'ятовується на пристрої власника (dl_ownkey), на інших — ні.
 const OWN_PATH = 'ref/owner.enc.json', OWN_CHECK = 'dolynske-owner-v1';
 // хто бачить вкладку: o — усе; k — облік; a — поля й агрономія. Гроші — лише шифровані (власникам).
-const TAB_ROLES = {report:'o', tasks:'oa', day:'ok', plan:'oka', map:'oka', scout:'oa', agro:'o', history:'oka', overview:'o', fields:'oa', inputs:'oa',
+const TAB_ROLES = {report:'o', tasks:'oa', day:'ok', plan:'oka', map:'oka', scout:'oa', agro:'o', history:'oka', overview:'o', fields:'o', inputs:'o',
   fuel:'ok', tech:'oka', batt:'ok', stock:'o', journal:'oa', settings:'o'};
 const ROLE_HOME = {o:'report', k:'day', a:'tasks'};
 const whoName = () => (LS.get('dl_name') || ROLE_NAMES[ROLE] || ROLE) + (REAL_ROLE==='o' && ROLE!=='o' ? ' (перегляд: '+ROLE_NAMES[ROLE]+')' : '');
@@ -5212,7 +5212,8 @@ function ownerPreviewUi(){
 function applyRoleUi(){
   $('#role-name').textContent = ROLE==='o' ? 'Власник · '+(LS.get('dl_name') || '') : ROLE==='k' ? 'Обліковець'+(LS.get('dl_name') ? ' · '+LS.get('dl_name') : '') : 'Керуючий'+(LS.get('dl_name') ? ' · '+LS.get('dl_name') : '');
   $('#btn-xlsx').hidden = ROLE!=='o';
-  $('#tech-year').hidden = ROLE!=='o';   // пальне й роботи техніки за рік — лише власникам (24.11, Каріні не потрібно; Вова пального не бачить)   // вивантаження всіх журналів — лише власникам
+  $('#tech-year').hidden = ROLE!=='o';
+  $('#years').hidden = ROLE!=='o';   // «Урожай 2025/26/27» — лише власникам; Каріні й Вові — поточний рік (24.11)   // пальне й роботи техніки за рік — лише власникам (24.11, Каріні не потрібно; Вова пального не бачить)   // вивантаження всіх журналів — лише власникам
   ownerPreviewUi();
   // Каріні на карті — без супутника, зон і оглядів
   if(ROLE==='k') ['#map-mode [data-m="ndvi"]', '#map-mode [data-m="prod"]', '#map-sc', '#ndvi-idx'].forEach(s => document.querySelectorAll(s).forEach(x => x.hidden = true));
