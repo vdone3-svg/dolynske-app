@@ -385,6 +385,12 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <div id="rep-body"></div>
     </section>
   </main>
+  <main class="pane" id="pane-tasks">
+    <section class="card">
+      <div class="toolbar"><h2 style="margin:0" id="tsk-h">🎯 Завдання агроному</h2><span class="note" id="tsk-src"></span></div>
+      <div id="tsk-body"></div>
+    </section>
+  </main>
   <main class="pane" id="pane-plan">
     <section class="card">
       <div class="toolbar"><h2 style="margin:0">План робіт</h2><div class="chips" id="plan-days" role="group" aria-label="День плану"></div><span class="note" id="plan-src"></span></div>
@@ -1265,18 +1271,21 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '24.11c Погода: прокрутка лише в таблиці';
-const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
+const APP_VER = '24.11d Завдання агроному';
+const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
 
 // ---------- вкладки
 function renderTabs(){
   const nav = $('#tabs'); nav.replaceChildren();
-  TABS.filter(([id]) => (id!=='settings' && id!=='agro' && id!=='batt' && id!=='report') || ROLE==='o').forEach(([id, t]) => nav.append(el('a', {href:'#'+id, 'aria-current': id===TAB ? 'page' : 'false'}, t)));
+  TABS.filter(([id]) => tabOk(id)).forEach(([id, t]) => { const n = id==='tasks' ? tskBadge() : 0;
+    nav.append(el('a', {href:'#'+id, 'aria-current': id===TAB ? 'page' : 'false'}, t, n ? el('span', {class:'pill bad', style:'margin-left:4px;padding:0 6px'}, String(n)) : '')); });
 }
+// хто бачить вкладку: «Завдання» — власник і агроном; службові — лише власник
+function tabOk(id){ return id==='tasks' ? (ROLE==='o' || ROLE==='a') : ((id!=='settings' && id!=='agro' && id!=='batt' && id!=='report') || ROLE==='o'); }
 function showTab(id){
-  if(!TABS.some(t => t[0]===id) || ((id==='settings' || id==='agro' || id==='batt' || id==='report') && ROLE!=='o')) id = 'day';
+  if(!TABS.some(t => t[0]===id) || !tabOk(id)) id = 'day';
   TAB = id; document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id==='pane-'+id));
   renderTabs(); renderAll(); renderScQueue();
 }
@@ -1284,7 +1293,7 @@ window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
-    fields:() => { renderFields(); renderFieldCard(); }, plan:renderPlan, report:renderReport, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
+    fields:() => { renderFields(); renderFieldCard(); }, plan:renderPlan, tasks:renderTasks, report:renderReport, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
     fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:() => { renderJournal(); renderZzr(); }, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
@@ -4747,10 +4756,11 @@ async function renderGpsPill(){
 }
 
 // --- форма
-async function newScout(){
+async function newScout(task){
   const date = isoNow().slice(0,10);
   SC = {id: date.replace(/-/g,'')+'-'+isoNow().slice(11,19).replace(/:/g,'')+'-'+Math.random().toString(36).slice(2,6), date, field:'', season:+date.slice(0,4), crop:'', phase:'', state:'', problems:{}, density:'', forecast:'', comment:'', voice:[], videos:[], sowOn:false, sow:{}, dc:{on:false, row:'', len:'10', counts:['', '', '']},
     author: LS.get('dl_name') || '', gps:null, gpsMsg:'Визначаю місце…', photos:[]};
+  if(task && task.id){ SC.task = {id:task.id, title:task.title, checklist:task.checklist || [], point:task.point || null}; SC.field = task.field; SC.fieldAuto = false; scFieldChanged(); }
   renderScForm(); $('#sc-form').scrollIntoView({behavior:'smooth', block:'start'});
   try{ await ensureGeo(); await ensureZones(); }catch(e){}
   locateScout();
@@ -4766,9 +4776,9 @@ async function locateScout(){
   if(SC) renderScForm();
 }
 function scFieldChanged(){ SC.season = scSeason(SC.field, SC.date); SC.crop = scCrop(SC.field, SC.season); if(!scPhases(SC.crop.split(' / ')[0]).includes(SC.phase)) SC.phase = ''; }
-async function addPhotos(files, fromCamera){
+async function addPhotos(files, fromCamera, tag){
   for(const file of files){
-    const ph = {k:SC.photos.length, at:isoNow(), status:'обробляю…'}; SC.photos.push(ph); renderScForm();
+    const ph = {k:SC.photos.length, at:isoNow(), status:'обробляю…', tag:tag || null}; SC.photos.push(ph); renderScForm();
     try{
       const ex = await exifGps(file); let g = ex, src = ex ? 'exif' : null;
       if(!g && (fromCamera || Date.now() - file.lastModified < 10*60e3)){ try{ g = posObj(await bestPos(6000, 25)); src = 'phone'; }catch(e){} }
@@ -4887,7 +4897,7 @@ function renderScForm(){
     return h ? ' · гібрид тут: '+h.h+(h.sure ? '' : ' (ймовірно'+(h.m!=null && h.m <= 30 ? ', '+h.m+' м до межі зон' : !h.confirmed ? ', зони не підтверджені' : h.approx ? ', загінний посів — межа умовна' : '')+')') : ' · на полі '+mix.length+' гібриди, зони не задані'; })();
   const auto = SC.field ? el('div', {class:'note'}, 'Урожай '+SC.season+(SC.crop ? ' · '+SC.crop : '')+hybNote+' — з даних господарства') : '';
   const thumbs = SC.photos.map(ph => el('figure', {class:'sc-ph'+(ph.bad ? ' bad' : '')}, ph.url ? el('img', {src:ph.url, alt:'фото'}) : el('div', {class:'sc-ph-wait'}, '…'),
-    el('figcaption', {}, ph.status || (ph.blob ? (SC.field ? 'без GPS-точки → «'+SC.field+'»' : 'без GPS-точки') : '')),
+    el('figcaption', {}, (ph.tag && SC.task ? '🎯 '+tskItemName(SC.task, ph.tag)+' · ' : '')+(ph.status || (ph.blob ? (SC.field ? 'без GPS-точки → «'+SC.field+'»' : 'без GPS-точки') : ''))),
     el('button', {class:'btn small ghost', 'aria-label':'прибрати фото', onclick:() => { SC.photos = SC.photos.filter(x => x!==ph); renderScForm(); }}, '✕')));
   const voices = SC.voice.map(v => el('div', {class:'sc-voice'}, el('span', {}, '🎙 '+mmss(v.dur)), el('audio', {controls:'', preload:'metadata', src:v.url}),
     el('button', {class:'btn small ghost', 'aria-label':'видалити запис', onclick:() => { SC.voice = SC.voice.filter(x => x!==v); renderScForm(); }}, '✕')));
@@ -4897,7 +4907,7 @@ function renderScForm(){
   const dis = lock || wait;
   box.append(el('div', {class:'card sc-form'},
     el('h3', {style:'margin:0'}, 'Новий огляд · '+ddmm(dt(toSerial(SC.date)))),
-    gpsBox, fieldLine, auto,
+    gpsBox, fieldLine, auto, SC.task ? tskScoutBox(dis) : '',
     el('div', {class:'sc-big'},
       el('button', dis ? {class:'btn sc-bigbtn', disabled:''} : {class:'btn sc-bigbtn', onclick:() => cam.click()}, '📷', el('span', {}, 'Фото')),
       recOn ? el('button', {class:'btn sc-bigbtn rec', onclick:recStop}, '■', el('span', {}, 'Стоп ', el('b', {id:'sc-rec-t'}, '0:00')))
@@ -4934,8 +4944,9 @@ async function saveScout(){
     sow: (() => { const w = {}; SOW_F.forEach(([k]) => { const v = SC.sow[k]; if(v!=='' && v!=null && isFinite(+v)) w[k] = +v; }); return Object.keys(w).length ? w : null; })(),
     density_calc: SC.dc.on && dcCalc() ? {row:dcRow(), len:+SC.dc.len, counts:SC.dc.counts.filter(v => v!=='').map(Number)} : null,
     density: SC.density==='' ? null : +SC.density, forecast: SC.forecast==='' ? null : +SC.forecast, comment:SC.comment.trim(), gps:SC.gps ? {lat:SC.gps.lat, lon:SC.gps.lon, acc:SC.gps.acc, auto:SC.gps.auto || null, inside:!!SC.gps.inside, m:SC.gps.m ?? null} : null,
-    photos: photos.map((p, i) => ({k:i, path:'media/'+y+'/'+SC.id+'-'+(i+1)+'.jpg', lat:p.lat, lon:p.lon, acc:p.acc, src:p.src || 'manual', field:p.field || SC.field, at:p.at, w:p.w, h:p.h, bytes:p.bytes})),
+    photos: photos.map((p, i) => ({k:i, path:'media/'+y+'/'+SC.id+'-'+(i+1)+'.jpg', lat:p.lat, lon:p.lon, acc:p.acc, src:p.src || 'manual', field:p.field || SC.field, at:p.at, w:p.w, h:p.h, bytes:p.bytes, ...(p.tag ? {tag:p.tag} : {})})),
     voice: SC.voice.map((v, i) => ({k:np+i, path:'media/'+y+'/'+SC.id+'-v'+(i+1)+'.'+audExt(v.mime), mime:v.mime, dur:v.dur, at:v.at, bytes:v.blob.size, status:'pending', text:null}))};
+  if(SC.task) doc.task = SC.task.id;
   const blobs = [...photos.map(p => p.blob), ...SC.voice.map(v => v.blob)];
   doc.videos = SC.videos.map((v, i) => { const parts = []; for(let o = 0, n = 1; o < v.blob.size; o += VPART, n++){ parts.push({k:blobs.length, vpart:true, path:'media/'+y+'/'+SC.id+'-video'+(i+1)+'.'+vExt(v.mime)+'.part'+n}); blobs.push(v.blob.slice(o, o+VPART)); }
     return {mime:v.mime, dur:v.dur, at:v.at, bytes:v.blob.size, lat:v.lat, lon:v.lon, acc:v.acc, src:v.src || 'manual', field:v.field || SC.field, parts, status:'pending', text:null}; });
@@ -5130,6 +5141,152 @@ function drawScoutPins(){
 }
 
 // ======= вхід
+// ======= «ЗАВДАННЯ АГРОНОМУ» (tasks/<id>.json; ТЗ claude/ТЗ_Завдання_агроному.md, 24.11)
+// Принцип власника: завдання лише коли від поїздки залежить рішення. Чернетки складає tools/tasks.py з тривог і моделі
+// перезимівлі за каталогом ref/task_catalog.json; власник править / відправляє / відхиляє; агроном виконує через огляд
+// «за завданням» (огляд несе task, фото — tag пункту чеклиста). Статус «звіт є» — з оглядів, без окремого запису.
+const TSK = {list:null, cat:null, at:0, edit:{}, form:null};
+const TSK_ST = {draft:['Чернетка', 'var(--warn)'], open:['У роботі', 'var(--accent)'], done:['Закрито', 'var(--good)'], rejected:['Відхилено', 'var(--muted)']};
+async function loadTasks(force){
+  if(TSK.list && !force && Date.now() - TSK.at < 60e3) return TSK.list;
+  const files = (await listDir('tasks')).filter(f => f.name.endsWith('.json'));
+  const old = Object.fromEntries((TSK.list || []).map(t => [t.path, t]));
+  TSK.list = (await Promise.all(files.map(async f => { const o = old[f.path]; if(o && o._sha===f.sha) return o;
+    try{ const t = await getJSON(f.path); return t ? {...t, path:f.path, _sha:f.sha} : null; }catch(e){ return null; } }))).filter(Boolean);
+  if(!TSK.cat) try{ TSK.cat = await getJSON('ref/task_catalog.json'); }catch(e){}
+  TSK.at = Date.now(); return TSK.list;
+}
+function tskBadge(){ if(!TSK.list) return 0; return TSK.list.filter(t => ROLE==='o' ? t.status==='draft' : ROLE==='a' ? t.status==='open' : false).length; }
+const tskItemName = (task, k) => ((task.checklist || []).find(c => c.k===k) || {}).t || k;
+const tskScouts = t => (typeof allScouts==='function' ? allScouts() : []).filter(d => d.task===t.id);
+function tskDoneItems(t){ const s = new Set(); tskScouts(t).forEach(d => (d.photos || []).forEach(p => p.tag && s.add(p.tag))); return s; }
+const tskDue = t => { if(!t.due) return ''; const d = Math.round((new Date(t.due+'T12:00:00') - new Date(isoNow().slice(0,10)+'T12:00:00'))/864e5);
+  return d < 0 ? el('span', {class:'pill bad'}, 'прострочено '+(-d)+' дн.') : el('span', {class:'pill'+(d===0 ? ' bad' : '')}, d===0 ? 'сьогодні' : d===1 ? 'до завтра' : 'до '+t.due.slice(8,10)+'.'+t.due.slice(5,7)); };
+const tskRoute = p => p ? el('a', {class:'btn small', target:'_blank', rel:'noopener', href:'https://www.google.com/maps/dir/?api=1&destination='+p.lat+','+p.lon}, '📍 Маршрут') : '';
+async function tskSave(t, patch, what){
+  const {path, _sha, ...clean} = t; const doc = {...clean, ...patch, history:[...(t.history || []), {at:isoNow(), by:ROLE_NAMES[ROLE] || ROLE, what}]};
+  await putJSON(path || 'tasks/'+t.id+'.json', doc, 'Завдання: '+t.field+' — '+what);
+  TSK.list = null; await loadTasks(true); renderTabs(); if(TAB==='tasks') renderTasks();
+}
+function tskBranches(t){ const b = t.branches || []; if(!b.length) return '';
+  return el('details', {}, el('summary', {class:'note'}, 'Що робимо за результатом ('+b.length+')'),
+    b.map(x => el('div', {style:'margin:4px 0'}, el('b', {}, x.if+' → '), x.then, x.prep && x.prep!=='—' ? el('div', {class:'note'}, 'Готуємо: '+x.prep) : ''))); }
+function tskChecklist(t, done){ return el('ul', {style:'margin:4px 0;padding-left:18px'}, (t.checklist || []).map(c => el('li', {},
+  done && done.has(c.k) ? el('b', {style:'color:var(--good)'}, '✓ ') : '', c.t, c.how ? el('span', {class:'note'}, ' — '+c.how) : ''))); }
+function tskHead(t){ const st = TSK_ST[t.status] || ['?', ''];
+  return el('div', {class:'toolbar', style:'margin:0;gap:6px'}, el('b', {}, t.title),
+    el('span', {class:'pill', style:'color:'+st[1]+';background:color-mix(in srgb,'+st[1]+' 15%,transparent)'}, st[0]),
+    t.level==='crit' ? el('span', {class:'pill bad'}, 'терміново') : '', t.status==='open' ? tskDue(t) : ''); }
+// --- картка для агронома
+function tskCardA(t){
+  const done = tskDoneItems(t), sc = tskScouts(t), n = (t.checklist || []).length;
+  return el('div', {class:'card', style:'border-left:3px solid '+(t.level==='crit' ? 'var(--bad)' : 'var(--accent)')},
+    tskHead(t),
+    el('div', {style:'margin:6px 0'}, el('b', {}, 'Від цього залежить: '), t.decision || '—'),
+    t.why ? el('div', {class:'note'}, 'Чому: '+t.why) : '', t.note ? el('div', {style:'margin:4px 0'}, '✍ Від власника: '+t.note) : '',
+    t.point ? el('div', {class:'note', style:'margin-top:4px'}, '📍 Точка: '+(t.point.label || '')+' · '+t.point.lat.toFixed(5)+', '+t.point.lon.toFixed(5)+' (район ~30 м)') : '',
+    el('div', {style:'margin-top:6px'}, el('b', {}, 'Зняти ('+done.size+' з '+n+'):')), tskChecklist(t, done),
+    tskBranches(t),
+    sc.length ? el('div', {class:'note', style:'color:var(--good)'}, '✓ Огляд за завданням '+(sc.some(d => d.pending) ? 'збережено, відправляється' : 'відправлено')+' ('+sc.length+')') : '',
+    t.status==='open' ? el('div', {class:'toolbar', style:'margin:6px 0 0'}, tskRoute(t.point),
+      el('button', {class:'btn primary', onclick:() => { location.hash = '#scout'; setTimeout(() => newScout(t), 50); }}, sc.length ? '+ Ще огляд за завданням' : '📷 Почати огляд за завданням')) : '');
+}
+// --- картка для власника
+function tskCardO(t){
+  const done = tskDoneItems(t), sc = tskScouts(t), E = TSK.edit[t.id];
+  const box = el('div', {class:'card', style:'border-left:3px solid '+(t.level==='crit' ? 'var(--bad)' : t.status==='draft' ? 'var(--warn)' : 'var(--line)')}, tskHead(t));
+  if(E){   // правка чернетки
+    const inp = (lbl, k, area) => el('label', {class:'sc-f'}, el('span', {class:'note'}, lbl), el(area ? 'textarea' : 'input', {rows:2, value:E[k] || '', on:{input:ev => E[k] = ev.target.value}}));
+    box.append(inp('Заголовок', 'title'), inp('Від цього залежить (рішення)', 'decision', true), inp('Примітка агроному', 'note', true),
+      el('label', {class:'sc-f'}, el('span', {class:'note'}, 'Строк'), el('input', {type:'date', value:E.due || '', on:{change:ev => E.due = ev.target.value}})),
+      el('div', {class:'note'}, 'Що зняти:'), ...E.checklist.map((c, i) => el('div', {class:'toolbar', style:'margin:2px 0'},
+        el('input', {value:c.t, style:'flex:1', on:{input:ev => c.t = ev.target.value}}), el('button', {class:'btn small ghost', onclick:() => { E.checklist.splice(i, 1); renderTasks(); }}, '✕'))),
+      el('button', {class:'btn small ghost', onclick:() => { E.checklist.push({k:'x'+Date.now().toString(36), t:'', how:''}); renderTasks(); }}, '+ пункт'),
+      el('div', {class:'toolbar', style:'margin:6px 0 0'},
+        el('button', {class:'btn primary', onclick:async ev => { ev.target.disabled = true; const {title, decision, note, due} = E, checklist = E.checklist.filter(c => c.t.trim());
+          try{ delete TSK.edit[t.id]; await tskSave(t, {title, decision, note, due, checklist}, 'виправлено власником'); }catch(e){ toast('Не збережено: '+e.message); ev.target.disabled = false; } }}, 'Зберегти'),
+        el('button', {class:'btn ghost', onclick:() => { delete TSK.edit[t.id]; renderTasks(); }}, 'Скасувати')));
+    return box;
+  }
+  box.append(el('div', {style:'margin:6px 0'}, el('b', {}, 'Рішення: '), t.decision || '—'),
+    t.why ? el('div', {class:'note'}, 'Чому: '+t.why) : '', t.note ? el('div', {}, '✍ '+t.note) : '',
+    el('div', {class:'note'}, '📍 '+(t.point ? (t.point.label || '')+' · ' : 'точки немає · ')+'строк '+(t.due ? t.due.slice(8,10)+'.'+t.due.slice(5,7) : '—')+' · створив '+(t.by || '—')+' '+(t.created || '').slice(0,10)),
+    tskChecklist(t, t.status==='draft' ? null : done), tskBranches(t));
+  if(t.status==='draft') box.append(el('div', {class:'toolbar', style:'margin:6px 0 0'},
+    el('button', {class:'btn primary', onclick:async ev => { ev.target.disabled = true; try{ await tskSave(t, {status:'open', sent:isoNow()}, 'відправлено агроному'); toast('Відправлено агроному'); }catch(e){ toast('Не відправлено: '+e.message); ev.target.disabled = false; } }}, '📤 Відправити агроному'),
+    el('button', {class:'btn', onclick:() => { TSK.edit[t.id] = {title:t.title, decision:t.decision, note:t.note || '', due:t.due, checklist:(t.checklist || []).map(c => ({...c}))}; renderTasks(); }}, 'Правити'),
+    el('button', {class:'btn ghost', onclick:async () => { const r = prompt('Чому відхиляєте? (система не пропонуватиме таке завдання на цьому полі 14 днів)'); if(r===null) return;
+      try{ await tskSave(t, {status:'rejected', closed:isoNow(), reason:r}, 'відхилено: '+r); }catch(e){ toast('Не збережено: '+e.message); } }}, 'Відхилити')));
+  if(t.status==='open'){
+    box.append(sc.length ? el('div', {style:'color:var(--good)'}, '✓ Огляд агронома: '+sc.length+' · зібрано '+done.size+' з '+(t.checklist || []).length+' пунктів',
+      el('button', {class:'btn small ghost', style:'margin-left:6px', onclick:() => { location.hash = '#scout'; }}, 'Відкрити огляди')) : el('div', {class:'note'}, 'Агроном ще не відправив огляд'));
+    const sel = el('select', {}, el('option', {value:''}, 'Рішення…'), ...(t.branches || []).map(b => el('option', {value:b.then}, b.if+' → '+b.then)), el('option', {value:'інше'}, 'Інше (у коментарі)'));
+    const com = el('input', {placeholder:'коментар', style:'flex:1'});
+    box.append(el('div', {class:'toolbar', style:'margin:6px 0 0'}, sel, com, el('button', {class:'btn', onclick:async ev => {
+      if(!sel.value){ toast('Виберіть рішення'); return; } ev.target.disabled = true;
+      try{ await tskSave(t, {status:'done', closed:isoNow(), result:{decision:sel.value, comment:com.value}}, 'закрито: '+sel.value); }catch(e){ toast('Не збережено: '+e.message); ev.target.disabled = false; } }}, 'Закрити завдання')));
+  }
+  if(t.result) box.append(el('div', {}, '✅ Рішення: '+t.result.decision+(t.result.comment ? ' — '+t.result.comment : '')));
+  if(t.reason) box.append(el('div', {class:'note'}, 'Причина відхилення: '+t.reason));
+  return box;
+}
+// --- нове завдання вручну (власник)
+function tskNewForm(){
+  const F = TSK.form, items = ((TSK.cat || {}).items || []);
+  if(!F) return el('button', {class:'btn', onclick:() => { TSK.form = {field:'', key:'custom'}; renderTasks(); }}, '+ Нове завдання вручну');
+  const c = items.find(x => x.key===F.key) || {};
+  return el('div', {class:'card'}, el('b', {}, 'Нове завдання'),
+    el('div', {class:'toolbar', style:'margin:6px 0'},
+      el('select', {on:{change:ev => F.field = ev.target.value}}, el('option', {value:''}, 'Поле…'), (REF.fields || []).map(f => el('option', f.n===F.field ? {value:f.n, selected:''} : {value:f.n}, f.n))),
+      el('select', {on:{change:ev => { F.key = ev.target.value; renderTasks(); }}}, items.map(x => el('option', x.key===F.key ? {value:x.key, selected:''} : {value:x.key}, x.title)))),
+    el('div', {class:'note'}, 'Рішення: '+(c.decision || 'вкажете після створення («Правити»)')),
+    el('div', {class:'toolbar', style:'margin:6px 0 0'}, el('button', {class:'btn primary', onclick:async ev => {
+      if(!F.field){ toast('Виберіть поле'); return; } ev.target.disabled = true;
+      const d = isoNow().slice(0,10), due = new Date(d+'T12:00:00'); due.setDate(due.getDate() + (c.due_days || 3));
+      const t = {kind:'task', v:1, id:'m-'+d.replace(/-/g,'')+'-'+Math.random().toString(36).slice(2,6), key:F.key, status:'draft', created:isoNow(), by:'власник', farm:'dolynske', field:F.field,
+        season:(+d.slice(5,7) >= 9 ? +d.slice(0,4)+1 : +d.slice(0,4)), level:'warn', title:F.field+': '+(c.title || 'завдання'), why:'', decision:c.decision || '',
+        checklist:(c.checklist || []).map(x => ({...x})), branches:c.branches || [], due:due.toISOString().slice(0,10), point:tskFieldPoint(F.field), trigger:null, history:[]};
+      try{ await tskSave(t, {}, 'створено власником'); TSK.form = null; TSK.edit[t.id] = {title:t.title, decision:t.decision, note:'', due:t.due, checklist:t.checklist.map(x => ({...x}))}; renderTasks(); }
+      catch(e){ toast('Не збережено: '+e.message); ev.target.disabled = false; } }}, 'Створити чернетку'),
+      el('button', {class:'btn ghost', onclick:() => { TSK.form = null; renderTasks(); }}, 'Скасувати')));
+}
+function tskFieldPoint(n){   // центр контуру поля (точку слабкої зони дає генератор)
+  try{ const f = ((MAPV.geo || {}).features || []).find(x => (x.properties || {}).n===n); if(!f) return null; const g = f.geometry;
+    const pts = (g.type==='Polygon' ? [g.coordinates[0]] : g.coordinates.map(p => p[0])).flat();
+    return {lat:+(d3.mean(pts, c => c[1])).toFixed(6), lon:+(d3.mean(pts, c => c[0])).toFixed(6), src:'centroid', label:'центр поля'}; }catch(e){ return null; }
+}
+async function renderTasks(){
+  const body = $('#tsk-body'); if(!body) return;
+  $('#tsk-h').textContent = ROLE==='a' ? '🎯 Мої завдання' : '🎯 Завдання агроному';
+  if(!TSK.list) body.replaceChildren(el('p', {class:'note'}, 'Завантажую завдання…'));
+  try{ await loadTasks(); if(typeof ensureGeo==='function') ensureGeo().catch(() => {}); }catch(e){ body.replaceChildren(el('p', {class:'note'}, 'Не вдалося завантажити: '+e.message)); return; }
+  const L = [...TSK.list].sort((a, b) => (a.level==='crit' ? 0 : 1) - (b.level==='crit' ? 0 : 1) || (a.due || '').localeCompare(b.due || ''));
+  const by = s => L.filter(t => t.status===s), hint = el('div', {class:'note', style:'margin-bottom:8px'},
+    'Завдання з’являються лише тоді, коли від поїздки залежить конкретне рішення по полю (мороз із втратами, кірка 10+ днів, вимокання, падіння NDVI/NDRE у вегетацію). Сніг чи підмерзання без втрат завдань не дають.');
+  $('#tsk-src').textContent = '';
+  if(ROLE==='a'){
+    const op = by('open'), cl = L.filter(t => t.status==='done').slice(0, 10);
+    body.replaceChildren(hint, op.length ? el('div', {style:'display:grid;gap:10px'}, op.map(tskCardA)) : el('p', {}, '✅ Відкритих завдань немає.'),
+      cl.length ? el('details', {style:'margin-top:10px'}, el('summary', {class:'note'}, 'Закриті ('+cl.length+')'), el('div', {style:'display:grid;gap:8px;margin-top:6px'}, cl.map(tskCardA))) : '');
+    return;
+  }
+  const sec = (title, arr, open) => arr.length ? el('details', open ? {open:''} : {}, el('summary', {}, el('b', {}, title+' ('+arr.length+')')), el('div', {style:'display:grid;gap:10px;margin-top:6px'}, arr.map(tskCardO))) : '';
+  body.replaceChildren(hint, tskNewForm(),
+    by('draft').length || by('open').length ? '' : el('p', {}, '✅ Чернеток і відкритих завдань немає.'),
+    sec('📝 Чернетки — відправити агроному?', by('draft'), true), sec('🚜 У роботі', by('open'), true),
+    sec('Закриті', by('done').slice(0, 20), false), sec('Відхилені', by('rejected').slice(0, 20), false));
+}
+// блок «за завданням» у формі огляду: чеклист з кнопкою 📷 на кожен пункт
+function tskScoutBox(dis){
+  const T = SC.task, got = new Set(SC.photos.filter(p => p.tag).map(p => p.tag));
+  return el('div', {class:'sc-gpswarn ok', style:'display:grid;gap:4px'}, el('b', {}, '🎯 За завданням: '+T.title),
+    T.point ? el('div', {class:'note'}, '📍 '+(T.point.label || '')+' ', tskRoute(T.point)) : '',
+    ...T.checklist.map(c => { const cam = el('input', {type:'file', accept:'image/*', capture:'environment', multiple:'', hidden:'', on:{change:ev => { addPhotos([...ev.target.files], true, c.k); ev.target.value = ''; }}});
+      return el('div', {style:'display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start'}, el('button', dis ? {class:'btn small', disabled:''} : {class:'btn small', onclick:() => cam.click()}, '📷', cam),
+        el('span', {}, got.has(c.k) ? el('b', {style:'color:var(--good)'}, '✓ ') : '', c.t, c.how ? el('span', {class:'note'}, ' — '+c.how) : '')); }),
+    el('div', {class:'note'}, 'Числа (підрахунки, % ураження) — надиктуйте 🎙 або напишіть текстом.'));
+}
+
 function showLogin(msg){ $('#login').hidden = false; $('#login-msg').textContent = msg || ''; }
 $('#login-go').addEventListener('click', async () => {
   const t = $('#login-token').value.trim(); if(!t){ $('#login-msg').textContent = 'Вставте ключ доступу.'; return; }
@@ -5150,7 +5307,7 @@ async function start(){
   YEAR = MODEL.years.includes(new Date().getFullYear()) ? new Date().getFullYear() : d3.max(MODEL.years);
   $('#src-line').textContent = 'ТОВ «Долинське» · дані з приватного сховища · версія '+APP_VER;
   openDay(); showTab(location.hash.slice(1) || 'day');
-  loadAlerts();
+  loadAlerts(); if(ROLE==='o' || ROLE==='a') loadTasks().then(renderTabs).catch(() => {});
   OUTBOX.all().then(q => { OUTQ = q; if(q.length){ renderScQueue(); flushScouts(); } }).catch(() => {});
 }
 if(TOKEN) start(); else showLogin();
