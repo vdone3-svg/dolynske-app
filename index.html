@@ -229,7 +229,7 @@ td input,td select{min-height:30px;padding:4px 6px;font-size:13px}
 .alerts{margin:4px 0 8px;border-radius:10px;border:1px solid var(--line, rgba(127,127,127,.3))}.alerts.crit{border-color:var(--bad);background:color-mix(in srgb, var(--bad) 12%, transparent)}.alerts.warn{border-color:var(--warn);background:color-mix(in srgb, var(--warn) 10%, transparent)}.alerts-head{all:unset;box-sizing:border-box;cursor:pointer;display:flex;gap:10px;align-items:center;width:100%;padding:8px 10px}.alerts.crit .alerts-head b{color:var(--bad)}
 .sync{font-size:12px;color:var(--muted);min-height:16px}.sync.ok{color:var(--good)}.sync.warn{color:var(--warn);font-weight:600}.sync.bad{color:var(--bad);font-weight:600}
 .login{position:fixed;inset:0;background:var(--bg);z-index:20;display:grid;place-items:center;padding:16px}
-.login[hidden]{display:none}
+.login[hidden]{display:none}.card[hidden]{display:none!important}
 .login-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:420px;width:100%;display:grid;gap:10px}
 .login-card h1{font:600 22px var(--display);margin:0}
 .login-card select{width:100%}
@@ -324,6 +324,8 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       </div>
       <div class="kpis" id="kpis"></div>
     </header>
+    <section class="card" id="day-remind" hidden></section>
+    <section class="card" id="ha-conf" hidden></section>
     <section class="card" id="mh-remind" hidden></section>
     <section class="card" id="people">
       <div class="sechead"><div><h2>Люди і техніка</h2><div class="note">Оберіть роботу — техніка й одиниця підставляться за звичкою. Заправку і масло пишіть у тому ж рядку.</div></div>
@@ -387,6 +389,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
     </section>
   </main>
   <main class="pane" id="pane-tasks">
+    <section class="card" id="hc-card" hidden></section>
     <section class="card">
       <div class="toolbar"><h2 style="margin:0" id="tsk-h">🎯 Завдання агроному</h2><span class="note" id="tsk-src"></span></div>
       <div id="tsk-body"></div>
@@ -1272,7 +1275,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '24.11e Ролі: власники, обліковець, керуючий';
+const APP_VER = '24.11f Ролі: підтвердження га, нагадування «день не закрито»';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1663,7 +1666,7 @@ function dayTotals(){
 function renderDay(){
   const d = new Date(DAY+'T12:00:00'); $('#date').value = DAY;
   $('#day-title').textContent = d.toLocaleDateString('uk-UA', {weekday:'long', day:'numeric', month:'long', year:'numeric'}).replace(/^./, c => c.toUpperCase());
-  renderShifts(); renderRows(); renderAppl(); renderZav(); renderSide(); renderDips(); renderGrainTabs(); renderMhRemind();
+  renderShifts(); renderRows(); renderAppl(); renderZav(); renderSide(); renderDips(); renderGrainTabs(); renderMhRemind(); renderDayRemind(); renderHaConfDay();
   const t = dayTotals(), closed = isClosed(DAY) && !DS.editing;
   $('#kpis').replaceChildren(...[['Люди заповнено', t.people+' / '+t.total], ['Роботи в полі', nf(t.ha)+' га'], ['ДП за день', nf(t.dp, fmt0)+' л'], ['Бензин', nf(t.bz, fmt0)+' л'],
     ['Масла', nf(t.oil)+' л'], ['Обприскано', nf(t.zzr)+' га'], ['Відвантажено', nf(t.ship/1000)+' т']].map(([a, b]) => el('div', {class:'kpi'}, a, el('b', {}, b))));
@@ -3065,7 +3068,7 @@ async function loadAll(){
   AI_STATUS = await getJSON('ai/status.json').catch(() => null);
   const files = [];
   async function walk(dir){ for(const it of await listDir(dir)){ if(it.type==='dir') await walk(it.path); else if(it.name.endsWith('.json')) files.push(it); } }
-  await Promise.all(['days', 'events', 'ref', 'scouts'].map(walk));
+  await Promise.all(['days', 'events', 'ref', 'scouts', 'confirm'].map(walk));
   DOCS = {}; SCOUTS = {};
   const queue = files.slice();
   async function worker(){ while(queue.length){ const it = queue.shift(); const b = bundle.docs[it.path]; (it.path.startsWith('scouts/') ? SCOUTS : DOCS)[it.path] = (b && b.sha===it.sha) ? b.doc : await getJSON(it.path); } }
@@ -5211,7 +5214,7 @@ async function loadTasks(force){
   if(!TSK.cat) try{ TSK.cat = await getJSON('ref/task_catalog.json'); }catch(e){}
   TSK.at = Date.now(); return TSK.list;
 }
-function tskBadge(){ if(!TSK.list) return 0; return TSK.list.filter(t => ROLE==='o' ? t.status==='draft' : ROLE==='a' ? t.status==='open' : false).length; }
+function tskBadge(){ const hc = ROLE==='a' ? hcDays().filter(x => x.st.none).length : 0; if(!TSK.list) return hc; return hc + TSK.list.filter(t => ROLE==='o' ? t.status==='draft' : ROLE==='a' ? t.status==='open' : false).length; }
 const tskItemName = (task, k) => ((task.checklist || []).find(c => c.k===k) || {}).t || k;
 const tskScouts = t => (typeof allScouts==='function' ? allScouts() : []).filter(d => d.task===t.id);
 function tskDoneItems(t){ const s = new Set(); tskScouts(t).forEach(d => (d.photos || []).forEach(p => p.tag && s.add(p.tag))); return s; }
@@ -5313,6 +5316,7 @@ function tskFieldPoint(n){   // центр контуру поля (точку �
 async function renderTasks(){
   const body = $('#tsk-body'); if(!body) return;
   $('#tsk-h').textContent = ROLE==='a' ? '🎯 Мої завдання' : '🎯 Завдання агроному';
+  renderHaConf();
   if(!TSK.list) body.replaceChildren(el('p', {class:'note'}, 'Завантажую завдання…'));
   try{ await loadTasks(); if(typeof ensureGeo==='function') ensureGeo().catch(() => {}); }catch(e){ body.replaceChildren(el('p', {class:'note'}, 'Не вдалося завантажити: '+e.message)); return; }
   const L = [...TSK.list].sort((a, b) => (a.level==='crit' ? 0 : 1) - (b.level==='crit' ? 0 : 1) || (a.due || '').localeCompare(b.due || ''));
@@ -5330,6 +5334,111 @@ async function renderTasks(){
     by('draft').length || by('open').length ? '' : el('p', {}, '✅ Чернеток і відкритих завдань немає.'),
     sec('📝 Чернетки — відправити агроному?', by('draft'), true), sec('🚜 У роботі', by('open'), true),
     sec('Закриті', by('done').slice(0, 20), false), sec('Відхилені', by('rejected').slice(0, 20), false));
+}
+// ======= РОЛІ, ЕТАП 2 (24.11): «день не закрито» і підтвердження гектарів керуючим
+// День закриває обліковець — можна наступного ранку; «не закрито» лише після 12:00 наступного дня і з 1.12.2026
+// (до 30.11 облік іде з файлів бухгалтера). Керуючий підтверджує га польових робіт закритого дня: confirm/РРРР/<дата>.json,
+// ключ «поле|операція|техніка» (без техніки — працівник), га = максимум по рядках ключа. Те саме рахує tools/dayconf.py.
+const CLOSE_FROM = '2026-12-01', CLOSE_HOUR = 12, HC_DAYS = 14;
+const confPath = d => 'confirm/'+d.slice(0,4)+'/'+d+'.json';
+const addDays = (d, n) => { const t = new Date(d+'T12:00:00'); t.setDate(t.getDate()+n); return t.toISOString().slice(0, 10); };
+const dmy = d => d.split('-').reverse().slice(0, 2).join('.');
+function dayDocOf(d){ return DOCS[dayPath(d)] || (PENDING[dayPath(d)] || {}).doc || null; }
+function confDocOf(d){ return DOCS[confPath(d)] || (PENDING[confPath(d)] || {}).doc || null; }
+function overdueDays(now = new Date()){
+  const out = []; let d = addDays(isoToday(), -HC_DAYS); if(d < CLOSE_FROM) d = CLOSE_FROM;
+  for(; d < isoToday(); d = addDays(d, 1)){ const due = new Date(addDays(d, 1)+'T'+String(CLOSE_HOUR).padStart(2, '0')+':00:00');
+    if(now >= due && !dayDocOf(d)) out.push({d, late: (now - due)/36e5}); }
+  return out;
+}
+function workItems(doc){
+  const out = {};
+  (((doc || {}).rows || {})['Роботи'] || []).forEach(r => { const q = +r['Обсяг'] || 0;
+    if(!r['Поле'] || !r['Операція'] || r['Од.']!=='га' || q <= 0) return;
+    const m = r['Техніка'] || r['Працівник'] || '', k = r['Поле']+'|'+r['Операція']+'|'+m;
+    const it = out[k] || (out[k] = {k, f:r['Поле'], op:r['Операція'], m, ha:0}); it.ha = Math.max(it.ha, q); });
+  Object.values(out).forEach(it => it.ha = Math.round(it.ha*100)/100);
+  return out;
+}
+function confState(dayDoc, confDoc){
+  const C = (confDoc || {}).items || {}, res = {items:[], ok:0, bad:0, none:0};
+  Object.values(workItems(dayDoc)).forEach(it => { const c = C[it.k];
+    const st = !c ? 'none' : (c.ha!=null && Math.abs(+c.ha - it.ha) > .01) ? 'stale' : c.ok ? 'ok' : 'bad';
+    res.items.push({...it, st, c:(c || {}).c || '', fact:(c || {}).fact, by:(c || {}).by, at:(c || {}).at}); res[st==='ok' ? 'ok' : st==='bad' ? 'bad' : 'none']++; });
+  res.items.sort((a, b) => a.f.localeCompare(b.f, 'uk') || a.op.localeCompare(b.op, 'uk'));
+  return res;
+}
+// закриті дні за останні HC_DAYS днів, де є польові роботи в га
+function hcDays(){
+  const out = [], from = addDays(isoToday(), -HC_DAYS);
+  Object.keys({...DOCS, ...PENDING}).filter(p => /^days\/\d{4}\/\d{4}-\d{2}-\d{2}\.json$/.test(p)).forEach(p => { const doc = dayDocOf(p.slice(10, 20));
+    if(!doc || doc.kind!=='day' || doc.date < from) return; const st = confState(doc, confDocOf(doc.date)); if(st.items.length) out.push({d:doc.date, doc, st}); });
+  return out.sort((a, b) => b.d.localeCompare(a.d));
+}
+const HC_ST = {ok:['✓ підтверджено', 'var(--good)'], bad:['✕ не так', 'var(--bad)'], none:['⏳ не підтверджено керуючим', 'var(--warn)'], stale:['⏳ день виправлено — підтвердити ще раз', 'var(--warn)']};
+const ha1 = v => nf(+v, Number.isInteger(+v) ? 0 : 1), hcLine = it => it.f+' · '+it.op+(it.m ? ' · '+it.m : '')+' — '+ha1(it.ha)+' га';
+async function hcSave(d, items){
+  const old = confDocOf(d) || {kind:'confirm', date:d, items:{}}, who = whoName(), at = isoNow();
+  const doc = {...old, kind:'confirm', date:d, by:who, saved_at:new Date().toISOString(), items:{...(old.items || {})}};
+  items.forEach(([it, v]) => doc.items[it.k] = {ok:v.ok, ha:it.ha, ...(v.fact!=null && v.fact!=='' ? {fact:+v.fact} : {}), ...(v.c ? {c:v.c} : {}), by:who, at});
+  const ok = await saveDoc(confPath(d), doc, 'Гектари '+d+': '+items.map(([it, v]) => (v.ok ? '✓ ' : '✕ ')+it.f).join(', ')+' ('+who+')');
+  toast(ok ? 'Збережено' : 'Немає зв’язку — збережено на пристрої, відправлю пізніше');
+  renderHaConf(); renderTabs();
+}
+// керуючий (кнопки) і власник (стан) — вкладка «Завдання»
+function renderHaConf(){
+  const box = $('#hc-card'); if(!box) return;
+  if(!'oa'.includes(ROLE) || !DOCS){ box.hidden = true; return; }
+  const L = hcDays(), pend = L.filter(x => x.st.none || x.st.bad), done = L.filter(x => !x.st.none && !x.st.bad);
+  if(!L.length){ box.hidden = ROLE!=='a'; box.replaceChildren(el('h2', {style:'margin:0 0 4px'}, '🚜 Гектари на підтвердження'), el('p', {class:'note'}, 'Закритих днів з польовими роботами за '+HC_DAYS+' днів немає.')); return; }
+  box.hidden = false;
+  const dayBlock = x => el('div', {style:'border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:grid;gap:6px'},
+    el('div', {style:'display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center'},
+      el('b', {}, new Date(x.d+'T12:00:00').toLocaleDateString('uk-UA', {weekday:'short', day:'numeric', month:'long'})),
+      el('span', {class:'note'}, 'закрила '+(x.doc.by || 'обліковець')+' · ✓ '+x.st.ok+(x.st.bad ? ' · ✕ '+x.st.bad : '')+(x.st.none ? ' · ⏳ '+x.st.none : '')),
+      ROLE==='a' && x.st.items.some(it => it.st==='none' || it.st==='stale') ? el('button', {class:'btn small primary', onclick:ev => { ev.target.disabled = true; hcSave(x.d, x.st.items.filter(it => it.st==='none' || it.st==='stale').map(it => [it, {ok:true}])); }}, '✓ Решта все вірно') : ''),
+    ...x.st.items.map(it => hcItem(x.d, it)));
+  box.replaceChildren(el('h2', {style:'margin:0 0 4px'}, '🚜 Гектари на підтвердження'),
+    el('div', {class:'note', style:'margin-bottom:8px'}, ROLE==='a' ? 'Гектари, які обліковець записала в закритий день. Перевірте: ✓ — так, «Не так» — вкажіть, скільки було насправді, і коротко чому. Закриття дня це не блокує; виправляє день власник.'
+      : 'Стан підтвердження гектарів керуючим за '+HC_DAYS+' днів. «Не так» — звірити з обліковцем і виправити день («День» → «Виправити день»).'),
+    pend.length ? el('div', {style:'display:grid;gap:8px'}, pend.map(dayBlock)) : el('p', {}, '✅ Усі гектари підтверджено.'),
+    done.length ? el('details', {style:'margin-top:8px'}, el('summary', {class:'note'}, 'Підтверджені дні ('+done.length+')'), el('div', {style:'display:grid;gap:8px;margin-top:6px'}, done.map(dayBlock))) : '');
+}
+function hcItem(d, it){
+  const [lbl, col] = HC_ST[it.st], row = el('div', {style:'display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between'});
+  const info = el('div', {}, hcLine(it), el('div', {class:'note', style:'color:'+col}, lbl+(it.st==='bad' ? (it.fact!=null ? ' · керуючий: '+ha1(it.fact)+' га' : '')+(it.c ? ' · «'+it.c+'»' : '') : '')+(it.by && it.st!=='none' ? ' · '+it.by : '')));
+  row.append(info);
+  if(ROLE==='a'){
+    const form = el('div', {style:'display:none;gap:6px;flex-wrap:wrap;width:100%'});
+    const fact = el('input', {type:'number', min:'0', step:'0.1', inputmode:'decimal', placeholder:'Скільки було, га', style:'width:140px', value: it.fact ?? ''});
+    const com = el('input', {placeholder:'Чому не так (обов’язково)', style:'flex:1;min-width:180px', value: it.c || ''});
+    form.append(fact, com, el('button', {class:'btn small primary', onclick:ev => { if(!com.value.trim()){ toast('Напишіть коротко, що не так'); return; } ev.target.disabled = true; hcSave(d, [[it, {ok:false, fact:fact.value, c:com.value.trim()}]]); }}, 'Зберегти'));
+    row.append(el('div', {style:'display:flex;gap:6px'},
+      it.st==='ok' ? '' : el('button', {class:'btn small', 'aria-label':'Підтвердити '+hcLine(it), onclick:ev => { ev.target.disabled = true; hcSave(d, [[it, {ok:true}]]); }}, '✓'),
+      el('button', {class:'btn small', onclick:() => { const show = form.style.display==='none'; form.style.display = show ? 'flex' : 'none'; if(show) (fact.value ? com : fact).focus(); }}, 'Не так')), form);
+  }
+  return row;
+}
+// «День»: нагадування про незакриті дні (власник, обліковець) і стан підтвердження гектарів закритого дня
+function renderDayRemind(){
+  const box = $('#day-remind'); if(!box) return;
+  const od = 'ok'.includes(ROLE) ? overdueDays() : [];
+  if(!od.length){ box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false; box.style.borderColor = od.some(x => x.late >= 24) ? 'var(--bad)' : 'var(--warn)';
+  box.replaceChildren(el('h2', {style:'margin:0 0 4px'}, '⏰ '+(od.length > 1 ? 'Не закрито дні' : 'Не закрито день')),
+    el('div', {class:'note', style:'margin-bottom:6px'}, 'День закривається до 12:00 наступного дня. Поки не закрито, роботи, пальне, склад і зерно не потрапляють у звіти.'),
+    el('div', {style:'display:flex;gap:6px;flex-wrap:wrap'}, od.map(x => el('button', {class:'btn small'+(x.d===DAY ? ' primary' : ''), type:'button', onclick:() => { DAY = x.d; openDay(); renderDay(); }}, dmy(x.d)))));
+}
+function renderHaConfDay(){
+  const box = $('#ha-conf'); if(!box) return;
+  const doc = 'ok'.includes(ROLE) && isClosed(DAY) ? dayDocOf(DAY) : null, st = doc ? confState(doc, confDocOf(DAY)) : null;
+  if(!st || !st.items.length){ box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  const head = st.bad ? '✕ Керуючий не погодився з гектарами: '+st.bad : st.none ? '⏳ Гектари не підтверджено керуючим: '+st.none+' з '+st.items.length : '✓ Гектари підтверджено керуючим';
+  box.replaceChildren(el('h2', {style:'margin:0 0 4px;color:'+(st.bad ? 'var(--bad)' : st.none ? 'var(--warn)' : 'var(--good)')}, head),
+    el('details', st.bad ? {open:''} : {}, el('summary', {class:'note'}, 'Польові роботи ('+st.items.length+')'),
+      el('div', {style:'display:grid;gap:4px;margin-top:6px'}, st.items.map(it => hcItem(DAY, it)))),
+    st.bad && ROLE==='o' ? el('div', {class:'note', style:'margin-top:6px'}, 'Звірте з обліковцем; виправити — кнопка «Виправити день» внизу.') : '');
 }
 // блок «за завданням» у формі огляду: чеклист з кнопкою 📷 на кожен пункт
 function tskScoutBox(dis){
