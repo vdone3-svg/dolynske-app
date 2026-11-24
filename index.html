@@ -3249,6 +3249,7 @@ async function renderPlan(){
   $('#plan-src').textContent = 'склав розрахунок '+new Date(P.generated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+(P.approved_at ? ' · затвердив '+(P.approved_by || 'власник')+' '+new Date(P.approved_at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '');
   const out = [el('div', {style:'margin:6px 0 10px'}, el('span', {class:'pill', style:'color:'+st[1]+';background:color-mix(in srgb,'+st[1]+' 15%,transparent)'}, st[0]),
     !own && X.status!=='approved' ? el('span', {class:'note', style:'margin-left:8px'}, 'чекає затвердження власником — може змінитися') : '')];
+  const h48 = planH48(); if(h48) out.push(h48);                // почасовий прогноз 48 год — вгорі, щоб відразу бачити
   const wx = planWeather(isoToday(), P); if(wx) out.push(wx);   // погода — завжди з сьогодні, незалежно від дня плану
   if(P.ai && P.ai.text){ const at = P.ai.at || P.generated, atD = at ? at.slice(0, 10) : '', ft = t => new Date(t).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
     const stale = atD && atD < P.date;     // написано напередодні ввечері, ранкового оновлення ще не було
@@ -3321,6 +3322,133 @@ const WST = s => s==null ? '' : s >= 90 ? 'color:var(--good);font-weight:600' : 
 // рівень загрози морозу на вузлі кущіння: 0 безпечно, 1 увага, 2 загроза слабким, 3 загроза навіть загартованим
 function nodeLevel(t, weak){ if(t==null) return 0; const k = weak ? 2 : 0; return t <= -16+k ? 3 : t <= -12+k ? 2 : t <= -10+k ? 1 : 0; }
 const NODE_ST = ['', 'color:var(--warn);font-weight:600', 'color:#fff;background:#d9822b;font-weight:600', 'color:#fff;background:var(--bad);font-weight:600'];
+// ===== ПОЧАСОВИЙ ПРОГНОЗ 48 год (h48 з weather.json) для планування польових робіт =====
+// h48 = [[час_iso, t_повітря, опади_мм, t_ґрунту_0-7см, вітер_м/с], ...]  — середнє ECMWF/ICON, крок 1 год
+// Показуємо блоками по 3 год: 6 блоків = 18 год / рядок → 2 рядки = 48 год
+function planH48(){
+  const isD = WXF === 'dolynske';
+  const srcPts = isD ? (FWX.data || {}).points : ((((FWX.data || {}).farms || {})[WXF] || {}).points);
+  const PTS = Object.values(srcPts || {}).filter(p => p.forecast && p.forecast.h48 && p.forecast.h48.length);
+  if(!PTS.length) return null;
+
+  // Усереднюємо h48 по точках (Захід + Схід для Долинського)
+  const merged = {}; // ключ = час_iso → {t:[], p:[], ts:[], w:[]}
+  PTS.forEach(pt => {
+    (pt.forecast.h48 || []).forEach(([tim, t, p, ts, w]) => {
+      if(!merged[tim]) merged[tim] = {t:[], p:[], ts:[], w:[]};
+      if(t  != null) merged[tim].t.push(t);
+      if(p  != null) merged[tim].p.push(p);
+      if(ts != null) merged[tim].ts.push(ts);
+      if(w  != null) merged[tim].w.push(w);
+    });
+  });
+  const avg = (arr, nd=1) => arr.length ? +(arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(nd) : null;
+  const hours = Object.entries(merged).sort(([a],[b])=>a<b?-1:1).slice(0,48).map(([tim, v]) => ({
+    tim, t:avg(v.t), p:avg(v.p,2), ts:avg(v.ts), w:avg(v.w)
+  }));
+  if(!hours.length) return null;
+
+  // Групуємо по 3 год
+  const blocks = [];
+  for(let i=0; i<hours.length; i+=3){
+    const sl = hours.slice(i, i+3);
+    if(!sl.length) break;
+    const tStart = sl[0].tim; // "2026-11-24T06"
+    const h = parseInt(tStart.slice(11,13));
+    const dateStr = tStart.slice(0,10);
+    const dayLabel = dateStr === isoToday() ? 'Сьогодні' : (dateStr === (() => { const d=new Date(isoToday()+'T12:00'); d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); })() ? 'Завтра' : dateStr.slice(5).replace('-','.'));
+    const tAvg = avg(sl.map(x=>x.t).filter(x=>x!=null));
+    const pSum = +(sl.reduce((a,x)=>a+(x.p||0),0)).toFixed(1);
+    const wMax = sl.map(x=>x.w).filter(x=>x!=null).reduce((a,b)=>Math.max(a,b), 0) || null;
+    const tsAvg = avg(sl.map(x=>x.ts).filter(x=>x!=null));
+    // статус для оранки: t повітря > 0, t ґрунту > -1, вітер ≤ 10
+    const plowOk = tAvg!=null && tAvg > 0 && (tsAvg==null || tsAvg > -1) && (wMax==null || wMax <= 10);
+    const plowLim = !plowOk && tAvg!=null && tAvg > -2 && (tsAvg==null || tsAvg > -3) && (wMax==null || wMax <= 15);
+    const plowSt = plowOk ? 'так' : plowLim ? 'обмежено' : 'ні';
+    // іконка погоди
+    const ic = pSum >= 0.5 ? (tAvg!=null && tAvg <= 0 ? '🌨' : pSum >= 3 ? '🌧' : '🌦') : '☀';
+    blocks.push({h, dayLabel, dateStr, tAvg, pSum, wMax, tsAvg, plowSt, ic});
+  }
+
+  // Рендер: таблиця, блоки по 3 год
+  const PC = {'так':'#2e7d4f','обмежено':'#d4a017','ні':'#b3372e'};
+  const fmt = h => `${String(h).padStart(2,'0')}:00`;
+  // Групуємо рядки по днях для підпису
+  let lastDay = null;
+  const cols = blocks.map(b => {
+    const isNewDay = b.dateStr !== lastDay;
+    lastDay = b.dateStr;
+    return {b, isNewDay};
+  });
+
+  const tb = el('table', {style:'border-collapse:collapse;font-size:12px;width:100%'});
+  // Рядок 1 — заголовки (год + дата)
+  const hdrRow = el('tr');
+  hdrRow.append(el('td', {style:'padding:3px 0;white-space:nowrap;position:sticky;left:0;background:var(--card,var(--bg));color:var(--fg2);font-size:11px'}, ''));
+  cols.forEach(({b, isNewDay}) => {
+    const td = el('td', {style:'text-align:center;padding:2px 3px;white-space:nowrap;border-left:'+(isNewDay?'2px solid var(--accent)':'1px solid var(--line)')});
+    td.append(isNewDay ? el('span', {style:'color:var(--accent);font-weight:600;font-size:10px;display:block'}, b.dayLabel) : el('span',{style:'font-size:9px;color:transparent'},'·'));
+    td.append(el('span', {style:'font-size:11px;color:var(--fg2)'}, fmt(b.h)+'–'+fmt(b.h+3>23?0:b.h+3)));
+    hdrRow.append(td);
+  });
+  tb.append(hdrRow);
+
+  // Рядок 2 — іконка + температура повітря
+  const tRow = el('tr', {style:'border-top:1px solid var(--line)'});
+  tRow.append(el('td', {style:'padding:3px 0 3px;white-space:nowrap;position:sticky;left:0;background:var(--card,var(--bg))'}, '🌡 Повітря'));
+  cols.forEach(({b, isNewDay}) => {
+    const cold = b.tAvg!=null && b.tAvg < 0;
+    const st = cold ? 'color:#6ec6ff;font-weight:600' : (b.tAvg!=null && b.tAvg > 15 ? 'color:#ff9800;font-weight:600' : 'font-weight:600');
+    tRow.append(el('td', {style:'text-align:center;padding:3px;white-space:nowrap;border-left:'+(isNewDay?'2px solid var(--accent)':'1px solid var(--line)')},
+      el('div', {style:'font-size:16px'}, b.ic),
+      el('div', {style:st}, b.tAvg!=null ? nf(b.tAvg,0)+'°' : '—')));
+  });
+  tb.append(tRow);
+
+  // Рядок 3 — опади
+  const pRow = el('tr', {style:'border-top:1px solid var(--line)'});
+  pRow.append(el('td', {style:'padding:3px 0;white-space:nowrap;position:sticky;left:0;background:var(--card,var(--bg))'}, '☔ Опади'));
+  cols.forEach(({b, isNewDay}) => {
+    const bg = b.pSum >= 3 ? 'background:color-mix(in srgb,#3b6fb6 18%,transparent)' : '';
+    pRow.append(el('td', {style:'text-align:center;padding:3px;white-space:nowrap;border-left:'+(isNewDay?'2px solid var(--accent)':'1px solid var(--line)')+';'+bg},
+      b.pSum >= 0.3 ? nf(b.pSum,1)+' мм' : '—'));
+  });
+  tb.append(pRow);
+
+  // Рядок 4 — вітер
+  const wRow = el('tr', {style:'border-top:1px solid var(--line)'});
+  wRow.append(el('td', {style:'padding:3px 0;white-space:nowrap;position:sticky;left:0;background:var(--card,var(--bg))'}, '💨 Вітер'));
+  cols.forEach(({b, isNewDay}) => {
+    const strong = b.wMax!=null && b.wMax >= 10;
+    wRow.append(el('td', {style:'text-align:center;padding:3px;white-space:nowrap;border-left:'+(isNewDay?'2px solid var(--accent)':'1px solid var(--line)')+(strong?';color:var(--bad);font-weight:600':'')},
+      b.wMax!=null ? nf(b.wMax,0)+' м/с' : '—'));
+  });
+  tb.append(wRow);
+
+  // Рядок 5 — t ґрунту
+  const tsRow = el('tr', {style:'border-top:1px solid var(--line)'});
+  tsRow.append(el('td', {style:'padding:3px 0;white-space:nowrap;position:sticky;left:0;background:var(--card,var(--bg))'}, '🌍 Ґрунт 0–7см'));
+  cols.forEach(({b, isNewDay}) => {
+    const frozen = b.tsAvg!=null && b.tsAvg < 0;
+    tsRow.append(el('td', {style:'text-align:center;padding:3px;white-space:nowrap;border-left:'+(isNewDay?'2px solid var(--accent)':'1px solid var(--line)')+(frozen?';color:#6ec6ff;font-weight:600':'')},
+      b.tsAvg!=null ? nf(b.tsAvg,1)+'°' : '—'));
+  });
+  tb.append(tsRow);
+
+  // Рядок 6 — статус оранки
+  const plRow = el('tr', {style:'border-top:1px solid var(--line)'});
+  plRow.append(el('td', {style:'padding:3px 0;white-space:nowrap;position:sticky;left:0;background:var(--card,var(--bg))'}, '🚜 Оранка'));
+  cols.forEach(({b, isNewDay}) => {
+    plRow.append(el('td', {style:'text-align:center;padding:3px;border-left:'+(isNewDay?'2px solid var(--accent)':'1px solid var(--line)')+';background:'+PC[b.plowSt]+';color:#fff;font-size:11px'},
+      b.plowSt==='так' ? '✓' : b.plowSt==='обмежено' ? '~' : '✗'));
+  });
+  tb.append(plRow);
+
+  return el('div', {class:'card'}, el('h3', {style:'margin-top:0'}, '⏱ Прогноз по годинах — 48 год'),
+    el('div', {style:'overflow-x:auto'}, tb),
+    el('div', {class:'note', style:'margin-top:6px'}, 'Блоки по 3 год · середнє точок '+PTS.length+' (ECMWF+ICON). Оранка: зелений — t>0°, ґрунт>−1°, вітер≤10 м/с; жовтий — граничні умови; червоний — не можна.'));
+}
+
 // агрометео на 7 днів від дня плану — усе в одній таблиці; середнє двох моделей (ECMWF/ICON) і точок погоди, статуси — найгірший
 // перемикач господарства для погоди (Долинське — точки Захід/Схід і поля; інші — з ref/farms.json → geo/weather.json farms)
 let WXF = (() => { try{ return localStorage.getItem('dl_wx_farm') || 'dolynske'; }catch(e){ return 'dolynske'; } })();
