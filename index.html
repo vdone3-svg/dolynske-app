@@ -1265,7 +1265,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '24.11b Погода: дні під 1-шу колонку';
+const APP_VER = '24.11c Погода: прокрутка лише в таблиці';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -3446,7 +3446,7 @@ let WXF = (() => { try{ return localStorage.getItem('dl_wx_farm') || 'dolynske';
 function wxFarms(){ const F = (FWX.data || {}).farms || {}; return [['dolynske', 'Долинське'], ...Object.entries(F).map(([k, v]) => [k, v.name || k])]; }
 // Горизонтальна прокрутка таблиці погоди: прилипання колонок до закріпленої 1-ї колонки + хвіст справа
 function wxScroller(tb){
-  const box = el('div', {class:'wx-scroll', style:'overflow-x:auto;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch'}, tb);
+  const box = el('div', {class:'wx-scroll', style:'display:block;width:0;min-width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch'}, tb);
   const fit = () => {
     const fix = tb.querySelector('td.wx-fix'), hdr = tb.rows[0]; if(!fix || !hdr || !box.clientWidth) return;
     const fw = fix.getBoundingClientRect().width, cells = [...hdr.cells].filter(td => !td.classList.contains('wx-fix') && !td.classList.contains('wx-pad'));
