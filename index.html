@@ -291,7 +291,9 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
     <label class="note" for="login-token">Ключ доступу</label>
     <input id="login-token" type="password" autocomplete="off" placeholder="github_pat_…">
     <label class="note" for="login-role">Роль</label>
-    <select id="login-role"><option value="b">Бригадир</option><option value="a">Агроном</option><option value="o">Власник</option></select>
+    <select id="login-role"><option value="k">Обліковець (Каріна)</option><option value="a">Керуючий / агроном (Вова)</option><option value="o">Власник (за паролем власників)</option></select>
+    <label class="note" for="login-name">Ім’я</label>
+    <input id="login-name" autocomplete="name" placeholder="напр. Каріна">
     <button class="btn primary" id="login-go">Увійти</button>
     <p class="note" id="login-msg" role="alert"></p>
     <p class="note">Ключ видає власник. Він зберігається лише в цьому браузері й дає доступ тільки до даних господарства.</p>
@@ -306,7 +308,6 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <span class="pill open" id="role-name">—</span>
       <button class="btn" id="btn-xlsx">Вивантажити Excel</button>
       <button class="btn ghost" id="btn-logout" title="Вийти з цього пристрою">Вийти</button>
-      <span hidden><button id="role-b"></button><button id="role-o"></button></span>
     </div>
   </header>
   <nav class="tabs" id="tabs" aria-label="Розділи"></nav>
@@ -318,7 +319,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   <main class="pane" id="pane-day">
     <header class="day">
       <div class="dayline">
-        <div><h1 id="day-title"></h1><div class="note">бригадир · <span class="pill open" id="day-status">День відкритий</span> <span class="note" id="draft-note" role="status"></span></div><div class="note" id="draft-others"></div></div>
+        <div><h1 id="day-title"></h1><div class="note"><span id="day-who">облік</span> · <span class="pill open" id="day-status">День відкритий</span> <span class="note" id="draft-note" role="status"></span></div><div class="note" id="draft-others"></div></div>
         <div class="datenav"><button class="btn ghost" id="prev-day" aria-label="Попередній день">←</button><input type="date" id="date" style="width:auto"><button class="btn ghost" id="next-day" aria-label="Наступний день">→</button></div>
       </div>
       <div class="kpis" id="kpis"></div>
@@ -1063,12 +1064,12 @@ function drawAgro(){
       : el('p', {class:'note'}, AR.wxErr || 'Завантажую прогноз…'),
     el('div', {class:'note', style:'margin-top:6px'}, 'Правило простою як в агрозвіті: дощ ≥0,5 мм → 1 день (>12°), 1,5 (8–12°), 2 (<8°); хмарність >90% → вихід з 11:00. Опади — середнє двох моделей (у дужках ECMWF / ICON). 💧 — вікна обприскування: суцільна рамка — обидві моделі згодні, пунктир — лише одна. Прогноз: '+(AR.wxSrc || 'Open-Meteo.com (ECMWF IFS + DWD ICON)')+', CC BY 4.0.'));
   const bad = AR._bad;
-  const recon = X ? el('div', {class:'recon '+(bad ? 'bad' : 'ok')}, el('b', {}, bad ? '⚠ Розбіжностей з агрозвітом: '+bad : '✓ Дані бригадира й агрозвіту сходяться'),
+  const recon = X ? el('div', {class:'recon '+(bad ? 'bad' : 'ok')}, el('b', {}, bad ? '⚠ Розбіжностей з агрозвітом: '+bad : '✓ Наші дані й агрозвіту сходяться'),
       el('div', {class:'note'}, 'Агрозвіт — файли бухгалтера (OneDrive), дані на '+X.data_date.split('-').reverse().join('.')+'. Допуск: гектари ±1 га або 2%, пальне ±20 л або 5%, зерно ±0,5 т або 1%.'+(iso > X.data_date ? ' Обраний день новіший за агрозвіт — для звірки дочекайтесь файлів бухгалтера.' : '')))
     : el('div', {class:'recon'}, el('b', {}, 'Звірка недоступна'), el('div', {class:'note'}, AR.err || ''));
   body.replaceChildren(recon, secDay, el('div', {class:'ar-grid'}, secPlan, secFuel, secWork, secHarv, secMon, secLha, secBench, secWx));
   // лічильник розбіжностей рахується під час побудови — оновлюємо банер
-  recon.firstChild.textContent = X ? (AR._bad ? '⚠ Розбіжностей з агрозвітом: '+AR._bad : '✓ Дані бригадира й агрозвіту сходяться') : 'Звірка недоступна';
+  recon.firstChild.textContent = X ? (AR._bad ? '⚠ Розбіжностей з агрозвітом: '+AR._bad : '✓ Наші дані й агрозвіту сходяться') : 'Звірка недоступна';
   recon.className = 'recon '+(X ? (AR._bad ? 'bad' : 'ok') : '');
 }
 
@@ -1271,7 +1272,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '24.11d Завдання агроному';
+const APP_VER = '24.11e Ролі: власники, обліковець, керуючий';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1282,10 +1283,9 @@ function renderTabs(){
   TABS.filter(([id]) => tabOk(id)).forEach(([id, t]) => { const n = id==='tasks' ? tskBadge() : 0;
     nav.append(el('a', {href:'#'+id, 'aria-current': id===TAB ? 'page' : 'false'}, t, n ? el('span', {class:'pill bad', style:'margin-left:4px;padding:0 6px'}, String(n)) : '')); });
 }
-// хто бачить вкладку: «Завдання» — власник і агроном; службові — лише власник
-function tabOk(id){ return id==='tasks' ? (ROLE==='o' || ROLE==='a') : ((id!=='settings' && id!=='agro' && id!=='batt' && id!=='report') || ROLE==='o'); }
+function tabOk(id){ return (TAB_ROLES[id] || 'o').includes(ROLE); }
 function showTab(id){
-  if(!TABS.some(t => t[0]===id) || !tabOk(id)) id = 'day';
+  if(!TABS.some(t => t[0]===id) || !tabOk(id)) id = ROLE_HOME[ROLE] || 'day';
   TAB = id; document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id==='pane-'+id));
   renderTabs(); renderAll(); renderScQueue();
 }
@@ -1297,8 +1297,6 @@ function renderAll(){
     fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:() => { renderJournal(); renderZzr(); }, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
-$('#role-b').addEventListener('click', () => { ROLE = 'b'; $('#role-b').setAttribute('aria-pressed','true'); $('#role-o').setAttribute('aria-pressed','false'); showTab(TAB); });
-$('#role-o').addEventListener('click', () => { ROLE = 'o'; $('#role-o').setAttribute('aria-pressed','true'); $('#role-b').setAttribute('aria-pressed','false'); showTab(TAB); toast('Роль «Власник»: відкрито «Довідники». У робочій версії — за окремим PIN.'); });
 $('#btn-xlsx').addEventListener('click', () => toast('У робочій версії тут завантажиться «Загальний_звіт_Долинське.xlsx» з усіма внесеними днями'));
 
 // ---------- ЕКРАН ДНЯ
@@ -1751,7 +1749,7 @@ function buildDayDoc(){
   DS.gm.forEach(g => { if(+g.kg) rows['Рух зерна'].push({'Дата':n, 'Продукт':g.p, 'Тип руху':g.t, 'Кількість, кг':+g.kg, 'Кому / коментар':g.c}); });
   const inputs = Object.fromEntries(['zav-dp','zav-bz','dip1','dip2','dip3','dipb'].map(id => [id, $('#'+id).value]));
   const ui = JSON.parse(JSON.stringify({...DS, editing:false})); ui.inputs = inputs;
-  return {kind:'day', date:DAY, saved_at:new Date().toISOString(), by: ROLE_NAMES[ROLE] || 'бригадир', ui, rows, fuel:{date:DAY, cells}, ...(shifts.length ? {shifts} : {})};
+  return {kind:'day', date:DAY, saved_at:new Date().toISOString(), by: whoName(), ui, rows, fuel:{date:DAY, cells}, ...(shifts.length ? {shifts} : {})};
 }
 function openDay(){
   flushDraft();
@@ -1796,7 +1794,7 @@ async function loadRemoteDraft(day, doc){
 function markDirty(){
   if(!DS || !DAY) return; DIRTY = true;
   const inputs = {}; DRAFT_INPUTS.forEach(id => inputs[id] = $('#'+id).value);
-  const o = {kind:'draft', day:DAY, ts:Date.now(), by: ROLE_NAMES[ROLE] || 'бригадир', ds:DS, inputs};
+  const o = {kind:'draft', day:DAY, ts:Date.now(), by: whoName(), ds:DS, inputs};
   LS.set(draftKey(DAY), JSON.stringify(o)); DRAFT_TS = o.ts;
   draftNote('чернетка збережена на пристрої '+hhmm(o.ts));
   clearTimeout(DRAFT_TIMER); DRAFT_DAY = DAY; DRAFT_TIMER = setTimeout(() => pushDraft(DRAFT_DAY), 15000);
@@ -2995,7 +2993,7 @@ async function saveDoc(path, doc, msg){
   try{ syncState('Зберігаю…'); await putJSON(path, doc, msg); delete PENDING[path]; storePending(); syncState('Збережено '+new Date().toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'}), 'ok'); return true; }
   catch(e){ if(e.auth){ syncState(e.message, 'bad'); } else { PENDING[path] = {doc, msg}; storePending(); syncState('Не збережено на сервері: '+Object.keys(PENDING).length+' — повторю', 'warn'); } return false; }
 }
-function saveEvent(rows, what, extra={}){ const ts = new Date().toISOString().replace(/[:.]/g, '-'); return saveDoc('events/'+ts.slice(0,4)+'/'+ts+'-'+Math.random().toString(36).slice(2,6)+'.json', {kind:'event', what, saved_at:new Date().toISOString(), by: ROLE_NAMES[ROLE] || 'бригадир', rows, ...extra}, 'Запис: '+what); }
+function saveEvent(rows, what, extra={}){ const ts = new Date().toISOString().replace(/[:.]/g, '-'); return saveDoc('events/'+ts.slice(0,4)+'/'+ts+'-'+Math.random().toString(36).slice(2,6)+'.json', {kind:'event', what, saved_at:new Date().toISOString(), by: whoName(), rows, ...extra}, 'Запис: '+what); }
 async function flushPending(){
   for(const [path, {doc, msg}] of Object.entries(PENDING)){ try{ await putJSON(path, doc, msg+' (відкладено)'); delete PENDING[path]; }catch(e){ break; } }
   storePending(); const n = Object.keys(PENDING).length; if(n) syncState('Очікують відправки: '+n, 'warn');
@@ -3253,8 +3251,8 @@ async function renderPlan(){
   const body = $('#plan-body'); body.replaceChildren(el('p', {class:'note'}, 'Завантажую план…'));
   const P = await loadPlan(PLAN.day); if(!FWX.data) await ensureFwx();
   if(!P){ body.replaceChildren(el('p', {class:'note'}, 'Плану на '+dm(PLAN.day)+' ще немає. Чернетка складається автоматично щовечора (~18:00) разом з оновленням погоди, вранці — уточнюється на сьогодні, якщо її не затверджено.')); $('#plan-src').textContent = ''; return; }
-  const own = ROLE==='o', E = PLAN.edit && PLAN.edit.date===P.date ? PLAN.edit : null, X = E || P, editable = own && X.status!=='approved';
-  const st = {draft:['Чернетка', 'var(--warn)'], edited:['Виправлено власником (не затверджено)', 'var(--warn)'], approved:['✓ Затверджено', 'var(--good)']}[X.status] || ['?', ''];
+  const own = ROLE==='o', E = PLAN.edit && PLAN.edit.date===P.date ? PLAN.edit : null, X = E || P, editable = (own || ROLE==='a') && X.status!=='approved';
+  const st = {draft:['Чернетка', 'var(--warn)'], edited:['Виправлено'+(X.edited_by ? ' ('+X.edited_by+')' : '')+' — не затверджено', 'var(--warn)'], approved:['✓ Затверджено', 'var(--good)']}[X.status] || ['?', ''];
   $('#plan-src').textContent = 'склав розрахунок '+new Date(P.generated).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+(P.approved_at ? ' · затвердив '+(P.approved_by || 'власник')+' '+new Date(P.approved_at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '');
   const out = [el('div', {style:'margin:6px 0 10px'}, el('span', {class:'pill', style:'color:'+st[1]+';background:color-mix(in srgb,'+st[1]+' 15%,transparent)'}, st[0]),
     !own && X.status!=='approved' ? el('span', {class:'note', style:'margin-left:8px'}, 'чекає затвердження власником — може змінитися') : '')];
@@ -3296,6 +3294,8 @@ async function renderPlan(){
     out.push(card);
   });
   if(!out.some(x => x.dataset && x.dataset.work)) out.push(el('p', {class:'note'}, 'На цей день робіт у полі немає — погода не дозволяє.'));
+  if(ROLE==='a' && E && X.status!=='approved') out.push(el('div', {class:'acts', style:'justify-content:flex-start;margin-top:10px'},
+    el('button', {class:'btn primary', onclick:() => savePlan(E, 'edited')}, 'Зберегти зміни (затвердить власник)'), el('button', {class:'btn ghost', onclick:() => { PLAN.edit = null; renderPlan(); }}, 'Скасувати зміни')));
   if(own){
     const acts = el('div', {class:'acts', style:'justify-content:flex-start;margin-top:10px'});
     if(X.status!=='approved'){
@@ -3706,9 +3706,9 @@ function grainCrops(GO, bl){      // культура → прогноз у то
 function planEdit(P, fn){ if(!PLAN.edit || PLAN.edit.date!==P.date) PLAN.edit = JSON.parse(JSON.stringify(P)); fn(PLAN.edit); renderPlan(); }
 async function savePlan(doc, status){
   const d = JSON.parse(JSON.stringify(doc)); d.status = status;
-  if(status==='approved'){ d.approved_at = new Date().toISOString(); d.approved_by = LS.get('dl_name') || 'Власник'; } else { delete d.approved_at; delete d.approved_by; d.edited_at = new Date().toISOString(); }
+  if(status==='approved'){ d.approved_at = new Date().toISOString(); d.approved_by = LS.get('dl_name') || 'Власник'; } else { delete d.approved_at; delete d.approved_by; d.edited_at = new Date().toISOString(); d.edited_by = whoName(); }
   try{ syncState('Зберігаю план…'); await putJSON('plans/'+d.date+'.json', d, (status==='approved' ? 'План затверджено: ' : 'План виправлено: ')+d.date);
-    PLAN.docs[d.date] = d; PLAN.edit = null; syncState('План збережено', 'ok'); toast(status==='approved' ? 'План затверджено — бригадир його бачить' : 'Зміни збережено'); renderPlan(); }
+    PLAN.docs[d.date] = d; PLAN.edit = null; syncState('План збережено', 'ok'); toast(status==='approved' ? 'План затверджено' : 'Зміни збережено'); renderPlan(); }
   catch(e){ toast('Не вдалося зберегти: '+e.message); syncState('Помилка збереження', 'bad'); }
 }
 // ======= «Вікна оранки» (geo/weather.json → points[*].plow, fields[*].plow)
@@ -4587,7 +4587,7 @@ $('#map-hyb').addEventListener('click', async ev => { MAPV.showZ = ev.target.get
 
 // ======= ОГЛЯДИ ПОЛІВ (агроном, власник, бригадир): нотатка + фото з GPS-міткою → поле визначається за контуром
 // документи: scouts/РРРР/…json; фото: media/РРРР/<id>-<n>.jpg (стиснені ~1600 px); без зв'язку — черга в IndexedDB
-const ROLE_NAMES = {o:'власник', b:'бригадир', a:'агроном'};
+const ROLE_NAMES = {o:'власник', k:'обліковець', a:'керуючий'};
 let SCOUTS = {}, SC = null, SCF = '';   // SCOUTS: path → doc; SC — форма, що заповнюється; SCF — фільтр поля
 const SC_STATE = [['good', 'добрий', 'ok'], ['mid', 'задовільний', ''], ['bad', 'поганий', 'bad']];
 const SC_TAGS = ['бур’яни', 'шкідники', 'хвороби', 'посуха', 'перезволоження', 'вимерзання', 'град', 'нерівномірні сходи', 'дефіцит живлення', 'полягання', 'пошкодження технікою'];
@@ -5141,6 +5141,61 @@ function drawScoutPins(){
 }
 
 // ======= вхід
+// ======= РОЛІ ДОСТУПУ (ТЗ claude/ТЗ_Ролі_доступу.md, 24.11): власники (o, кожен під своїм ім'ям, за паролем власників),
+// обліковець Каріна (k), керуючий/агроном Вова (a). Бригадира (b) прибрано — старі пристрої з b стають k.
+// Пароль власників: ref/owner.enc.json — перевірочний запис, зашифрований AES-256-GCM ключем з пароля (PBKDF2-SHA256);
+// той самий ключ шифруватиме гроші (етап 3). Ключ запам'ятовується на пристрої власника (dl_ownkey), на інших — ні.
+const OWN_PATH = 'ref/owner.enc.json', OWN_CHECK = 'dolynske-owner-v1';
+// хто бачить вкладку: o — усе; k — облік; a — поля й агрономія. Гроші — лише шифровані (власникам).
+const TAB_ROLES = {report:'o', tasks:'oa', day:'ok', plan:'oka', map:'oka', scout:'oa', agro:'o', history:'oka', overview:'o', fields:'oka', inputs:'oa',
+  fuel:'ok', tech:'oka', batt:'ok', stock:'ok', journal:'oa', settings:'o'};
+const ROLE_HOME = {o:'report', k:'day', a:'tasks'};
+const whoName = () => LS.get('dl_name') || ROLE_NAMES[ROLE] || ROLE;
+let OWN_KEY = null;
+async function ownKeyFromPass(pass, doc){ return paiKey(pass, b64u8(doc.salt), doc.iter); }
+async function ownVerify(doc, key){ try{ const o = await paiDecrypt(doc, key); return o && o.check===OWN_CHECK; }catch(e){ return false; } }
+async function ownRemembered(doc){ try{ const j = JSON.parse(LS.get('dl_ownkey') || 'null'); if(!j || j.salt!==doc.salt) return null;
+  return await crypto.subtle.importKey('jwk', j.jwk, {name:'AES-GCM'}, true, ['encrypt', 'decrypt']); }catch(e){ return null; } }
+// вхід власника: перший раз — створити пароль власників; далі — пароль або запам'ятований ключ
+function ownerGate(){
+  return new Promise(async done => {
+    let doc = null; try{ doc = await getJSON(OWN_PATH); }catch(e){ if(e.auth) throw e; }
+    if(doc){ const k = await ownRemembered(doc); if(k && await ownVerify(doc, k)){ OWN_KEY = k; return done(true); } LS.del('dl_ownkey'); }
+    const msg = el('p', {class:'note', role:'alert'}), name = el('input', {placeholder:'Ваше ім’я (видно в історії записів)', value:LS.get('dl_name') || '', autocomplete:'name'});
+    const p1 = el('input', {type:'password', autocomplete: doc ? 'current-password' : 'new-password', placeholder: doc ? 'Пароль власників' : 'Новий пароль власників (від 10 символів)'});
+    const p2 = doc ? null : el('input', {type:'password', autocomplete:'new-password', placeholder:'Повторіть пароль'});
+    const rem = el('input', {type:'checkbox', id:'own-rem', checked:''});
+    const box = el('div', {class:'login', id:'owner-gate'}, el('div', {class:'login-card'},
+      el('h1', {}, doc ? 'Вхід власника' : 'Пароль власників'),
+      el('p', {class:'note'}, doc ? 'Роль «Власник» відкриває все, зокрема гроші. Введіть спільний пароль власників.'
+        : 'Створіть спільний пароль для вас і партнерів. Він відкриває роль власника й шифрує гроші. Загубите — зашифровані суми не відновити: збережіть у менеджері паролів.'),
+      name, p1, p2 || '', el('label', {class:'note', for:'own-rem'}, rem, ' запам’ятати на цьому пристрої'),
+      el('button', {class:'btn primary', onclick:go}, doc ? 'Увійти' : 'Створити пароль'),
+      el('button', {class:'btn ghost', onclick:() => { box.remove(); LS.del('dl_role'); LS.del('dl_token'); location.reload(); }}, 'Увійти з іншою роллю'), msg));
+    async function go(){
+      if(!name.value.trim()){ msg.textContent = 'Вкажіть ім’я'; return; }
+      msg.textContent = 'Перевіряю…';
+      try{
+        let key;
+        if(doc){ key = await ownKeyFromPass(p1.value, doc); if(!await ownVerify(doc, key)){ msg.textContent = 'Пароль не підходить'; return; } }
+        else { if(p1.value.length < 10){ msg.textContent = 'Пароль — щонайменше 10 символів'; return; } if(p1.value!==p2.value){ msg.textContent = 'Паролі не збігаються'; return; }
+          const r = await paiEncrypt({check:OWN_CHECK, by:name.value.trim()}, p1.value); r.doc.kind = 'owner-enc'; doc = r.doc; key = r.key;
+          await putJSON(OWN_PATH, doc, 'Пароль власників створено ('+name.value.trim()+')'); }
+        LS.set('dl_name', name.value.trim()); OWN_KEY = key;
+        if(rem.checked) LS.set('dl_ownkey', JSON.stringify({salt:doc.salt, jwk: await crypto.subtle.exportKey('jwk', key)}));
+        box.remove(); done(true);
+      }catch(e){ msg.textContent = 'Помилка: '+e.message; }
+    }
+    p1.addEventListener('keydown', e => { if(e.key==='Enter') go(); });
+    document.body.append(box); (name.value ? p1 : name).focus();
+  });
+}
+function applyRoleUi(){
+  $('#role-name').textContent = ROLE==='o' ? 'Власник · '+(LS.get('dl_name') || '') : ROLE==='k' ? 'Обліковець'+(LS.get('dl_name') ? ' · '+LS.get('dl_name') : '') : 'Керуючий'+(LS.get('dl_name') ? ' · '+LS.get('dl_name') : '');
+  // Каріні на карті — без супутника, зон і оглядів
+  if(ROLE==='k') ['#map-mode [data-m="ndvi"]', '#map-mode [data-m="prod"]', '#map-sc', '#ndvi-idx'].forEach(s => document.querySelectorAll(s).forEach(x => x.hidden = true));
+}
+
 // ======= «ЗАВДАННЯ АГРОНОМУ» (tasks/<id>.json; ТЗ claude/ТЗ_Завдання_агроному.md, 24.11)
 // Принцип власника: завдання лише коли від поїздки залежить рішення. Чернетки складає tools/tasks.py з тривог і моделі
 // перезимівлі за каталогом ref/task_catalog.json; власник править / відправляє / відхиляє; агроном виконує через огляд
@@ -5164,7 +5219,7 @@ const tskDue = t => { if(!t.due) return ''; const d = Math.round((new Date(t.due
   return d < 0 ? el('span', {class:'pill bad'}, 'прострочено '+(-d)+' дн.') : el('span', {class:'pill'+(d===0 ? ' bad' : '')}, d===0 ? 'сьогодні' : d===1 ? 'до завтра' : 'до '+t.due.slice(8,10)+'.'+t.due.slice(5,7)); };
 const tskRoute = p => p ? el('a', {class:'btn small', target:'_blank', rel:'noopener', href:'https://www.google.com/maps/dir/?api=1&destination='+p.lat+','+p.lon}, '📍 Маршрут') : '';
 async function tskSave(t, patch, what){
-  const {path, _sha, ...clean} = t; const doc = {...clean, ...patch, history:[...(t.history || []), {at:isoNow(), by:ROLE_NAMES[ROLE] || ROLE, what}]};
+  const {path, _sha, ...clean} = t; const doc = {...clean, ...patch, history:[...(t.history || []), {at:isoNow(), by:whoName(), what}]};
   await putJSON(path || 'tasks/'+t.id+'.json', doc, 'Завдання: '+t.field+' — '+what);
   TSK.list = null; await loadTasks(true); renderTabs(); if(TAB==='tasks') renderTasks();
 }
@@ -5292,21 +5347,22 @@ $('#login-go').addEventListener('click', async () => {
   const t = $('#login-token').value.trim(); if(!t){ $('#login-msg').textContent = 'Вставте ключ доступу.'; return; }
   TOKEN = t; $('#login-msg').textContent = 'Перевіряю ключ…';
   try{ const repo = await gh(''); if(!repo) throw new Error('Не бачу репозиторій dolynske-data. Перевірте, що ключ має доступ саме до нього.');
-    LS.set('dl_token', t); LS.set('dl_role', $('#login-role').value); $('#login').hidden = true; start(); }
+    LS.set('dl_token', t); LS.set('dl_role', $('#login-role').value); if($('#login-name').value.trim()) LS.set('dl_name', $('#login-name').value.trim()); $('#login').hidden = true; start(); }
   catch(e){ TOKEN = null; $('#login-msg').textContent = e.message; }
 });
-$('#btn-logout').addEventListener('click', () => { if(navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear-api'); if(window.caches) caches.delete('api-v1'); LS.del('dl_token'); TOKEN = null; location.hash = ''; location.reload(); });
+$('#btn-logout').addEventListener('click', () => { if(navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear-api'); if(window.caches) caches.delete('api-v1'); LS.del('dl_token'); LS.del('dl_ownkey'); TOKEN = null; location.hash = ''; location.reload(); });
 $('#btn-xlsx').addEventListener('click', () => { if(!RAW){ toast('Дані ще не завантажені'); return; } exportExcel(); });
 async function start(){
-  ROLE = LS.get('dl_role') || 'b';
-  $('#role-name').textContent = ({o:'Власник', a:'Агроном'})[ROLE] || 'Бригадир';
+  ROLE = LS.get('dl_role') || 'k'; if(!'oka'.includes(ROLE) || ROLE.length!==1){ ROLE = 'k'; LS.set('dl_role', 'k'); }   // бригадира прибрано (24.11)
+  if(ROLE==='o'){ try{ await ownerGate(); }catch(e){ if(e.auth){ LS.del('dl_token'); showLogin(e.message); } return; } }
+  applyRoleUi();
   try{ await loadAll(); }
   catch(e){ syncState(e.message, 'bad'); if(e.auth){ LS.del('dl_token'); showLogin(e.message); } return; }
   const today = new Date(); DAY = new Date(today.getTime() - today.getTimezoneOffset()*6e4).toISOString().slice(0,10);
   const lastDay = readDraft(LS.get('dl_day')); if(lastDay && lastDay.d && Date.now() - lastDay.t < 12*3600e3) DAY = lastDay.d;
   YEAR = MODEL.years.includes(new Date().getFullYear()) ? new Date().getFullYear() : d3.max(MODEL.years);
   $('#src-line').textContent = 'ТОВ «Долинське» · дані з приватного сховища · версія '+APP_VER;
-  openDay(); showTab(location.hash.slice(1) || 'day');
+  openDay(); showTab(location.hash.slice(1) || ROLE_HOME[ROLE] || 'day');
   loadAlerts(); if(ROLE==='o' || ROLE==='a') loadTasks().then(renderTabs).catch(() => {});
   OUTBOX.all().then(q => { OUTQ = q; if(q.length){ renderScQueue(); flushScouts(); } }).catch(() => {});
 }
