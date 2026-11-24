@@ -1265,7 +1265,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day';
-const APP_VER = '24.11a Погода: єдина таблиця';
+const APP_VER = '24.11b Погода: дні під 1-шу колонку';
 const TABS = [['report','📋 Звіт дня'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -3444,6 +3444,21 @@ function planH48(PTS, pd){
 // перемикач господарства для погоди (Долинське — точки Захід/Схід і поля; інші — з ref/farms.json → geo/weather.json farms)
 let WXF = (() => { try{ return localStorage.getItem('dl_wx_farm') || 'dolynske'; }catch(e){ return 'dolynske'; } })();
 function wxFarms(){ const F = (FWX.data || {}).farms || {}; return [['dolynske', 'Долинське'], ...Object.entries(F).map(([k, v]) => [k, v.name || k])]; }
+// Горизонтальна прокрутка таблиці погоди: прилипання колонок до закріпленої 1-ї колонки + хвіст справа
+function wxScroller(tb){
+  const box = el('div', {class:'wx-scroll', style:'overflow-x:auto;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch'}, tb);
+  const fit = () => {
+    const fix = tb.querySelector('td.wx-fix'), hdr = tb.rows[0]; if(!fix || !hdr || !box.clientWidth) return;
+    const fw = fix.getBoundingClientRect().width, cells = [...hdr.cells].filter(td => !td.classList.contains('wx-fix') && !td.classList.contains('wx-pad'));
+    const last = cells.length ? cells[cells.length-1].getBoundingClientRect().width : 0;
+    const pad = Math.max(0, Math.round(box.clientWidth - fw - last));
+    box.style.scrollPaddingLeft = Math.round(fw)+'px';
+    tb.querySelectorAll('td.wx-pad').forEach(td => { td.style.minWidth = td.style.width = pad+'px'; td.style.padding = '0'; td.style.border = '0'; });
+  };
+  requestAnimationFrame(fit); setTimeout(fit, 300);
+  try { new ResizeObserver(fit).observe(box); } catch(e) {}
+  return box;
+}
 function planWeather(from, P){
   const FS = wxFarms(); if(!FS.some(f => f[0]===WXF)) WXF = 'dolynske';
   const isD = WXF==='dolynske', srcPts = isD ? (FWX.data || {}).points : ((((FWX.data || {}).farms || {})[WXF] || {}).points);
@@ -3609,8 +3624,8 @@ function planWeather(from, P){
     return el('td', {style:'text-align:center;padding:3px 4px;white-space:nowrap;'+bl+(extraSt?';'+extraSt:'')}, content);
   };
   const mkRow = (label, valFn, stFn, firstRi) => el('tr', {style:firstRi?'':'border-top:1px solid var(--line)'},
-    el('td', {style:'padding:3px 6px 3px 0;white-space:nowrap;position:sticky;left:0;z-index:1;background:var(--card,var(--bg))'}, label),
-    ...cols.map((c,ci) => mkTd(valFn(c), stFn ? stFn(c) : '', ci, c)));
+    el('td', {class:'wx-fix', style:'padding:3px 6px 3px 0;white-space:nowrap;position:sticky;left:0;z-index:2;background:var(--surface,var(--bg));box-shadow:2px 0 0 var(--line)'}, label),
+    ...cols.map((c,ci) => mkTd(valFn(c), stFn ? stFn(c) : '', ci, c)), el('td', {class:'wx-pad'}));
 
   // Визначаємо рядки (без рядків окремих полів)
   const rowDefs = [
@@ -3645,10 +3660,12 @@ function planWeather(from, P){
 
   // Рядок заголовку
   const hdrTr = el('tr', {},
-    el('td', {style:'padding:3px 6px 3px 0;position:sticky;left:0;z-index:1;background:var(--card,var(--bg))'},''),
-    ...cols.map((c,ci) => getVal.hdr(c)));
+    el('td', {class:'wx-fix', style:'padding:3px 6px 3px 0;position:sticky;left:0;z-index:2;background:var(--surface,var(--bg));box-shadow:2px 0 0 var(--line)'},''),
+    ...cols.map((c,ci) => { const td = getVal.hdr(c); td.style.scrollSnapAlign = 'start'; return td; }), el('td', {class:'wx-pad'}));
 
-  const tb = el('table', {style:'border-collapse:collapse;font-size:12px;width:100%'},
+  // Прокрутка вправо: дні заїжджають під закріплену 1-шу колонку й зупиняються впритул до неї;
+  // порожній хвіст справа дає останньому дню доїхати до 1-ї колонки.
+  const tb = el('table', {style:'border-collapse:separate;border-spacing:0;font-size:12px;width:100%'},
     hdrTr,
     ...rowDefs.map(([lab, vf, sf], ri) => mkRow(lab, vf, sf, false)));
 
@@ -3659,7 +3676,7 @@ function planWeather(from, P){
   return el('div', {class:'card'},
     el('h3', {style:'margin-top:0'}, '🌦 Погода і ґрунт'+(FS.length>1?' · '+(FS.find(f=>f[0]===WXF)||[,''])[1]:'')),
     sw, hourlyNote,
-    el('div', {style:'overflow-x:auto'}, tb),
+    wxScroller(tb),
     gnotes.length ? el('div',{class:'note',style:'margin-top:6px'},'💧 '+gnotes.join(' · ')+'. Волога зерна — оцінка за погодою; межа косіння = база елеватора + 2 %.') : '',
     el('div',{class:'note',style:'margin-top:4px'},'Оновлюється щодня ~06:00 і ~18:30'+(upd?' · останнє '+upd:'')+'. Середнє моделей ECMWF/ICON. Запас — продуктивна волога (понад в\'янення). Вузол кущіння — мін. t ґрунту 0–7 см (сніг уже врахований моделлю); колір — запас до загартованості (LT50) найвразливішого поля: жовтий ≤ 4°, помаранчевий ≤ 2°, червоний — мороз нижче LT50. Відлига — ≥ 3 дні вище +5 °C у грудні–лютому (втрата загартування). Випрівання — сніг ≥ 30 см на непромерзлому ґрунті. Льодяна кірка — дощ по мерзлому ґрунту з морозом слідом; небезпечна, якщо тримається понад 10–15 днів.'),
     isD ? winterNote(D) : el('div',{class:'note',style:'margin-top:4px'},'Поля цього господарства ще не внесені — показано погоду й ґрунт у точці '+PTS.map(p=>nf(p.lat,3)+', '+nf(p.lon,3)).join('; ')+'. Волога зерна — оцінка за погодою в цій точці; стан озимини з\'явиться, коли додамо поля.'));
