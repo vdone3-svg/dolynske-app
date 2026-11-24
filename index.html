@@ -3570,8 +3570,8 @@ function planWeather(from, P){
       const w = c.type==='h3' ? c.b.wMax : c.o.wg;
       return w!=null && w>=15 ? 'color:var(--bad);font-weight:600':'';
     },
-    fog: c => c.type==='h3' ? '—' : (c.o.fog>=4 ? nf(c.o.fog,0)+' год':'—'),
-    snow: c => c.type==='h3' ? '—' : (c.o.sn>=1 ? nf(c.o.sn,0)+' см':'—'),
+    fog: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; return o.fog>=4?nf(o.fog,0)+' год':'—'; },
+    snow: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; return o.sn>=1?nf(o.sn,0)+' см':'—'; },
     frost: c => {
       if(c.type==='h3'){
         const ts=c.b.tsAvg; const cold=ts!=null&&ts<0;
@@ -3579,23 +3579,23 @@ function planWeather(from, P){
       }
       const o=c.o; return o.fdp>=1 ? nf(o.fdp,0)+' см' : (o.tsn!=null&&o.tsn<0?'кірка':'—');
     },
-    moist: c => c.type==='h3' ? '—' : (c.o.r!=null?nf(c.o.r,0)+' % НВ':'—'),
-    moistSt: c => { if(c.type==='h3') return ''; const r=c.o.r; return r>95?'color:var(--bad)':r>85?'color:var(--warn)':''; },
+    moist: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; return o.r!=null?nf(o.r,0)+' % НВ':'—'; },
+    moistSt: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; const r=o.r; return r>95?'color:var(--bad)':r>85?'color:var(--warn)':''; },
     water: c => {
-      if(c.type==='h3') return '—';
-      const o=c.o; return o.w28!=null ? el('span',{title:'0–28 см: >50 добре, 30–50 задовільно, <30 погано · 0–100 см: >150 добре, 100–150 задовільно, <100 погано'},
+      const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o;
+      return o.w28!=null ? el('span',{title:'0–28 см: >50 добре, 30–50 задовільно, <30 погано · 0–100 см: >150 добре, 100–150 задовільно, <100 погано'},
         el('span',{style:o.w28<30?'color:var(--bad);font-weight:600':o.w28<50?'color:var(--warn)':''}, nf(o.w28,0)),
         o.w100!=null?' / ':'', o.w100!=null?el('span',{style:o.w100<100?'color:var(--bad);font-weight:600':o.w100<150?'color:var(--warn)':''}, nf(o.w100,0)):'', ' мм') : '—';
     },
     node: c => {
-      if(c.type==='h3') return '—';
-      const o=c.o; return o.tsn==null?'—':el('span',{title:o.nf.length?'Під загрозою: '+o.nf.join(', '):'безпечно'}, node(o.tsn));
+      const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o;
+      return o.tsn==null?'—':el('span',{title:(o.nf&&o.nf.length)?'Під загрозою: '+o.nf.join(', '):'безпечно'}, node(o.tsn));
     },
-    nodeSt: c => c.type==='h3' ? '' : NODE_ST[c.o.nl||0],
-    risk: c => c.type==='h3' ? '—' : (c.o.risk.length?c.o.risk.join(', '):'—'),
-    riskSt: c => c.type==='h3' ? '' : (c.o.risk.length?'color:#fff;background:var(--bad);font-weight:600':''),
-    ice: c => c.type==='h3' ? '—' : (c.o.ice?'ризик':'—'),
-    iceSt: c => c.type==='h3' ? '' : (c.o.ice?'color:var(--bad);font-weight:600':''),
+    nodeSt: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; return NODE_ST[o.nl||0]||''; },
+    risk: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; return (o.risk&&o.risk.length)?o.risk.join(', '):'—'; },
+    riskSt: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; return (o.risk&&o.risk.length)?'color:#fff;background:var(--bad);font-weight:600':''; },
+    ice: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; return o.ice?'ризик':'—'; },
+    iceSt: c => { const o=c.type==='h3'?D.find(x=>x.d===c.d)||{}:c.o; return o.ice?'color:var(--bad);font-weight:600':''; },
     plow: c => {
       const st = c.type==='h3' ? c.b.plowSt : c.o.st;
       return st ? (st==='так'?'✓':st==='обмежено'?'~':'✗') : '—';
@@ -3609,7 +3609,7 @@ function planWeather(from, P){
     return el('td', {style:'text-align:center;padding:3px 4px;white-space:nowrap;'+bl+(extraSt?';'+extraSt:'')}, content);
   };
   const mkRow = (label, valFn, stFn, firstRi) => el('tr', {style:firstRi?'':'border-top:1px solid var(--line)'},
-    el('td', {style:'padding:3px 6px 3px 0;white-space:nowrap;position:sticky;left:0;background:var(--card,var(--bg))'}, label),
+    el('td', {style:'padding:3px 6px 3px 0;white-space:nowrap;position:sticky;left:0;z-index:1;background:var(--card,var(--bg))'}, label),
     ...cols.map((c,ci) => mkTd(valFn(c), stFn ? stFn(c) : '', ci, c)));
 
   // Визначаємо рядки (без рядків окремих полів)
@@ -3645,7 +3645,7 @@ function planWeather(from, P){
 
   // Рядок заголовку
   const hdrTr = el('tr', {},
-    el('td', {style:'padding:3px 6px 3px 0;position:sticky;left:0;background:var(--card,var(--bg))'},''),
+    el('td', {style:'padding:3px 6px 3px 0;position:sticky;left:0;z-index:1;background:var(--card,var(--bg))'},''),
     ...cols.map((c,ci) => getVal.hdr(c)));
 
   const tb = el('table', {style:'border-collapse:collapse;font-size:12px;width:100%'},
