@@ -129,7 +129,7 @@ nav.tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line
 nav.tabs a{font:600 14px var(--body);color:var(--muted);text-decoration:none;padding:10px 14px;border-bottom:3px solid transparent;white-space:nowrap}
 nav.tabs a[aria-current="page"]{color:var(--accent);border-bottom-color:var(--accent)}
 nav.tabs a:focus-visible{outline:2px solid var(--accent)}
-.pane{display:none;gap:14px}.pane.on{display:grid}
+.pane{display:none;gap:14px}.pane.on{display:grid}.pane>*{min-width:0}#zzr-body{overflow-x:auto}
 .banner{background:color-mix(in srgb,var(--warn) 14%,var(--surface));border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);border-radius:8px;padding:8px 12px;font-size:13px}
 header.day{display:grid;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
 .dayline{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between}
@@ -496,7 +496,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
 
   <!-- ЖУРНАЛ -->
   <main class="pane" id="pane-journal">
-    <section class="card" id="jr-day-card" hidden><h2>Хто що робив</h2>
+    <section class="card" id="jr-day-card" hidden><div class="chips" id="jr-mode" style="margin-bottom:8px"><button class="chip" type="button" data-m="day" aria-pressed="true">👷 Хто що робив</button><button class="chip" type="button" data-m="zzr" aria-pressed="false">🧪 Журнал ЗЗР</button></div><h2 id="jr-day-h">Хто що робив</h2>
       <div class="datenav" style="margin:6px 0 10px"><button class="btn ghost" id="jr-prev" aria-label="Попередній день">←</button><input type="date" id="jr-date" style="width:auto"><button class="btn ghost" id="jr-next" aria-label="Наступний день">→</button></div>
       <div id="jr-day"></div></section>
     <section class="card" id="jr-card"><h2>Журнал записів</h2>
@@ -1311,7 +1311,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11d';
+const APP_VER = '25.11e';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1333,7 +1333,7 @@ function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
     fields:() => { renderFields(); renderFieldCard(); }, plan:renderPlan, tasks:renderTasks, report:renderReport, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
-    fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:() => { if(ROLE==='a'){ renderJournalDay(); return; } renderJournal(); renderZzr(); }, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
+    fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:() => { if(ROLE==='a'){ renderJournalDay(); if(JRM==='zzr') renderZzr(); return; } renderJournal(); renderZzr(); }, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
 $('#btn-xlsx').addEventListener('click', () => toast('У робочій версії тут завантажиться «Загальний_звіт_Долинське.xlsx» з усіма внесеними днями'));
@@ -2848,9 +2848,13 @@ function renderJournal(){
     el('tbody', {}, rows.slice(0, 300).map(r => el('tr', {}, r.map((v, i) => el('td', {class:'l', style:'white-space:normal'}, i===0 && typeof v==='number' ? dateTxt(v) : (typeof v==='number' ? nf(v, fmt1) : (v ?? ''))))))));
 }
 // керуючий: «Хто що робив» — роботи з табеля за обраний день, картками (телефон)
-let JRD = null;
+let JRD = null, JRM = 'day';   // керуючий: «Хто що робив» або «Журнал ЗЗР» (власник, 25.11)
+document.querySelectorAll('#jr-mode .chip').forEach(b => b.addEventListener('click', () => { JRM = b.dataset.m; renderJournalDay(); if(JRM==='zzr') renderZzr(); }));
 function renderJournalDay(){
-  $('#jr-card').hidden = true; $('#zzr-card').hidden = true; $('#jr-day-card').hidden = false;
+  $('#jr-card').hidden = true; $('#jr-day-card').hidden = false; $('#zzr-card').hidden = JRM!=='zzr';
+  document.querySelectorAll('#jr-mode .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.m===JRM)));
+  ['#jr-day-h', '#jr-day', '#jr-prev', '#jr-next', '#jr-date'].forEach(q => { const e = $(q); if(e) (q==='#jr-prev' || q==='#jr-next' || q==='#jr-date' ? e.parentElement : e).hidden = JRM!=='day'; });
+  if(JRM!=='day') return;
   const W = rowsOf(RAW, 'Роботи').map(r => ({n:(dt(r['Дата']) || {}).n, p:str(r['Працівник']), op:str(r['Операція']), f:str(r['Поле']), m:str(r['Техніка']), q:num(r['Обсяг']), u:str(r['Од.']), note:str(r['Опис / примітка'])})).filter(w => w.n && w.p);
   const days = [...new Set(W.map(w => w.n))].sort((a, b) => a - b), today = toSerial(isoToday());
   if(JRD==null) JRD = d3.max(days.filter(n => n <= today)) || today;
