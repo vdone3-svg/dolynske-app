@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Господарство">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#2f6b3a">
 <title>Щоденне господарство</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -393,6 +398,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
     </section>
   </main>
   <main class="pane" id="pane-tasks">
+    <section class="card" id="push-card" hidden></section>
     <section class="card" id="hc-card" hidden></section>
     <section class="card">
       <div class="toolbar"><h2 style="margin:0" id="tsk-h">🎯 Завдання агроному</h2><span class="note" id="tsk-src"></span></div>
@@ -1330,7 +1336,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11q';
+const APP_VER = '25.11r';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -3199,6 +3205,7 @@ const GH = {owner:'vdone3-svg', repo:'dolynske-data', branch:'main'};
 const LS = {get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }, del(k){ try{ localStorage.removeItem(k); }catch(e){} }};
 let TOKEN = LS.get('dl_token'), OFFLINE = false, OFFLINE_AT = null;
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if(navigator.serviceWorker && typeof navigator.serviceWorker.addEventListener==='function') navigator.serviceWorker.addEventListener('message', ev => { const g = ev.data && ev.data.go; if(typeof g==='string' && g.startsWith('#')) location.hash = g; });   // натиснуто сповіщення
 function syncState(t, kind=''){ const s = $('#sync'); s.textContent = t; s.className = 'sync '+kind; }
 async function gh(path, opts={}){
   const ac = opts.timeout ? new AbortController() : null, tm = ac ? setTimeout(() => ac.abort(), opts.timeout) : null;
@@ -5537,6 +5544,61 @@ function applyRoleUi(){
   if(ROLE==='k') ['#map-mode [data-m="ndvi"]', '#map-mode [data-m="prod"]', '#map-sc', '#ndvi-idx'].forEach(s => document.querySelectorAll(s).forEach(x => x.hidden = true));
 }
 
+// ======= PUSH-СПОВІЩЕННЯ (25.11; розсилка — tools/push.py у data; ТЗ claude/ТЗ_Керуючий_нові_функції.md, п. 1)
+// Підписка → push/subs/<роль входу>-<пристрій>.json; публічний ключ — ref/push.json (його пише push.py з Secret VAPID_SEED).
+// iPhone: лише із значка на екрані «Додому» (Safari → Поділитися → На екран «Додому»), iOS 16.4+.
+const PUSH = {pub:undefined, busy:false, msg:''};
+const pushOk = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => navigator.standalone===true || !!(window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+function pushDev(){ let d = LS.get('dl_dev'); if(!d){ d = Math.random().toString(36).slice(2, 10); LS.set('dl_dev', d); } return d; }
+const pushPath = () => 'push/subs/'+REAL_ROLE+'-'+pushDev()+'.json';
+const pushWhat = () => REAL_ROLE==='a' ? 'нові завдання від власника' : 'чернетки завдань, «день не закрито», генератор ЗАВ, критичні тривоги, огляди без GPS';
+function urlB64u8(b){ const s = atob(b.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - b.length % 4) % 4)); return Uint8Array.from(s, c => c.charCodeAt(0)); }
+async function pushSub(){ if(!pushOk()) return null; const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
+async function delFile(path, msg){ const meta = await gh('contents/'+enc(path)+'?ref='+GH.branch); if(!meta || !meta.sha) return;
+  await gh('contents/'+enc(path), {method:'DELETE', body:JSON.stringify({message:msg, sha:meta.sha, branch:GH.branch})}); }
+async function pushOn(){
+  PUSH.busy = true; PUSH.msg = ''; renderPush();
+  try{
+    const perm = await Notification.requestPermission();   // спершу — поки триває натискання (вимога iPhone)
+    if(perm!=='granted') throw new Error(perm==='denied' ? 'сповіщення заборонені. Дозвольте: Параметри телефону → Сповіщення → Господарство' : 'дозвіл не надано');
+    if(PUSH.pub===undefined) PUSH.pub = ((await getJSON('ref/push.json')) || {}).vapid_pub || null;
+    if(!PUSH.pub){ PUSH.pub = undefined; throw new Error('сповіщення ще не налаштовані (немає ключа на сервері) — скажіть власнику'); }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(sub && LS.get('dl_push_pub') && LS.get('dl_push_pub')!==PUSH.pub){ await sub.unsubscribe(); sub = null; }   // ключ змінився
+    if(!sub) sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64u8(PUSH.pub)});
+    const j = sub.toJSON();
+    await putJSON(pushPath(), {kind:'push_sub', role:REAL_ROLE, who:whoName(), device:pushDev(), ua:navigator.userAgent.slice(0, 160), endpoint:j.endpoint, keys:j.keys, at:isoNow()}, 'Сповіщення: увімкнено — '+whoName());
+    LS.set('dl_push_pub', PUSH.pub); LS.set('dl_push', '1');
+    PUSH.msg = '✓ Увімкнено. За хвилину-дві прийде перше повідомлення «Сповіщення увімкнено».';
+  }catch(e){ PUSH.msg = '✕ Не вдалося: '+e.message; }
+  PUSH.busy = false; renderPush();
+}
+async function pushOff(){
+  PUSH.busy = true; PUSH.msg = ''; renderPush();
+  try{ const s = await pushSub(); if(s) await s.unsubscribe(); await delFile(pushPath(), 'Сповіщення: вимкнено — '+whoName()); LS.del('dl_push'); PUSH.msg = 'Сповіщення на цьому телефоні вимкнено.'; }
+  catch(e){ PUSH.msg = '✕ Не вдалося: '+e.message; }
+  PUSH.busy = false; renderPush();
+}
+async function renderPush(){
+  const box = $('#push-card'); if(!box) return;
+  if(!(ROLE==='a' || ROLE==='o')){ box.hidden = true; return; }
+  box.hidden = false;
+  const head = el('div', {class:'toolbar', style:'margin:0'}, el('b', {}, '🔔 Сповіщення на цей телефон'));
+  if(isIOS() && !isStandalone()){
+    box.replaceChildren(head, el('div', {class:'note'}, 'На iPhone сповіщення працюють лише із значка на екрані «Додому». Відкрийте цю сторінку в Safari → кнопка «Поділитися» (квадрат зі стрілкою вгору) → «На екран "Додому"» → «Додати». Потім відкрийте застосунок зі значка, увійдіть і натисніть тут «Увімкнути сповіщення».'));
+    return;
+  }
+  if(!pushOk()){ box.replaceChildren(head, el('div', {class:'note'}, 'Цей браузер не підтримує сповіщення.')); return; }
+  const sub = await pushSub().catch(() => null), on = !!sub && LS.get('dl_push')==='1' && Notification.permission==='granted';
+  box.replaceChildren(head, el('div', {class:'note'}, (on ? '✓ Увімкнено: ' : 'Приходитимуть: ')+pushWhat()+'.'),
+    el('div', {class:'toolbar', style:'margin:6px 0 0'}, on
+      ? el('button', {class:'btn small ghost', disabled:PUSH.busy ? '' : null, onclick:pushOff}, 'Вимкнути на цьому телефоні')
+      : el('button', {class:'btn primary', disabled:PUSH.busy ? '' : null, onclick:pushOn}, PUSH.busy ? 'Вмикаю…' : '🔔 Увімкнути сповіщення')),
+    PUSH.msg ? el('div', {class:'note', style:'margin-top:4px'}, PUSH.msg) : '');
+}
 // ======= «ЗАВДАННЯ АГРОНОМУ» (tasks/<id>.json; ТЗ claude/ТЗ_Завдання_агроному.md, 24.11)
 // Принцип власника: завдання лише коли від поїздки залежить рішення. Чернетки складає tools/tasks.py з тривог і моделі
 // перезимівлі за каталогом ref/task_catalog.json; власник править / відправляє / відхиляє; агроном виконує через огляд
@@ -5654,6 +5716,7 @@ function tskFieldPoint(n){   // центр контуру поля (точку �
 async function renderTasks(){
   const body = $('#tsk-body'); if(!body) return;
   $('#tsk-h').textContent = ROLE==='a' ? '🎯 Мої завдання' : '🎯 Завдання агроному';
+  renderPush().catch(() => {});
   renderHaConf();
   if(!TSK.list) body.replaceChildren(el('p', {class:'note'}, 'Завантажую завдання…'));
   try{ await loadTasks(); if(typeof ensureGeo==='function') ensureGeo().catch(() => {}); }catch(e){ body.replaceChildren(el('p', {class:'note'}, 'Не вдалося завантажити: '+e.message)); return; }
