@@ -337,6 +337,10 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <div class="sechead"><div><h2>Інше внесення</h2><div class="note">Посів, добрива й обприскування вносьте прямо в рядку працівника. Тут — лише внесення, яке не прив'язане до людини в табелі.</div></div><button class="btn" id="add-appl">+ Внесення</button></div>
       <div class="list" id="appl-list"></div>
     </section>
+    <section class="card" id="misc">
+      <div class="sechead"><div><h2>Різне — пальне не під працівника</h2><div class="note">ДП чи бензин, видані не на техніку з табеля: хтось приїхав, людині, яка сьогодні не працює, на конторі. Коментар обов'язковий: кому, як і навіщо видали.</div></div><button class="btn" id="add-misc">+ Різне</button></div>
+      <div class="list" id="misc-list"></div>
+    </section>
     <div class="two">
       <section class="card"><h2>Пальне поза табелем</h2><div class="note">Бензин «хлопцям» на власні авто, завоз пального, замір щупом.</div>
         <div class="list" id="own-list"></div><button class="btn small" id="add-own" style="justify-self:start">+ Бензин на власне авто</button>
@@ -442,7 +446,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
   <main class="pane" id="pane-tech">
     <div class="grid">
       <section class="card span12" id="tech-year"><h2>Техніка за календарний рік</h2><div class="note" id="tech-note"></div><div class="tablewrap"><table id="tech-table"></table></div></section>
-      <section class="card span6"><h2>Мотогодини</h2><div class="note">Deutz великий, Deutz малий, JCB 541-70, дизельний генератор.</div>
+      <section class="card span6"><h2>Мотогодини</h2><div class="note">Deutz великий, Deutz малий, JCB 541-70, CASE 5088.</div>
         <div class="line"><div><label class="note" for="mh-m">Техніка</label><select id="mh-m"></select></div><div><label class="note" for="mh-v">Показник, м-год</label><input id="mh-v" type="number" min="0"></div><div><label class="note" for="mh-d">Дата</label><input id="mh-d" type="date"></div><button class="btn primary" id="mh-add">Додати</button></div>
         <div class="tablewrap"><table id="mh-table"></table></div></section>
       <section class="card span6"><h2>Ремонти і ТО</h2>
@@ -591,7 +595,7 @@ function fromWorkbook(wb){
 function tankVol(t, cm){ if(!t || cm==null) return null; const R = t.d/2, h = Math.min(cm, t.d);
   return (R*R*Math.acos((R-h)/R) - (R-h)*Math.sqrt(Math.max(0, 2*R*h-h*h)) + t.a*h) * t.len / 1000; }
 function parseFuel(raw){
-  const fuel = [], zav = [], oil = [], dips = [];
+  const fuel = [], zav = [], oil = [], dips = [], notes = [];
   for(const s of (raw.__fuel||[])){
     let grp = ''; const groups = s.h.map((_, i) => { if(s.g[i]) grp = String(s.g[i]); return grp; });
     for(const row of s.r){
@@ -599,6 +603,7 @@ function parseFuel(raw){
       s.h.forEach((hh, i) => {
         if(i===0 || hh==null) return; const h = String(hh).trim(); const v = num(row[i]); const g = groups[i];
         if(/^(Всього|ВСЬОГО|Весь|Факт|Місяць|Рік)/.test(h)) return;
+        if(g==='Примітка'){ if(row[i]) notes.push({d, t:String(row[i])}); return; }
         if(g.startsWith('Щуп')){ if(v!=null) dip[h.replace('Щуп ','')] = v; return; }
         if(v==null || v===0) return;
         if(g==='ДП' || g==='БЕНЗИН') fuel.push({d, m:h, l:v, ft: g==='ДП' ? 'ДП' : 'Бензин', mon:d.y*100+d.m});
@@ -609,7 +614,7 @@ function parseFuel(raw){
       if(Object.keys(dip).length) dips.push({d, ...dip});
     }
   }
-  return {fuel, zav, oil, dips};
+  return {fuel, zav, oil, dips, notes};
 }
 
 // ---------- розрахунок (ті самі правила, що в Excel) ----------
@@ -1321,7 +1326,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11k';
+const APP_VER = '25.11m';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1357,7 +1362,7 @@ const dayPath = d => 'days/'+d.slice(0,4)+'/'+d+'.json';
 const isClosed = d => !!DOCS[dayPath(d)];
 const blankRow = (p, sub=false) => ({id:++uid, p, st:'', op:'', f:'', m:'', q:'', u:'', fuel:'', oil:'', oilq:'', sub});
 let DS = null;
-function newDay(){ DS = {rows: REF.people.map(p => blankRow(p)), appl:[], own:[], ship:[], gm:[], zav:[]}; ['zav-dp','zav-bz','dip1','dip2','dip3','dipb'].forEach(id => $('#'+id).value = ''); }
+function newDay(){ DS = {rows: REF.people.map(p => blankRow(p)), appl:[], own:[], misc:[], ship:[], gm:[], zav:[]}; ['zav-dp','zav-bz','dip1','dip2','dip3','dipb'].forEach(id => $('#'+id).value = ''); }
 function dl(id, items){ return el('datalist', {id}, items.map(v => el('option', {value:v}))); }
 function initRef(){
   OP = Object.fromEntries(REF.ops.map(o => [o.n, o])); FIELD = Object.fromEntries(REF.allFields.map(f => [f.n, f]));
@@ -1670,6 +1675,21 @@ function renderAppl(){
       el('div', {class:'mix', style:'grid-column:1/-1'}, items.length ? items : el('span', {}, 'Кількості з\'являться після вибору шаблону'))));
   });
 }
+// «Різне»: пальне не під людину з табеля — обов'язково кому і навіщо (власник, 25.11)
+const MISC_FT = ['ДП', 'Бензин'];
+const miscBad = m => +m.l > 0 && (!String(m.who||'').trim() || String(m.c||'').trim().length < 5);
+function renderMisc(){
+  const box = $('#misc-list'); if(!box) return; box.replaceChildren(); DS.misc = DS.misc || [];
+  DS.misc.forEach((m, i) => { const bad = miscBad(m);
+    box.append(el('div', {class:'line', style: bad ? 'border-left:4px solid var(--bad);padding-left:8px' : ''},
+      el('div', {}, el('label', {class:'note'}, 'Пальне'), el('select', {'aria-label':'Пальне', on:{change: ev => { m.ft = ev.target.value; renderDay(); }}}, MISC_FT.map(x => el('option', x===m.ft ? {value:x, selected:''} : {value:x}, x)))),
+      el('div', {}, el('label', {class:'note'}, 'Літрів'), el('input', {type:'number', min:'0', inputmode:'decimal', value:m.l, 'aria-label':'Літрів', on:{change: ev => { m.l = ev.target.value; renderDay(); }}})),
+      el('div', {}, el('label', {class:'note'}, 'Кому'), el('input', {list:'dl-people', value:m.who, placeholder:'ПІБ або хто приїхав', 'aria-label':'Кому', on:{change: ev => { m.who = ev.target.value; renderDay(); }}})),
+      el('div', {style:'grid-column:1/-1'}, el('label', {class:'note'}, 'Коментар — як і навіщо (обов\'язково)'), el('input', {value:m.c, placeholder:'напр.: у каністру, на агрегат сусідові за домовленістю з Д.О.', 'aria-label':'Коментар', style:'width:100%', on:{change: ev => { m.c = ev.target.value; renderDay(); }}})),
+      el('div', {class:'acts'}, el('button', {class:'btn small', style:'color:var(--bad)', 'aria-label':'Прибрати', on:{click: () => { DS.misc.splice(i, 1); renderDay(); }}}, '✕')),
+      bad ? el('div', {class:'note', style:'grid-column:1/-1;color:var(--bad)'}, 'Без «кому» і коментаря день не закриється.') : ''));
+  });
+}
 function renderSide(){
   const own = $('#own-list'); own.replaceChildren();
   DS.own.forEach(o => own.append(el('div', {class:'line'},
@@ -1705,6 +1725,7 @@ function dayTotals(){
   const work = DS.rows.filter(r => r.st==='працює');
   let dp = 0, bz = 0; DS.rows.forEach(r => { const f = +r.fuel||0; if(!f) return; (MACH[r.m] && MACH[r.m].fuel==='Бензин') ? bz += f : dp += f; });
   bz += DS.own.reduce((s, o) => s + (+o.l||0), 0);
+  (DS.misc||[]).forEach(m => { const l = +m.l||0; m.ft==='Бензин' ? bz += l : dp += l; });
   return {people: new Set(DS.rows.filter(r => r.st).map(r => r.p)).size, total: new Set(DS.rows.map(r => r.p)).size,
     ha: work.filter(r => r.u==='га').reduce((s, r) => s + (+r.q||0), 0), dp, bz, oil: DS.rows.reduce((s, r) => s + (+r.oilq||0), 0),
     zzr: DS.appl.reduce((s, a) => s + (+a.ha||0), 0) + work.filter(r => rowKind(r)==='zzr').reduce((s, r) => s + (+r.q||0), 0), ship: DS.ship.reduce((s, x) => s + Math.max(0, (+x.br||0)-(+x.ta||0)), 0)};
@@ -1712,7 +1733,7 @@ function dayTotals(){
 function renderDay(){
   const d = new Date(DAY+'T12:00:00'); $('#date').value = DAY;
   $('#day-title').textContent = d.toLocaleDateString('uk-UA', {weekday:'long', day:'numeric', month:'long', year:'numeric'}).replace(/^./, c => c.toUpperCase());
-  renderShifts(); renderRows(); renderAppl(); renderZav(); renderSide(); renderDips(); renderGrainTabs(); renderMhRemind(); renderDayRemind(); renderHaConfDay();
+  renderShifts(); renderRows(); renderAppl(); renderMisc(); renderZav(); renderSide(); renderDips(); renderGrainTabs(); renderMhRemind(); renderDayRemind(); renderHaConfDay();
   const t = dayTotals(), closed = isClosed(DAY) && !DS.editing;
   $('#kpis').replaceChildren(...[['Люди заповнено', t.people+' / '+t.total], ['Роботи в полі', nf(t.ha)+' га'], ['ДП за день', nf(t.dp, fmt0)+' л'], ['Бензин', nf(t.bz, fmt0)+' л'],
     ['Масла', nf(t.oil)+' л'], ['Обприскано', nf(t.zzr)+' га'], ['Відвантажено', nf(t.ship/1000)+' т']].map(([a, b]) => el('div', {class:'kpi'}, a, el('b', {}, b))));
@@ -1747,6 +1768,7 @@ function checks(){
   if(splitBad.length) out.push(['warn', 'Поле поділене — не вказано культуру: '+splitBad.map(r => r.p+' ('+r.f+')').join(', '), '']);
   const zb = DS.zav.filter(z => +z.kg && (!z.c || !z.f)); if(zb.length) out.push(['bad', 'Зерно на склад без поля або культури: '+zb.length, 'Оберіть поле (або «кілька полів») і культуру.']);
   const zd = DS.zav.filter(z => +z.dr && +z.dr > (+z.kg||0)); if(zd.length) out.push(['bad', 'На доробіток більше, ніж усього на склад: '+zd.map(z => z.f==='*' ? 'кілька полів' : z.f).join(', '), '«У т.ч. на доробіток» — це частина ваги на склад, не окрема цифра.']);
+  const mb = (DS.misc||[]).filter(miscBad); if(mb.length) out.push(['block', 'Різне: пальне без «кому» або без коментаря — '+mb.length+' запис(и). День не закриється.', 'Напишіть, кому, як і навіщо видали.']);
   const short = stockShort();
   if(short.length) out.push(['block', 'Не вистачає на складі — день не закриється: '+short.map(x => x.m+' — потрібно '+nf(x.q, x.u==='кг' ? 0 : 2)+' '+x.u+', '+(!x.known ? 'немає в довіднику матеріалів' : !x.inv ? 'на складі не оприбутковано' : 'є '+nf(Math.max(x.av, 0), x.u==='кг' ? 0 : 2)+' '+x.u)).join('; '),
     ROLE==='o' ? 'Виправте кількість або спершу внесіть прихід на склад (вкладка «Склад» → «Прихід за накладною»).' : 'Виправте кількість або скажіть власнику: прихід на склад вносить він.']);
@@ -1790,6 +1812,7 @@ function buildDayDoc(){
     if(+r.fuel){ const ft = MACH[r.m] && MACH[r.m].fuel==='Бензин' ? 'БЕНЗИН' : 'ДП'; const ok = r.m && fuelColOf(tpl, r.m, ft) >= 0; cells.push([ft, ok ? r.m : (ft==='ДП' ? 'Різне (ДП)' : 'Різне (бензин)'), +r.fuel]); }
     if(+r.oilq && r.oil) cells.push(['МАСЛА', r.oil, +r.oilq]);
   });
+  (DS.misc||[]).forEach(m => { if(!(+m.l)) return; const b = m.ft==='Бензин'; cells.push([b ? 'БЕНЗИН' : 'ДП', b ? 'Різне (бензин)' : 'Різне (ДП)', +m.l]); cells.push(['Примітка', 'Примітка (розшифровка «Різне»)', (b ? 'бензин ' : 'ДП ')+(+m.l)+' л — '+String(m.who).trim()+': '+String(m.c).trim()]); });
   DS.own.forEach(o => { if(+o.l) cells.push(['БЕНЗИН (власні', fuelColOf(tpl, o.p, 'БЕНЗИН (власні') >= 0 ? o.p : 'Інший 1', +o.l]); });
   if(+$('#zav-dp').value) cells.push(['Завоз', 'Завоз ДП', +$('#zav-dp').value]);
   if(+$('#zav-bz').value) cells.push(['Завоз', 'Завоз бензин', +$('#zav-bz').value]);
@@ -1803,7 +1826,7 @@ function buildDayDoc(){
 function openDay(){
   flushDraft();
   const doc = DOCS[dayPath(DAY)] || (PENDING[dayPath(DAY)] || {}).doc;
-  if(doc && doc.ui){ DS = JSON.parse(JSON.stringify(doc.ui)); DS.editing = false; DS.zav = DS.zav || []; const inp = doc.ui.inputs || {}; DRAFT_INPUTS.forEach(id => $('#'+id).value = inp[id] ?? ''); }
+  if(doc && doc.ui){ DS = JSON.parse(JSON.stringify(doc.ui)); DS.editing = false; DS.zav = DS.zav || []; DS.misc = DS.misc || []; const inp = doc.ui.inputs || {}; DRAFT_INPUTS.forEach(id => $('#'+id).value = inp[id] ?? ''); }
   else newDay();
   DIRTY = false; DRAFT_TS = 0; draftNote('');
   if(applyDraft(readDraft(LS.get(draftKey(DAY))), doc, 'з цього пристрою')){ DRAFT_DAY = DAY; DRAFT_TIMER = setTimeout(() => pushDraft(DRAFT_DAY), 3000); }   // могло не встигнути в сховище
@@ -1831,7 +1854,7 @@ function applyDraft(o, doc, where){
   if(!o || o.cleared || !o.ds || o.day!==DAY) return false;
   if(doc && !(o.ds.editing && o.ts > Date.parse(doc.saved_at || 0))) return false;   // закритий день: лише незавершене виправлення, новіше за закриття
   if(o.ts <= DRAFT_TS) return false;
-  DS = o.ds; DS.zav = DS.zav || []; DRAFT_INPUTS.forEach(id => $('#'+id).value = (o.inputs || {})[id] ?? '');
+  DS = o.ds; DS.zav = DS.zav || []; DS.misc = DS.misc || []; DRAFT_INPUTS.forEach(id => $('#'+id).value = (o.inputs || {})[id] ?? '');
   DRAFT_TS = o.ts; draftNote('відновлено чернетку від '+hhmm(o.ts)+' ('+where+')'); return true;
 }
 async function loadRemoteDraft(day, doc){
@@ -1875,6 +1898,7 @@ $('#btn-reopen').addEventListener('click', () => { DS.editing = true; renderDay(
 $('#all-yesterday').addEventListener('click', () => { let k = 0; DS.rows.forEach(r => { if(!r.st && !r.sub && yesterday(r)) k++; }); renderDay(); toast('Скопійовано з останнього дня: '+k+' людей. Допишіть гектари й заправку.'); });
 $('#add-person').addEventListener('click', () => { DS.rows.push({...blankRow(''), newp:true}); renderDay(); });
 $('#add-appl').addEventListener('click', () => { DS.appl.push({f:'', t:'', items:[], ha:''}); renderDay(); });
+$('#add-misc').addEventListener('click', () => { DS.misc = DS.misc || []; DS.misc.push({ft:'ДП', l:'', who:'', c:''}); renderDay(); });
 $('#add-own').addEventListener('click', () => { DS.own.push({p:'', l:''}); renderDay(); });
 /* Власний випадаючий список замість <datalist>: ширший за поле, довгі назви в 2 рядки, фільтр при наборі, без стирання значення */
 const CB = {i:null, box:null, items:[], act:-1};
@@ -1958,12 +1982,13 @@ function renderFuelTable(){
   const newSet = new Set(Object.keys(DOCS).filter(k => k.startsWith('days/')).map(k => k.slice(-15,-5)).filter(s => +s.slice(0,4)===y && +s.slice(5,7)===m).map(s => +s.slice(8,10)));
   const tb = $('#fuel-table'); tb.replaceChildren();
   let grp = '';
-  tb.append(el('thead', {}, el('tr', {}, el('th', {class:'l'}, ''), cols.map(([g]) => { const show = g!==grp; grp = g; return el('th', {class:'l'}, show ? g : ''); })),
-    el('tr', {}, el('th', {class:'l'}, 'Дата'), cols.map(([, h]) => el('th', {}, h)))));
+  const NT = (FP.notes||[]).filter(inM), noteOf = d => NT.filter(x => x.d.d===d).map(x => x.t).join('; ');
+  tb.append(el('thead', {}, el('tr', {}, el('th', {class:'l'}, ''), cols.map(([g]) => { const show = g!==grp; grp = g; return el('th', {class:'l'}, show ? g : ''); }), el('th', {class:'l'}, 'Примітка')),
+    el('tr', {}, el('th', {class:'l'}, 'Дата'), cols.map(([, h]) => el('th', {}, h)), el('th', {class:'l'}, 'Розшифровка «Різне»: кому, навіщо'))));
   const body = el('tbody'); const tot = cols.map(() => 0);
   for(let d = 1; d <= days; d++){ body.append(el('tr', {}, el('td', {class:'l'}, String(d).padStart(2,'0')+'.'+String(m).padStart(2,'0')),
-    cols.map((c, i) => { const v = val(d, c); tot[i] += v; return el('td', {class: newSet.has(d) && v ? 'new' : ''}, v ? nf(v, fmt0) : ''); }))); }
-  body.append(el('tr', {class:'total'}, el('td', {class:'l'}, 'Разом'), tot.map(v => el('td', {}, v ? nf(v, fmt0) : ''))));
+    cols.map((c, i) => { const v = val(d, c); tot[i] += v; return el('td', {class: newSet.has(d) && v ? 'new' : ''}, v ? nf(v, fmt0) : ''); }), el('td', {class:'l', style:'white-space:normal;min-width:240px'}, noteOf(d)))); }
+  body.append(el('tr', {class:'total'}, el('td', {class:'l'}, 'Разом'), tot.map(v => el('td', {}, v ? nf(v, fmt0) : '')), el('td', {})));
   tb.append(body);
   $('#fuel-kpis').replaceChildren(el('div', {class:'kpi'}, 'ДП за місяць', el('b', {}, nf(d3.sum(F.filter(f => f.ft==='ДП'), f => f.l), fmt0)+' л')),
     el('div', {class:'kpi'}, 'Бензин (разом з хлопцями)', el('b', {}, nf(d3.sum(F.filter(f => f.ft==='Бензин'), f => f.l), fmt0)+' л')),
@@ -1972,6 +1997,9 @@ function renderFuelTable(){
 $('#fuel-month').addEventListener('change', renderFuelTable);
 
 // ---------- ТЕХНІКА
+// які машини мають лічильник у журналі «Мотогодини»: + CASE 5088; генератор прибрано — його мотогодини й ТО власник веде через Rainbow SCADA (25.11)
+const MH_ADD = /^CASE 5088$/i, MH_OFF = m => /генератор/i.test(m.t||'') || /генератор/i.test(m.n||'');
+const mhOn = m => (m.mh==='так' || MH_ADD.test(m.n)) && !MH_OFF(m);
 function renderTech(){
   const yr = Math.min(YEAR, new Date().getFullYear());
   $('#tech-note').textContent = 'Календарний '+yr+' рік. Пальне — з таблиці пального, гектари й години — з табеля.';
@@ -1979,10 +2007,10 @@ function renderTech(){
   const rows = names.map(m => { const l = d3.sum(MODEL.fuel.filter(f => f.m===m && f.d.y===yr), f => f.l);
     const ww = MODEL.works.filter(w => w.m===m && w.d.y===yr); const ha = d3.sum(ww.filter(w => w.u==='га'), w => w.q), h = d3.sum(ww.filter(w => w.u==='год'), w => w.q);
     const rep = rowsOf(RAW, 'Ремонти і ТО').filter(r => str(r['Техніка'])===m && dt(r['Дата']) && dt(r['Дата']).y===yr).length;
-    return {m, l, ha, h, lha: ha ? l/ha : null, rep, mh: (MACH[m]||{}).mh==='так'}; }).filter(r => r.l || r.ha || r.h || r.mh).sort((a,b) => b.l-a.l);
+    return {m, l, ha, h, lha: ha ? l/ha : null, rep, mh: mhOn(MACH[m]||{n:m})}; }).filter(r => r.l || r.ha || r.h || r.mh).sort((a,b) => b.l-a.l);
   const t = $('#tech-table'); t.replaceChildren(el('thead', {}, el('tr', {}, ['Техніка','Пальне, л','Роботи, га','Роботи, год','л/га','Ремонтів / ТО','Лічильник'].map((h,i) => el('th', {class:i?'':'l'}, h)))),
     el('tbody', {}, rows.map(r => el('tr', {}, el('td', {class:'l'}, r.m), el('td', {}, nf(r.l, fmt0)), el('td', {}, nf(r.ha, fmt0)), el('td', {}, nf(r.h, fmt0)), el('td', {}, nf(r.lha)), el('td', {}, String(r.rep)), el('td', {}, r.mh ? el('span', {class:'pill ok'}, 'м-год') : '')))));
-  const mhM = REF.mach.filter(m => m.mh==='так').map(m => m.n), allM = REF.mach.map(m => m.n);
+  const mhM = REF.mach.filter(mhOn).map(m => m.n), allM = REF.mach.map(m => m.n);
   if(!$('#mh-m').options.length){ $('#mh-m').replaceChildren(...mhM.map(x => el('option', {value:x}, x))); $('#rp-m').replaceChildren(...allM.map(x => el('option', {value:x}, x))); $('#mh-d').value = DAY; }
   const mh = rowsOf(RAW, 'Мотогодини').map(r => ({d:dt(r['Дата']), m:str(r['Техніка']), v:num(r['Показник лічильника, м-год'])})).filter(r => r.d).sort((a,b) => b.d.n-a.d.n);
   $('#mh-table').replaceChildren(el('thead', {}, el('tr', {}, ['Дата','Техніка','Показник','З попереднього'].map((h,i) => el('th', {class:i<2?'l':''}, h)))),
@@ -2207,11 +2235,12 @@ function toEstimate(machine, refName){
 }
 function toRemindThr(h){ return Math.min(20, h*0.2); }
 // список нагадувань: [{machine, refName, level:'warn'|'bad', text, est}]
-const MH_NO_REMIND = /ХТА/i;   // ХТА 200: лічильника мотогодин немає — нагадувати нічого (власник, 24.11)
+const MH_NO_REMIND = /ХТА/i;
+const TO_OFF = machine => machine.type==='generator';   // генератор — моніторинг через Rainbow SCADA, не в застосунку (власник, 25.11)   // ХТА 200: лічильника мотогодин немає — нагадувати нічого (власник, 24.11)
 function toReminders(){
   if(!TO_DATA || !RAW) return [];
   const today = toSerial(isoToday()), out = [];
-  TO_DATA.machines.forEach(machine => { const refName = toRefName(machine); if(MH_NO_REMIND.test(refName)) return; const e = toEstimate(machine, refName);
+  TO_DATA.machines.forEach(machine => { if(TO_OFF(machine)) return; const refName = toRefName(machine); if(MH_NO_REMIND.test(refName)) return; const e = toEstimate(machine, refName);
     if(!e.last){
       const recent = e.worked.filter(n => n >= today - 14);
       if(recent.length) out.push({machine, refName, level:'warn', est:e, text:`${refName}: лічильник мотогодин ще жодного разу не записаний, а техніка працювала ${recent.length} дн. за 2 тижні. Підійдіть до машини і запишіть показник — інакше графік ТО не порахується.`});
@@ -2273,7 +2302,7 @@ function renderTO(){
   }
 
   container.replaceChildren();
-  TO_DATA.machines.forEach(machine => {
+  TO_DATA.machines.filter(m => !TO_OFF(m)).forEach(machine => {
     const refName = toRefName(machine);
     const currentMh = toLastMh(refName);
     container.append(renderToCard(machine, currentMh, refName, toEstimate(machine, refName)));
@@ -3144,7 +3173,7 @@ function applyDoc(raw, doc){
   let fs = raw.__fuel.find(s => s.name==='Пальне '+y);
   if(!fs){ const t = raw.__fuel[raw.__fuel.length-1]; fs = {name:'Пальне '+y, g:t.g, h:t.h, r:[]}; raw.__fuel.push(fs); }
   let row = fs.r.find(x => x[0]===n); if(!row){ row = new Array(fs.h.length).fill(null); row[0] = n; fs.r.push(row); }
-  f.cells.forEach(([grp, h, v]) => { const i = fuelColOf(fs, h, grp); if(i < 0) return; row[i] = grp==='Щуп' ? v : (row[i]||0) + v; });
+  f.cells.forEach(([grp, h, v]) => { const i = fuelColOf(fs, h, grp); if(i < 0) return; row[i] = grp==='Щуп' ? v : (typeof v==='string' ? (row[i] ? row[i]+'; ' : '')+v : (row[i]||0) + v); });
 }
 const EXTRA_COLS = {'Відвантаження':['Власник авто']};   // нові колонки, яких немає в базовому знімку
 function rebuild(){
@@ -5423,6 +5452,7 @@ function ownerPreviewUi(){
 function applyRoleUi(){
   $('#role-name').textContent = ROLE==='o' ? 'Власник ('+ownerName()+')' : STAFF[ROLE];
   $('#btn-xlsx').hidden = ROLE!=='o';
+  $('#appl').hidden = ROLE!=='o';   // «Інше внесення» Каріні не потрібне — замість нього «Різне» (власник, 25.11)
   $('#tech-year').hidden = ROLE!=='o';
   $('#years').hidden = ROLE!=='o';   // «Урожай 2025/26/27» — лише власникам; Каріні й Вові — поточний рік (24.11)   // пальне й роботи техніки за рік — лише власникам (24.11, Каріні не потрібно; Вова пального не бачить)   // вивантаження всіх журналів — лише власникам
   ownerPreviewUi();
