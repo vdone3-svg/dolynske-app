@@ -65,6 +65,8 @@ async function run(role, extra, fake, fn){
     const t = await pg.textContent('#sc-form'); ok(/Поле:\s*75/.test(t) && /за GPS/.test(t) && !/інше поле/.test(t), 'з GPS: поле 75 за GPS, без «інше поле»');
     ok(!(await pg.$eval('#sc-form .sc-bigbtn', b => b.disabled)), 'кнопки активні');
   });
+  await run('a', {'scouts/2026/t-1.json':sc}, '2026-11-25T11:00:00+02:00', async pg => { await pg.evaluate(() => { location.hash = 'scout'; }); await pg.waitForTimeout(800);
+    ok(/1 огляд/.test(await pg.textContent('#sc-list')), 'Вова бачить свій огляд сезону 2027 у списку'); });
   await run('o', {'ref/owner.enc.json':null}, '2026-11-25T11:00:00+02:00', async pg => {
     await pg.evaluate(() => { location.hash = 'scout'; }); await pg.waitForTimeout(500); await pg.click('#sc-new'); await pg.waitForTimeout(2500);
     ok(/З галереї/.test(await pg.textContent('#sc-form')), 'власнику галерея й вибір поля лишаються');
