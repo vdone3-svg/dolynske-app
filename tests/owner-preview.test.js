@@ -59,7 +59,8 @@ async function run(role, extra, fake, fn){
     await pg.click('#view-bar button'); await pg.waitForLoadState(); await pg.waitForFunction(() => /завантажено/.test((document.querySelector('#sync')||{}).textContent||''), null, {timeout:60000});
     ok(!(await pg.$('#view-bar')) && (await pg.$$eval('#tabs a', a => a.length))===tabsO, 'повернення до власника — усі вкладки ('+tabsO+')');
   });
-  await run('k', {}, '2026-12-04T13:00:00+02:00', async pg => { ok(!(await pg.$('#view-as')), 'у Каріни перемикача немає'); ok((await pg.evaluate(() => whoName()))==='Обліковець (Карина Козлова)' && (await pg.textContent('#role-name'))==='Обліковець (Карина Козлова)', 'підпис Каріни'); });
+  await run('k', {}, '2026-12-04T13:00:00+02:00', async pg => { ok(!(await pg.$('#view-as')), 'у Каріни перемикача немає'); ok((await pg.evaluate(() => whoName()))==='Обліковець (Каріна Козлова)' && (await pg.textContent('#role-name'))==='Обліковець (Каріна Козлова)', 'підпис Каріни'); });
   await run('a', {}, '2026-12-04T13:00:00+02:00', async pg => { ok((await pg.evaluate(() => whoName()))==='Керуючий (Володимир Зінько)', 'підпис Вови'); });
+  await run('o', {'ref/owner.enc.json':null}, '2026-12-04T13:00:00+02:00', async pg => { const w = await pg.evaluate(() => whoName()); ok(w==='Власник (Денис Олександрович Котов)', 'підпис власника: '+w); });
   console.log(bad ? 'НЕ ПРОЙДЕНО: '+bad : 'УСЕ ПРОЙДЕНО');
 })();
