@@ -1311,7 +1311,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11b';
+const APP_VER = '25.11c';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -4715,16 +4715,25 @@ async function putBin(path, blob, msg){
 }
 let FLUSHING = false;
 const scParts = d => [...(d.photos || []), ...(d.voice || []), ...(d.videos || []).flatMap(v => v.parts || [])];
+let WIFI_GO = false;   // відео (великі файли) — лише коли людина натиснула «я на Wi-Fi» (iPhone не дає браузеру знати тип зв'язку)
+const wifiBytes = it => scParts(it.doc).filter(p => p.wifi && !p.done).reduce((a, p) => a + ((it.blobs[p.k] || {}).size || 0), 0);
+async function sendVideosNow(){ WIFI_GO = true; try{ await flushScouts(); } finally{ WIFI_GO = false; } }
 async function flushScouts(){
   if(FLUSHING || !TOKEN) return; FLUSHING = true; renderScQueue();
   try{
     const items = (await OUTBOX.all()).sort((a, b) => (a.tries||0) - (b.tries||0) || String(a.id).localeCompare(String(b.id)));   // «важкі» огляди — в кінець, щоб не блокували решту
     for(const it of items){
       try{
-        for(const ph of scParts(it.doc)){ if(ph.done) continue; await putBin(ph.path, it.blobs[ph.k], (ph.vpart ? 'Відео огляду (частина): ' : ph.dur!=null ? 'Голосова нотатка: ' : 'Фото огляду: ')+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); renderScQueue(); }
-        const doc = JSON.parse(JSON.stringify(it.doc)); scParts(doc).forEach(p => { delete p.done; delete p.k; delete p.vpart; });
-        await putJSON(it.path, doc, 'Огляд: '+doc.field+' '+doc.date+' ('+doc.author+', '+doc.by+')');
-        SCOUTS[it.path] = doc; await OUTBOX.del(it.id);
+        let wait = false;
+        for(const ph of scParts(it.doc)){ if(ph.done) continue; if(ph.wifi && !WIFI_GO){ wait = true; continue; } await putBin(ph.path, it.blobs[ph.k], (ph.vpart ? 'Відео огляду (частина): ' : ph.dur!=null ? 'Голосова нотатка: ' : 'Фото огляду: ')+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); renderScQueue(); }
+        if(wait && it.jsonDone){ continue; }   // огляд уже на сервері, відео чекає Wi-Fi
+        let doc = JSON.parse(JSON.stringify(it.doc)); scParts(doc).forEach(p => { delete p.done; delete p.k; delete p.vpart; delete p.wifi; });
+        if(it.jsonDone){   // відео догрузилось: беремо свіжий огляд із сервера (там уже висновок Claude) і позначаємо — це запустить розбір відео
+          const cur = await getJSON(it.path).catch(() => null); if(cur) doc = cur; doc.video_sent = isoNow(); }
+        await putJSON(it.path, doc, (it.jsonDone ? 'Відео до огляду: ' : 'Огляд: ')+doc.field+' '+doc.date+' ('+doc.author+', '+doc.by+')');
+        SCOUTS[it.path] = doc;
+        if(wait){ it.jsonDone = true; it.wifiWait = true; delete it.err; await OUTBOX.put(it); continue; }
+        await OUTBOX.del(it.id);
         it.urls && it.urls.forEach(u => IMGC[u.path] = u.url); VPOLL = true;
       }catch(e){
         if(e.auth) throw e;
@@ -4736,15 +4745,18 @@ async function flushScouts(){
   finally{ FLUSHING = false; OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); if(TAB==='scout') renderScList(); if(TAB==='map' && MAPV.map) drawScoutPins(); }
 }
 window.addEventListener('online', () => flushScouts());
-setInterval(() => { if(OUTQ.length && navigator.onLine) flushScouts(); }, 60000);
+setInterval(() => { if(OUTQ.some(i => !i.wifiWait) && navigator.onLine) flushScouts(); }, 60000);
 function scQueueInfo(it){ const ps = scParts(it.doc), done = ps.filter(p => p.done).length;
-  return (it.doc.field || '?')+' '+String(it.doc.date||'').split('-').reverse().join('.')+' — файлів '+done+' з '+ps.length+(it.err ? ' · помилка ('+(it.tries||1)+'×): '+it.err.slice(0, 90) : ''); }
+  return (it.doc.field || '?')+' '+String(it.doc.date||'').split('-').reverse().join('.')+' — файлів '+done+' з '+ps.length+(it.wifiWait ? ' · огляд відправлено, відео ('+nf(wifiBytes(it)/1048576, 0)+' МБ) чекає Wi-Fi' : '')+(it.err ? ' · помилка ('+(it.tries||1)+'×): '+it.err.slice(0, 90) : ''); }
 function renderScQueue(){
-  const n = OUTQ.length, err = OUTQ.filter(i => i.err).length;
+  const wv = OUTQ.filter(i => i.wifiWait), main = OUTQ.filter(i => !i.wifiWait), n = main.length, err = main.filter(i => i.err).length;
+  const mb = nf(d3.sum(wv, wifiBytes)/1048576, 0);
   const g = $('#outq');
-  if(g){ g.hidden = !n; g.className = 'outq '+(err ? 'bad' : 'warn');
+  if(g){ g.hidden = !n && !wv.length; g.className = 'outq '+(err ? 'bad' : 'warn');
     g.replaceChildren(n ? el('span', {}, (FLUSHING ? '⏳ Відправляю огляди: ' : '📤 Не відправлено оглядів: ')+n+(err ? ' (з помилкою: '+err+')' : '')+' ') : '',
-      n && TAB!=='scout' ? el('a', {href:'#scout'}, 'деталі') : ''); }
+      wv.length ? el('span', {}, (n ? ' · ' : '')+'🎥 Відео чекає Wi-Fi: '+wv.length+' ('+mb+' МБ) ') : '',
+      wv.length && !FLUSHING ? el('button', {class:'btn small', onclick:sendVideosNow}, 'Я на Wi-Fi — відправити') : '',
+      (n || wv.length) && TAB!=='scout' ? el('a', {href:'#scout'}, ' деталі') : ''); }
   const q = $('#sc-queue'); if(!q) return;
   if(!n){ q.replaceChildren(); return; }
   q.replaceChildren(el('div', {}, `Очікують відправки: ${n} огляд(и) — `+(FLUSHING ? 'відправляю…' : navigator.onLine ? 'відправляться автоматично (повтор щохвилини)' : 'відправляться, щойно з’явиться зв’язок')+' ',
@@ -4828,14 +4840,22 @@ async function newScout(task){
   try{ await ensureGeo(); await ensureZones(); }catch(e){}
   locateScout();
 }
-async function locateScout(){
-  SC.gpsMsg = 'Визначаю місце…'; SC.gpsState = 'wait'; renderScForm();
+const GPS_FALLBACK_S = 60, GPS_RETRY_S = 20, GPS_SPOOF_M = 2000;   // запасний режим без GPS: через 60 с без сигналу; РЕБ-підміна — точка далі 2 км від будь-якого поля
+const NOGPS_WHY = [['reb', 'РЕБ / глушіння'], ['nosignal', 'Немає сигналу'], ['other', 'Інше']];
+function gpsRetryLater(){ if(!SC || !GPS_STRICT() || SC.gpsState==='ok') return; clearTimeout(SC.retryT); const me = SC;
+  SC.retryT = setTimeout(() => { if(SC===me && SC.gpsState!=='ok' && SC.gpsState!=='wait') locateScout(true); }, GPS_RETRY_S*1000);
+  clearTimeout(SC.fbT); if(!SC.fbOpen) SC.fbT = setTimeout(() => { if(SC===me) renderScForm(); }, Math.max(0, GPS_FALLBACK_S*1000 - (Date.now() - SC.gpsStart)) + 200); }
+async function locateScout(quiet){
+  if(!SC.gpsStart) SC.gpsStart = Date.now();
+  if(!quiet){ SC.gpsMsg = 'Визначаю місце…'; SC.gpsState = 'wait'; renderScForm(); }
   try{ const g = posObj(await bestPos()); if(!SC) return; SC.gps = g; SC.gpsState = 'ok'; GPS_OK = true; renderGpsPill(); const r = fieldOfPoint(g);
+    if(r && GPS_STRICT() && r.m > GPS_SPOOF_M){ SC.gps = null; SC.gpsState = 'spoof'; SC.gpsMsg = 'Телефон показує точку за '+nf(r.m/1000, 1)+' км від найближчого поля — схоже, РЕБ підміняє GPS.'; GPS_OK = false; renderGpsPill(); gpsRetryLater(); renderScForm(); return; }
     if(r){ SC.gps.auto = r.field; SC.gps.inside = r.inside; SC.gps.m = r.m;
+      if(SC.nogps){ SC.nogps.late = true; SC.nogps.lateAt = isoNow(); }
       if(r.inside || r.m <= 150 || GPS_STRICT()){ if(!SC.field || SC.fieldAuto){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); } }
       SC.gpsMsg = r.inside ? 'Ви на полі «'+r.field+'» (±'+g.acc+' м)' : 'Поза контурами: найближче «'+r.field+'», '+r.m+' м від межі (±'+g.acc+' м)'+(r.m > 150 ? ' — виберіть поле' : ' — перевірте поле'); }
     else SC.gpsMsg = 'Координати є (±'+g.acc+' м), контури полів не завантажились — виберіть поле';
-  }catch(e){ if(!SC) return; SC.gpsState = e.code===1 || e.code===9 ? 'off' : 'weak'; SC.gpsMsg = e.message; GPS_OK = false; renderGpsPill(); }
+  }catch(e){ if(!SC) return; SC.gpsState = e.code===1 || e.code===9 ? 'off' : 'weak'; SC.gpsMsg = e.message; GPS_OK = false; renderGpsPill(); gpsRetryLater(); }
   if(SC) renderScForm();
 }
 function scFieldChanged(){ SC.season = scSeason(SC.field, SC.date); SC.crop = scCrop(SC.field, SC.season); if(!scPhases(SC.crop.split(' / ')[0]).includes(SC.phase)) SC.phase = ''; }
@@ -4938,20 +4958,33 @@ function scExtra(){   // «Додатково» — не обов'язково, 
     SC.dc.on ? densityCalcBox() : ''];
 }
 const GPS_STRICT = () => ROLE==='a';   // керуючому: огляд лише з GPS-точкою, поле — тільки за GPS, без галереї (контроль, власник 25.11)
+function nogpsBox(fieldSel){   // запасний режим: причина + поле вручну
+  const why = SC.fbWhy || '';
+  return el('div', {style:'display:grid;gap:6px;border-top:1px dashed currentColor;padding-top:8px;margin-top:4px'},
+    el('b', {}, 'Немає GPS у полі? Запасний режим'),
+    el('div', {class:'note'}, 'Причина:'), el('div', {class:'chips'}, NOGPS_WHY.map(([k, t]) => el('button', {class:'chip', type:'button', 'aria-pressed':String(why===k), onclick:() => { SC.fbWhy = k; renderScForm(); }}, t))),
+    why ? fieldSel('На якому ви полі?') : '',
+    el('div', {class:'note'}, 'Огляд буде позначено «без GPS» — власник бачить, скільки таких оглядів.'));
+}
 function renderScForm(){
   const box = $('#sc-form'); if(!box) return; box.replaceChildren(); if(!SC) return;
-  const strict = GPS_STRICT(), noGps = SC.gpsState==='off' || SC.gpsState==='weak', lock = noGps && (strict || !SC.field), wait = SC.gpsState==='wait' && (strict || !SC.field);
-  const fieldSel = (lbl) => el('select', {'aria-label':lbl, style:'max-width:260px;border:2px solid var(--accent)', on:{change: ev => { SC.field = ev.target.value; SC.fieldAuto = false; SC.pick = false; scFieldChanged(); renderScForm(); }}},
+  const strict = GPS_STRICT(), noGps = SC.gpsState==='off' || SC.gpsState==='weak' || SC.gpsState==='spoof', fb = strict && !!SC.nogps && !!SC.field;
+  const lock = noGps && (strict ? !fb : !SC.field), wait = SC.gpsState==='wait' && (strict ? !fb : !SC.field);
+  const fbReady = strict && noGps && !fb && (SC.gpsState==='spoof' || Date.now() - (SC.gpsStart || Date.now()) >= GPS_FALLBACK_S*1000);
+  const fieldSel = (lbl) => el('select', {'aria-label':lbl, style:'max-width:260px;border:2px solid var(--accent)', on:{change: ev => { SC.field = ev.target.value; SC.fieldAuto = false; SC.pick = false; if(GPS_STRICT() && SC.fbWhy && ev.target.value) SC.nogps = {reason:SC.fbWhy, at:isoNow(), waited:Math.round((Date.now() - (SC.gpsStart || Date.now()))/1000)}; scFieldChanged(); renderScForm(); }}},
     el('option', {value:''}, lbl), REF.fields.map(f => el('option', f.n===SC.field ? {value:f.n, selected:''} : {value:f.n}, f.n)));
   const gpsBox = !noGps ? '' : el('div', {class:'sc-gpswarn'+(SC.field ? ' ok' : '')},
-    el('b', {}, SC.gpsState==='off' ? '⚠ GPS вимкнено — фото не отримають точку на карті' : '⚠ Слабкий сигнал GPS — місце не визначено'),
-    strict ? el('div', {}, 'Огляд зберігається лише з GPS-точкою: увімкніть геолокацію і натисніть кнопку нижче.')
+    el('b', {}, SC.gpsState==='off' ? '⚠ GPS вимкнено — фото не отримають точку на карті' : SC.gpsState==='spoof' ? '⚠ GPS показує неправдиве місце' : '⚠ Слабкий сигнал GPS — місце не визначено'),
+    strict && fb ? el('div', {}, 'Запасний режим: огляд без GPS («'+(NOGPS_WHY.find(w => w[0]===SC.nogps.reason) || ['', ''])[1]+'»), поле «'+SC.field+'» вибрано вручну. Власник побачить це в історії поля. Телефон далі шукає GPS — якщо знайде, точка додасться сама.')
+    : strict && SC.gpsState==='spoof' ? el('div', {}, SC.gpsMsg)
+    : strict ? el('div', {}, 'Огляд зберігається з GPS-точкою. Телефон шукає сигнал і пробує знову кожні '+GPS_RETRY_S+' с.'+(fbReady ? '' : ' Якщо за '+GPS_FALLBACK_S+' с сигналу не буде — з’явиться запасний режим.'))
     : SC.field ? el('div', {}, 'Поле вибрано вручну: «'+SC.field+'». Усі фото й нотатки цього огляду прив’яжуться до нього.')
              : el('div', {}, 'Щоб фото не залишились без поля: виберіть поле або ввімкніть GPS.'),
     el('div', {class:'toolbar', style:'margin:0'}, SC.field || strict ? '' : fieldSel('Вибрати поле вручну…'),
       el('button', {class:'btn small', onclick:locateScout}, SC.gpsState==='off' ? 'Я ввімкнув GPS — спробувати знову' : 'Спробувати ще раз'),
       SC.gpsState==='off' ? el('button', {class:'btn small ghost', onclick:() => { SC.gpsHelp = !SC.gpsHelp; renderScForm(); }}, 'Як увімкнути GPS') : ''),
     SC.gpsHelp ? gpsHelp() : '',
+    fbReady ? nogpsBox(fieldSel) : '',
     SC.gpsState==='weak' ? el('div', {class:'note'}, 'Без інтернету телефон може шукати супутники до 1 хв. Відійдіть від техніки й будівель, зачекайте і натисніть «Спробувати ще раз».') : '');
   const fieldLine = noGps ? '' : el('div', {class:'sc-fieldline'},
     SC.field ? [el('span', {}, '📍 Поле: '), el('b', {}, SC.field), el('span', {class:'note'}, SC.fieldAuto ? ' за GPS'+(SC.gps ? ' (±'+SC.gps.acc+' м)' : '') : ' вибрано вручну'),
@@ -4981,7 +5014,7 @@ function renderScForm(){
             : el('button', dis ? {class:'btn sc-bigbtn', disabled:''} : {class:'btn sc-bigbtn', onclick:recStart}, '🎙', el('span', {}, 'Надиктувати')),
       el('button', dis ? {class:'btn sc-bigbtn', disabled:''} : {class:'btn sc-bigbtn', onclick:vrecOpen}, '🎥', el('span', {}, 'Відео')),
       strict ? '' : el('button', dis ? {class:'btn sc-bigbtn ghost', disabled:''} : {class:'btn sc-bigbtn ghost', onclick:() => gal.click()}, '🖼', el('span', {}, 'З галереї')), cam, gal),
-    dis ? el('div', {class:'note', style:'color:var(--bad)'}, wait ? 'Зачекайте кілька секунд — визначаю місце…' : strict ? 'Увімкніть GPS — без точки огляд не записується' : 'Спершу виберіть поле або ввімкніть GPS') :
+    dis ? el('div', {class:'note', style:'color:var(--bad)'}, wait ? 'Зачекайте кілька секунд — визначаю місце…' : strict ? (fbReady ? 'Оберіть причину й поле в червоній рамці вище' : 'Шукаю GPS…') : 'Спершу виберіть поле або ввімкніть GPS') :
       el('div', {class:'note'}, 'Говоріть, що бачите: стан, фаза, проблеми, що робити. Запис розшифрується в текст автоматично після відправки.'),
     voices.length ? el('div', {class:'sc-voices'}, voices) : '',
     SC.videos.length ? el('div', {class:'sc-phs'}, SC.videos.map(v => el('figure', {class:'sc-ph'}, el('video', {src:v.url, controls:'', playsinline:'', preload:'metadata', class:'sc-vprev'}),
@@ -5000,7 +5033,7 @@ function renderScForm(){
 }
 async function saveScout(){
   const msg = $('#sc-msg');
-  if(GPS_STRICT() && !SC.gps){ msg.textContent = 'Без GPS-точки огляд не зберігається — увімкніть геолокацію.'; return; }
+  if(GPS_STRICT() && !SC.gps && !SC.nogps){ msg.textContent = 'Без GPS-точки огляд не зберігається — увімкніть геолокацію або запасний режим.'; return; }
   if(!SC.field){ msg.textContent = 'Виберіть поле.'; return; }
   if(SC.photos.some(p => !p.blob && !p.bad)){ msg.textContent = 'Зачекайте — фото ще обробляються.'; return; }
   const extra = SC.state || SC.phase || Object.keys(SC.problems).length || SC.density!=='' || SC.forecast!=='' || Object.values(SC.sow).some(v => v!=='' && v!=null);
@@ -5015,8 +5048,10 @@ async function saveScout(){
     photos: photos.map((p, i) => ({k:i, path:'media/'+y+'/'+SC.id+'-'+(i+1)+'.jpg', lat:p.lat, lon:p.lon, acc:p.acc, src:p.src || 'manual', field:p.field || SC.field, at:p.at, w:p.w, h:p.h, bytes:p.bytes, ...(p.tag ? {tag:p.tag} : {})})),
     voice: SC.voice.map((v, i) => ({k:np+i, path:'media/'+y+'/'+SC.id+'-v'+(i+1)+'.'+audExt(v.mime), mime:v.mime, dur:v.dur, at:v.at, bytes:v.blob.size, status:'pending', text:null}))};
   if(SC.task) doc.task = SC.task.id;
+  if(SC.nogps) doc.nogps = {reason:SC.nogps.reason, at:SC.nogps.at, waited:SC.nogps.waited, late:!!SC.nogps.late, ...(SC.nogps.lateAt ? {lateAt:SC.nogps.lateAt} : {})};
+  clearTimeout(SC.retryT); clearTimeout(SC.fbT);
   const blobs = [...photos.map(p => p.blob), ...SC.voice.map(v => v.blob)];
-  doc.videos = SC.videos.map((v, i) => { const parts = []; for(let o = 0, n = 1; o < v.blob.size; o += VPART, n++){ parts.push({k:blobs.length, vpart:true, path:'media/'+y+'/'+SC.id+'-video'+(i+1)+'.'+vExt(v.mime)+'.part'+n}); blobs.push(v.blob.slice(o, o+VPART)); }
+  doc.videos = SC.videos.map((v, i) => { const parts = []; for(let o = 0, n = 1; o < v.blob.size; o += VPART, n++){ parts.push({k:blobs.length, vpart:true, wifi:true, path:'media/'+y+'/'+SC.id+'-video'+(i+1)+'.'+vExt(v.mime)+'.part'+n}); blobs.push(v.blob.slice(o, o+VPART)); }
     return {mime:v.mime, dur:v.dur, at:v.at, bytes:v.blob.size, lat:v.lat, lon:v.lon, acc:v.acc, src:v.src || 'manual', field:v.field || SC.field, parts, status:'pending', text:null}; });
   const item = {id:SC.id, path:'scouts/'+y+'/'+SC.id+'.json', doc, blobs,
     urls:[...photos.map((p, i) => ({path:doc.photos[i].path, url:p.url})), ...SC.voice.map((v, i) => ({path:doc.voice[i].path, url:v.url}))], vurls:SC.videos.map(v => v.url)};
@@ -5160,7 +5195,8 @@ let GEO_ASKED = false;
 function scoutGpsBox(d){
   const pts = [...(d.gps && d.gps.lat ? [{lat:d.gps.lat, lon:d.gps.lon, k:'s'}] : []), ...(d.photos || []).filter(p => p.lat).map((p, i) => ({lat:p.lat, lon:p.lon, k:'p', n:i+1})), ...(d.videos || []).filter(v => v.lat).map(v => ({lat:v.lat, lon:v.lon, k:'v'}))];
   const media = (d.photos || []).length + (d.videos || []).length, withPt = (d.photos || []).filter(p => p.lat).length + (d.videos || []).filter(v => v.lat).length;
-  if(!pts.length) return String(d.id || '').startsWith('vb-') || d.by==='з Viber' ? el('div', {class:'sub note'}, 'Огляд з Viber — без GPS-точки.') : el('div', {class:'sub', style:'color:var(--bad)'}, '⚠ Без GPS: місце огляду невідоме — поле вибрано вручну.');
+  const why = d.nogps ? (NOGPS_WHY.find(w => w[0]===d.nogps.reason) || ['', 'без причини'])[1] : '';
+  if(!pts.length) return String(d.id || '').startsWith('vb-') || d.by==='з Viber' ? el('div', {class:'sub note'}, 'Огляд з Viber — без GPS-точки.') : el('div', {class:'sub', style:'color:var(--bad)'}, '⚠ Без GPS'+(why ? ' — «'+why+'»' : '')+': поле вибрано вручну, місце огляду невідоме.');
   if(!MAPV.geo){ if(!GEO_ASKED){ GEO_ASKED = true; ensureGeo().then(g => { if(g && TAB==='history') renderHistory(); }).catch(() => {}); } }
   const feat = MAPV.geo && MAPV.geo.features.find(f => fieldsOf(f).includes(d.field));
   const inF = p => feat ? inGeom([p.lon, p.lat], feat.geometry) : null, dist = p => feat ? Math.round(distToGeom([p.lon, p.lat], feat.geometry)) : null;
@@ -5182,7 +5218,7 @@ function scoutGpsBox(d){
       svg.append(p.k==='s' ? mk('circle', {cx:X(p.lon), cy:Y(p.lat), r:6, fill:'none', stroke:bad ? '#b3261e' : '#1f2a24', 'stroke-width':2.5})
                            : mk('circle', {cx:X(p.lon), cy:Y(p.lat), r:3.5, fill:bad ? '#b3261e' : p.k==='v' ? '#7b4bb3' : '#c98a1c', stroke:'#fff', 'stroke-width':1})); });
   }
-  return el('div', {class:'sub'}, el('span', {style:ins===false && far > 30 ? 'color:var(--bad)' : ''}, head+tail), svg,
+  return el('div', {class:'sub'}, el('span', {style:ins===false && far > 30 ? 'color:var(--bad)' : ''}, head+tail), d.nogps ? el('div', {class:'note', style:'color:var(--warn)'}, 'Запасний режим «'+why+'»: точку GPS отримано вже під час огляду.') : '', svg,
     svg ? el('div', {class:'note'}, '○ точка огляду · ● фото · ● відео (фіолетові) · червоне — поза полем') : '');
 }
 function scoutSummary(ss){   // останній стан поля за оглядами сезону
@@ -5211,7 +5247,9 @@ function renderScList(){
   const list = allScouts().filter(d => (any || d.season===YEAR) && (!SCF || d.field===SCF));
   const fsel = $('#sc-field'); fsel.replaceChildren(el('option', {value:''}, 'усі'), ...REF.allFields.map(f => el('option', f.n===SCF ? {value:f.n, selected:''} : {value:f.n}, f.n)));
   if(!list.length){ box.append(remindersBlock(), el('p', {class:'note'}, (any ? 'Наразі' : 'За сезон «урожай '+YEAR+'»')+(SCF ? ' по полю «'+SCF+'»' : '')+' оглядів ще немає. Натисніть «+ Новий огляд» прямо в полі — місце і поле визначаться за GPS.')); return; }
-  box.append(remindersBlock(), el('div', {class:'note'}, list.length+' огляд(и)'+(any ? '' : ' · урожай '+YEAR)), ...list.slice(0, 60).map(scoutCard));
+  const ng = ROLE==='o' ? allScouts().filter(d => d.nogps && d.date >= addDays(isoToday(), -30)) : [];
+  box.append(remindersBlock(), ng.length ? el('div', {class:'note', style:'color:var(--bad)'}, '⚠ Огляди без GPS за 30 днів: '+ng.length+' ('+NOGPS_WHY.map(([k, t]) => [t, ng.filter(d => d.nogps.reason===k).length]).filter(x => x[1]).map(x => x[0]+': '+x[1]).join(', ')+')') : '',
+    el('div', {class:'note'}, list.length+' огляд(и)'+(any ? '' : ' · урожай '+YEAR)), ...list.slice(0, 60).map(scoutCard));
 }
 async function renderScouts(){ renderGpsPill(); pollVoice(); OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); renderScForm(); renderScList(); ensureGeo().catch(() => {}); if(OUTQ.length) flushScouts(); }
 $('#sc-new').addEventListener('click', newScout);
