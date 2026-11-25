@@ -1311,7 +1311,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11a';
+const APP_VER = '25.11b';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -5207,10 +5207,11 @@ function scoutSummary(ss){   // останній стан поля за огля
 function renderScList(){
   const box = $('#sc-list'); if(!box) return; box.replaceChildren();
   if(!REF) return;
-  const list = allScouts().filter(d => d.season===YEAR && (!SCF || d.field===SCF));
+  const any = ROLE!=='o';   // у керуючого немає вибору року — показуємо всі огляди (інакше нові огляди сезону 2027 не видно)
+  const list = allScouts().filter(d => (any || d.season===YEAR) && (!SCF || d.field===SCF));
   const fsel = $('#sc-field'); fsel.replaceChildren(el('option', {value:''}, 'усі'), ...REF.allFields.map(f => el('option', f.n===SCF ? {value:f.n, selected:''} : {value:f.n}, f.n)));
-  if(!list.length){ box.append(remindersBlock(), el('p', {class:'note'}, 'За сезон «урожай '+YEAR+'»'+(SCF ? ' по полю «'+SCF+'»' : '')+' оглядів ще немає. Натисніть «+ Новий огляд» прямо в полі — місце і поле визначаться за GPS.')); return; }
-  box.append(remindersBlock(), el('div', {class:'note'}, list.length+' огляд(и) · урожай '+YEAR), ...list.slice(0, 60).map(scoutCard));
+  if(!list.length){ box.append(remindersBlock(), el('p', {class:'note'}, (any ? 'Наразі' : 'За сезон «урожай '+YEAR+'»')+(SCF ? ' по полю «'+SCF+'»' : '')+' оглядів ще немає. Натисніть «+ Новий огляд» прямо в полі — місце і поле визначаться за GPS.')); return; }
+  box.append(remindersBlock(), el('div', {class:'note'}, list.length+' огляд(и)'+(any ? '' : ' · урожай '+YEAR)), ...list.slice(0, 60).map(scoutCard));
 }
 async function renderScouts(){ renderGpsPill(); pollVoice(); OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); renderScForm(); renderScList(); ensureGeo().catch(() => {}); if(OUTQ.length) flushScouts(); }
 $('#sc-new').addEventListener('click', newScout);
