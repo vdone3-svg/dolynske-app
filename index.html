@@ -624,12 +624,19 @@ function compute(raw){
   const resolve = (y,f,cin) => cin ? cin : (!f ? '' : (prBy.has(y+'|'+f) ? (prBy.get(y+'|'+f).length===1 ? prBy.get(y+'|'+f)[0].c : 'поділене') : 'немає'));
   const warn = {works:0, appl:0, harv:0, flags:0, aflags:0};
 
+  // Сезон роботи (власник, 25.11): з серпня обробіток ґрунту й посів — під наступний урожай; інші роботи (ЗЗР, добрива, догляд)
+  // — під наступний урожай лише ПІСЛЯ останнього збирання/завезення зерна з цього поля в цьому році (десикація до збирання лишається в поточному).
+  const lastCut = new Map(), cutKey = (f, y) => f+'|'+y, noteCut = (f, d) => { if(f && d){ const k = cutKey(f, d.y); lastCut.set(k, Math.max(lastCut.get(k) || 0, d.n)); } };
+  rowsOf(raw,'Урожай').forEach(r => noteCut(str(r['Поле']), dt(r['Дата'])));
+  rowsOf(raw,'Роботи').forEach(r => { if((ops[str(r['Операція'])]||{}).g==='Збирання') noteCut(str(r['Поле']), dt(r['Дата'])); });
+  const NEXT_G = new Set(['Обробіток ґрунту', 'Посів']);
+  const seasonY = (d, f, g) => { if(d.m < 8) return d.y; if(NEXT_G.has(g)) return d.y+1; const lc = f ? lastCut.get(cutKey(f, d.y)) : null; return lc && d.n <= lc ? d.y : d.y+1; };
   const works = rowsOf(raw,'Роботи').map(r => {
     const d = dt(r['Дата']); if(!d) return null;
     const op = str(r['Операція']); const g = (ops[op]||{}).g || '';
     const yin = num(r['Урожай року (вручну)']);
-    const y = yin || (g==='Збирання' ? d.y-(d.m<=3) : d.y+(d.m>=8));
-    const f = str(r['Поле']); const c = resolve(y, f, str(r['Культура (лише якщо поле поділене)']));
+    const f0 = str(r['Поле']), y = yin || (g==='Збирання' ? d.y-(d.m<=3) : seasonY(d, f0, g));
+    const f = f0; const c = resolve(y, f, str(r['Культура (лише якщо поле поділене)']));
     const w = {d, f, c, y, g, op, m:str(r['Техніка']), p:str(r['Працівник']), q:num(r['Обсяг'])||0, u:str(r['Од.']), src:str(r['Джерело']), mon:d.y*100+d.m, fuel:0};
     if((f && !fieldsDir.has(f)) || c==='поділене' || c==='немає' || (w.u==='га' && !f && w.src!=='архів-текст') || !op) warn.works++;
     if(str(r['Перевірити (перенесення)'])) warn.flags++;
@@ -651,8 +658,9 @@ function compute(raw){
   const seen = new Set();
   const appl = rowsOf(raw,'Внесення').map(r => {
     const d = dt(r['Дата']); if(!d) return null;
-    const yin = num(r['Урожай року (вручну)']); const y = yin || d.y+(d.m>=8);
-    const f = str(r['Поле']); const c = resolve(y, f, str(r['Культура (лише якщо поле поділене)']));
+    const yin = num(r['Урожай року (вручну)']), fA = str(r['Поле']), gA = /посів/i.test(str(r['Операція'])) ? 'Посів' : '';
+    const y = yin || seasonY(d, fA, gA);
+    const f = fA; const c = resolve(y, f, str(r['Культура (лише якщо поле поділене)']));
     const mat = str(r['Матеріал']); const mm = mats[mat]||{};
     const a = {d, y, f, c, op:str(r['Операція']), mat, cat:mm.cat||'?', u:mm.u||'', ha:num(r['Оброблено, га'])||0, q:num(r['Кількість всього'])||0, note:str(r['Примітка'])};
     const key = [d.n,f,a.op,a.cat,c].join('|'); a.first = !seen.has(key); seen.add(key);
@@ -1084,6 +1092,7 @@ const HCOL = {'Обробіток ґрунту':'#8c6d46', 'Посів':'#2f8f5b
 const APPL_G = op => /Посів/.test(op) ? 'Посів' : (/Обприск/.test(op) ? 'Захист рослин' : 'Внесення добрив');
 let HF = null, HY = null, HG = '';
 const ddmm = d => String(d.d).padStart(2,'0')+'.'+String(d.m).padStart(2,'0')+'.'+String(d.y).slice(2);
+let HY_SYNC = null;
 function renderHistory(){
   const M = MODEL, body = $('#h-body'); body.replaceChildren();
   const names = [...new Set([...REF.allFields.map(f => f.n), ...M.fields.map(f => f.f)])];
@@ -1095,7 +1104,7 @@ function renderHistory(){
   const years = [...new Set([...M.fields.filter(onF), ...M.works.filter(onF), ...M.appl.filter(onF), ...M.harv.filter(onF)].map(x => x.y).concat(fScouts.map(d => d.season)))].sort((a, b) => b-a);
   const now = (() => { const t = new Date(); return t.getFullYear()+(t.getMonth()>=7 ? 1 : 0); })();
   // Синхронізуємо HY з глобальним YEAR при перемиканні сезону в тулбарі
-  if(HY!=='all' && YEAR && years.includes(YEAR) && HY !== YEAR) HY = YEAR;
+  if(YEAR!==HY_SYNC){ HY_SYNC = YEAR; if(HY!=='all' && YEAR && years.includes(YEAR)) HY = YEAR; }   // лише коли змінили рік угорі — інакше вибір «урожай 2027» скидався
   if(HY!=='all' && !years.includes(HY)) HY = years.includes(now) ? now : (years[0] ?? now);
   const ys = $('#h-year'); ys.replaceChildren(...years.map(y => el('option', y===HY ? {value:y, selected:''} : {value:y}, 'урожай '+y)), el('option', HY==='all' ? {value:'all', selected:''} : {value:'all'}, 'усі роки'));
   ys.onchange = ev => { HY = ev.target.value==='all' ? 'all' : +ev.target.value; renderHistory(); };
@@ -1311,7 +1320,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11g';
+const APP_VER = '25.11h';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
