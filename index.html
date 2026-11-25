@@ -1311,7 +1311,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11f';
+const APP_VER = '25.11g';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1333,7 +1333,7 @@ function renderAll(){
   renderYears();
   ({day:renderDay, overview:() => { renderCrops(); renderYoY(); renderFuelMonthly(); renderMachines(); renderQA(); },
     fields:() => { renderFields(); renderFieldCard(); }, plan:renderPlan, tasks:renderTasks, report:renderReport, history:renderHistory, map:renderMap, scout:renderScouts, agro:renderAgro, inputs:() => { renderHybrids(); renderInputs(); renderTpl(); },
-    fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:() => { if(ROLE==='a'){ renderJournalDay(); if(JRM==='zzr') renderZzr(); return; } renderJournal(); renderZzr(); }, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
+    fuel:renderFuelTable, tech:renderTech, batt:renderBatt, stock:() => { renderStock(); renderStockTable(); renderInvLines(); }, journal:() => { if(ROLE==='a'){ $('#jr-card').hidden = true; $('#jr-day-card').hidden = true; $('#zzr-card').hidden = false; renderZzr(); return; } renderJournal(); renderZzr(); }, settings:() => { renderSettings(); renderAnthropicKeyBlock(); }})[TAB]();
 }
 function markRot(){ $('#rot-save').classList.add('primary'); $('#rot-save').textContent = 'Зберегти сівозміну *'; }
 $('#btn-xlsx').addEventListener('click', () => toast('У робочій версії тут завантажиться «Загальний_звіт_Долинське.xlsx» з усіма внесеними днями'));
@@ -5371,7 +5371,7 @@ async function loadTasks(force){
   if(!TSK.cat) try{ TSK.cat = await getJSON('ref/task_catalog.json'); }catch(e){}
   TSK.at = Date.now(); return TSK.list;
 }
-function tskBadge(){ const hc = ROLE==='a' ? hcDays().filter(x => x.st.items.some(it => !it.self && (it.st==='none' || it.st==='stale'))).length : 0; if(!TSK.list) return hc; return hc + TSK.list.filter(t => ROLE==='o' ? t.status==='draft' : ROLE==='a' ? t.status==='open' : false).length; }
+function tskBadge(){ const hc = ROLE==='o' ? hcDays().filter(x => x.st.items.some(it => it.st==='none' || it.st==='stale')).length : 0; if(!TSK.list) return hc; return hc + TSK.list.filter(t => ROLE==='o' ? t.status==='draft' : ROLE==='a' ? t.status==='open' : false).length; }
 const tskItemName = (task, k) => ((task.checklist || []).find(c => c.k===k) || {}).t || k;
 const tskScouts = t => (typeof allScouts==='function' ? allScouts() : []).filter(d => d.task===t.id);
 function tskDoneItems(t){ const s = new Set(); tskScouts(t).forEach(d => (d.photos || []).forEach(p => p.tag && s.add(p.tag))); return s; }
@@ -5497,7 +5497,7 @@ async function renderTasks(){
 // (до 30.11 облік іде з файлів бухгалтера). Керуючий підтверджує га польових робіт закритого дня: confirm/РРРР/<дата>.json,
 // ключ «поле|операція|техніка» (без техніки — працівник), га = максимум по рядках ключа. Те саме рахує tools/dayconf.py.
 const CLOSE_FROM = '2026-12-01', CLOSE_HOUR = 12, HC_DAYS = 14;
-const HC_SELF = /^Зінько(\s|\.|$)/;   // керуючий сам працює на Deutz (власник, 25.11): роботи, де він у табелі, підтверджує власник
+const HC_SELF = /^Зінько(\s|\.|$)/;   // (25.11: тепер лише позначка; усі гектари звіряє власник)   // керуючий сам працює на Deutz (власник, 25.11): роботи, де він у табелі, підтверджує власник
 const confPath = d => 'confirm/'+d.slice(0,4)+'/'+d+'.json';
 const addDays = (d, n) => { const t = new Date(d+'T12:00:00'); t.setDate(t.getDate()+n); return t.toISOString().slice(0, 10); };
 const dmy = d => d.split('-').reverse().slice(0, 2).join('.');
@@ -5533,8 +5533,8 @@ function hcDays(){
     if(!doc || doc.kind!=='day' || doc.date < from) return; const st = confState(doc, confDocOf(doc.date)); if(st.items.length) out.push({d:doc.date, doc, st}); });
   return out.sort((a, b) => b.d.localeCompare(a.d));
 }
-const hcMine = it => ROLE==='o' ? it.self : ROLE==='a' ? !it.self : false;   // чиї кнопки
-const HC_ST = {ok:['✓ підтверджено', 'var(--good)'], bad:['✕ не так', 'var(--bad)'], none:['⏳ не підтверджено керуючим', 'var(--warn)'], stale:['⏳ день виправлено — підтвердити ще раз', 'var(--warn)']};
+const hcMine = it => ROLE==='o';   // з 25.11 гектари звіряє власник з обліковцем; керуючий до обліку робіт по людях стосунку не має
+const HC_ST = {ok:['✓ підтверджено', 'var(--good)'], bad:['✕ не так', 'var(--bad)'], none:['⏳ не звірено', 'var(--warn)'], stale:['⏳ день виправлено — підтвердити ще раз', 'var(--warn)']};
 const ha1 = v => nf(+v, Number.isInteger(+v) ? 0 : 1), hcLine = it => it.f+' · '+it.op+(it.m ? ' · '+it.m : '')+' — '+ha1(it.ha)+' га';
 async function hcSave(d, items){
   const old = confDocOf(d) || {kind:'confirm', date:d, items:{}}, who = whoName(), at = isoNow();
@@ -5547,7 +5547,7 @@ async function hcSave(d, items){
 // керуючий (кнопки) і власник (стан) — вкладка «Завдання»
 function renderHaConf(){
   const box = $('#hc-card'); if(!box) return;
-  if(!'oa'.includes(ROLE) || !DOCS){ box.hidden = true; return; }
+  if(ROLE!=='o' || !DOCS){ box.hidden = true; return; }
   const L = hcDays(), pend = L.filter(x => x.st.none || x.st.bad), done = L.filter(x => !x.st.none && !x.st.bad);
   if(!L.length){ box.hidden = true; box.replaceChildren(); return; }   // нічого підтверджувати — не показуємо порожню картку
   box.hidden = false;
@@ -5558,16 +5558,15 @@ function renderHaConf(){
       x.st.items.some(it => hcMine(it) && (it.st==='none' || it.st==='stale')) ? el('button', {class:'btn small primary', onclick:ev => { ev.target.disabled = true; hcSave(x.d, x.st.items.filter(it => hcMine(it) && (it.st==='none' || it.st==='stale')).map(it => [it, {ok:true}])); }}, '✓ Решта все вірно') : ''),
     ...x.st.items.map(it => hcItem(x.d, it)));
   box.replaceChildren(el('h2', {style:'margin:0 0 4px'}, '🚜 Гектари на підтвердження'),
-    el('div', {class:'note', style:'margin-bottom:8px'}, ROLE==='a' ? 'Гектари, які обліковець записала в закритий день. Перевірте: ✓ — так, «Не так» — вкажіть, скільки було насправді, і коротко чому. Закриття дня це не блокує; виправляє день власник.'
-      : 'Стан підтвердження гектарів керуючим за '+HC_DAYS+' днів. Роботи, де працював сам керуючий, підтверджуєте ви (кнопки біля них). «Не так» — звірити з обліковцем і виправити день («День» → «Виправити день»).'),
+    el('div', {class:'note', style:'margin-bottom:8px'}, 'Гектари, які обліковець записала в закриті дні за '+HC_DAYS+' днів. Звірте: ✓ — так; «Не так» — скільки має бути й чому, потім виправте день («День» → «Виправити день»).'),
     pend.length ? el('div', {style:'display:grid;gap:8px'}, pend.map(dayBlock)) : el('p', {}, '✅ Усі гектари підтверджено.'),
     done.length ? el('details', {style:'margin-top:8px'}, el('summary', {class:'note'}, 'Підтверджені дні ('+done.length+')'), el('div', {style:'display:grid;gap:8px;margin-top:6px'}, done.map(dayBlock))) : '');
 }
 function hcItem(d, it){
   const [lbl, col] = HC_ST[it.st], row = el('div', {style:'display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between'});
-  const info = el('div', {}, hcLine(it), it.self ? el('div', {class:'note'}, ROLE==='a' ? '👤 Ваша робота — підтверджує власник' : '👤 Працював керуючий — підтверджуєте ви') : '', el('div', {class:'note', style:'color:'+col}, lbl+(it.st==='bad' ? (it.fact!=null ? ' · керуючий: '+ha1(it.fact)+' га' : '')+(it.c ? ' · «'+it.c+'»' : '') : '')+(it.by && it.st!=='none' ? ' · '+it.by : '')));
+  const info = el('div', {}, hcLine(it), el('div', {class:'note', style:'color:'+col}, lbl+(it.st==='bad' ? (it.fact!=null ? ' · має бути '+ha1(it.fact)+' га' : '')+(it.c ? ' · «'+it.c+'»' : '') : '')+(it.by && it.st!=='none' ? ' · '+it.by : '')));
   row.append(info);
-  if(hcMine(it) && (ROLE==='a' || TAB==='tasks')){
+  if(hcMine(it) && TAB==='tasks'){
     const form = el('div', {style:'display:none;gap:6px;flex-wrap:wrap;width:100%'});
     const fact = el('input', {type:'number', min:'0', step:'0.1', inputmode:'decimal', placeholder:'Скільки було, га', style:'width:140px', value: it.fact ?? ''});
     const com = el('input', {placeholder:'Чому не так (обов’язково)', style:'flex:1;min-width:180px', value: it.c || ''});
@@ -5593,7 +5592,7 @@ function renderHaConfDay(){
   const doc = 'ok'.includes(ROLE) && isClosed(DAY) ? dayDocOf(DAY) : null, st = doc ? confState(doc, confDocOf(DAY)) : null;
   if(!st || !st.items.length){ box.hidden = true; box.replaceChildren(); return; }
   box.hidden = false;
-  const head = st.bad ? '✕ Керуючий не погодився з гектарами: '+st.bad : st.none ? '⏳ Гектари не підтверджено керуючим: '+st.none+' з '+st.items.length : '✓ Гектари підтверджено керуючим';
+  const head = st.bad ? '✕ Гектари «не так»: '+st.bad : st.none ? '⏳ Гектари не звірено: '+st.none+' з '+st.items.length : '✓ Гектари звірено';
   box.replaceChildren(el('h2', {style:'margin:0 0 4px;color:'+(st.bad ? 'var(--bad)' : st.none ? 'var(--warn)' : 'var(--good)')}, head),
     el('details', st.bad ? {open:''} : {}, el('summary', {class:'note'}, 'Польові роботи ('+st.items.length+')'),
       el('div', {style:'display:grid;gap:4px;margin-top:6px'}, st.items.map(it => hcItem(DAY, it)))),

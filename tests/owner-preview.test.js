@@ -52,9 +52,7 @@ async function run(role, extra, fake, fn){
     ok(!(await pg.isVisible('#years')), 'у Вови немає вибору року');
     ok((await pg.evaluate(() => Object.keys(SCOUTS).length))===0, 'у Вови немає оглядів з Viber');
     await pg.evaluate(() => { location.hash = 'journal'; }); await pg.waitForTimeout(500);
-    ok(await pg.isVisible('#jr-day-card') && !(await pg.isVisible('#jr-card')) && !(await pg.isVisible('#zzr-card')), 'Журнал у Вови — лише «Хто що робив»');
-    const jd = await pg.textContent('#jr-day'); ok(jd.length > 20, 'картки робіт за день: '+(await pg.inputValue('#jr-date'))+' — '+jd.slice(0, 80));
-    await pg.click('#jr-prev'); await pg.waitForTimeout(200); ok(true, 'перехід на попередній день: '+(await pg.inputValue('#jr-date')));
+    ok(!(await pg.isVisible('#jr-day-card')) && !(await pg.isVisible('#jr-card')) && await pg.isVisible('#zzr-card'), 'Журнал у Вови — лише ЗЗР');
     await pg.screenshot({path:require('os').tmpdir()+'/jr.png'});
     await pg.evaluate(() => { location.hash = 'tasks'; }); await pg.waitForTimeout(300); ok(!ta.some(t => /^День$|Пальне|Склад|АКБ|Звіт дня|^Поля$|Гібриди/.test(t)) && (await pg.evaluate(() => TAB))==='tasks', 'вкладки Вови: '+ta.join(', '));
     ok((await pg.evaluate(() => document.documentElement.scrollWidth)) <= 391, 'сторінка не ширша за екран телефону'); await pg.screenshot({path:require('os').tmpdir()+'/pv.png'});
