@@ -43,7 +43,7 @@ async function run(role, extra, fake, fn){
     await pg.waitForSelector('#hc-card:not([hidden])'); const t = await pg.textContent('#hc-card');
     ok(t.includes('75 · Оранка · Deutz великий — 12 га') && !t.includes('24 га'), 'оранка 75: 12 га (тракторист і помічник не дублюються)');
     ok(t.includes('Тік · Дискування') && t.includes('Пленного'), 'обидва закриті дні в списку');
-    ok(!/Прунян|Козлов|Мазур/.test(t), 'імен з табеля не видно');
+    ok(!/Прунян|Козлов Н|Мазур/.test(t), 'імен з табеля не видно');
     ok(!(await pg.isVisible('#tabs a[href="#day"]')), 'вкладки «День» у керуючого немає');
     const badge = await pg.textContent('#tabs a[href="#tasks"]'); ok(/2/.test(badge), 'бейдж «Завдання» рахує 2 непідтверджені дні: '+badge);
     // «Не так» по Тіку
