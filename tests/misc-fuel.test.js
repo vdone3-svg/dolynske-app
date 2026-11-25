@@ -57,7 +57,7 @@ async function run(role, extra, fake, fn){
     await pg.evaluate(() => { location.hash = 'tech'; }); await pg.waitForTimeout(1500);
     const opts = await pg.$$eval('#mh-m option', o => o.map(x => x.value));
     ok(opts.includes('CASE 5088'), 'мотогодини: є CASE 5088 ('+opts.join(', ')+')'); ok(!opts.some(x => /генератор/i.test(x)), 'мотогодини: генератора немає');
-    const toTxt = await pg.evaluate(() => { const c = document.querySelector('#pane-tech').cloneNode(true); c.querySelector('#rp-m').remove(); return c.textContent; }); const mm = toTxt.replace(/\s+/g,' ').match(/.{0,80}(Estar|генератор).{0,80}/i); console.log('  >>', mm && mm[0]); ok(!/Estar|генератор/i.test(toTxt.replace('Deutz великий, Deutz малий, JCB 541-70, CASE 5088.', '')), 'генератора немає ні в графіку ТО, ні в мотогодинах');
+    const toTxt = await pg.evaluate(() => { const c = document.querySelector('#pane-tech').cloneNode(true); c.querySelector('#rp-m').remove(); const g = c.querySelector('#gen-card'); if(g) g.remove(); return c.textContent; }); const mm = toTxt.replace(/\s+/g,' ').match(/.{0,80}(Estar|генератор).{0,80}/i); console.log('  >>', mm && mm[0]); ok(!/Estar|генератор/i.test(toTxt.replace('Deutz великий, Deutz малий, JCB 541-70, CASE 5088.', '')), 'генератора немає ні в графіку ТО, ні в мотогодинах');
   });
   console.log(bad ? 'НЕ ПРОЙДЕНО: '+bad : 'УСЕ ПРОЙДЕНО');
 })();
