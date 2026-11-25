@@ -456,6 +456,9 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
         <div id="rp-q"></div>
         <div class="tablewrap"><table id="rp-table"></table></div></section>
 
+      <!-- Генератор ЗАВ (Datakom) — лише власнику -->
+      <section class="card span12" id="gen-card" hidden><h2 style="margin:0 0 4px">⚡ Генератор ЗАВ <span class="note" style="font-weight:400">Estar BES-110 · Datakom</span></h2><div id="gen-body"><p class="note">Завантажую…</p></div></section>
+
       <!-- ТО-модуль -->
       <section class="card span12" id="to-section">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
@@ -1327,7 +1330,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11p';
+const APP_VER = '25.11q';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2014,6 +2017,64 @@ $('#fuel-month').addEventListener('change', renderFuelTable);
 // які машини мають лічильник у журналі «Мотогодини»: + CASE 5088; генератор прибрано — його мотогодини й ТО власник веде через Rainbow SCADA (25.11)
 const MH_ADD = /^CASE 5088$/i, MH_OFF = m => /генератор/i.test(m.t||'') || /генератор/i.test(m.n||'');
 const mhOn = m => (m.mh==='так' || MH_ADD.test(m.n)) && !MH_OFF(m);
+// ---------- ⚡ ГЕНЕРАТОР ЗАВ (власнику): gen/latest.json + gen/<site>/history.json (tools/datakom.py у dolynske-data, кожні 2 год)
+let GEN = null;
+const GEN_STATE = {running:['працює','ok'], normal:['на зв\'язку, стоїть',''], silent:['не на зв\'язку','bad'], alarm:['АВАРІЯ','bad'], warning:['попередження','bad'], unknown:['невідомо','']};
+async function loadGen(force){
+  if(GEN && !force) return GEN;
+  try{ const s = await getJSON('gen/latest.json'); const h = s ? await getJSON('gen/'+s.site+'/history.json').catch(() => null) : null; GEN = {s, h}; }catch(e){ GEN = {s:null, h:null, err:e.message}; }
+  return GEN;
+}
+const genAgo = iso => { if(!iso) return ''; const h = (Date.now() - new Date(iso).getTime())/36e5; return h < 1 ? Math.round(h*60)+' хв тому' : h < 48 ? nf(h, 1)+' год тому' : nf(h/24, 0)+' дн. тому'; };
+const genDT = iso => iso ? iso.slice(8,10)+'.'+iso.slice(5,7)+' '+iso.slice(11,16) : '—';
+function genChart(days){
+  const D = days.slice(-30), w = 640, h = 140, pad = 24, bw = Math.max(4, Math.floor((w - pad*2)/Math.max(D.length, 1)) - 2);
+  const mx = Math.max(1, ...D.map(d => d.run_h || 0)), ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 '+w+' '+h); svg.setAttribute('width', '100%'); svg.setAttribute('style', 'max-width:'+w+'px;display:block'); svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Мотогодини генератора по днях, останні '+D.length+' днів');
+  const mk = (t, a) => { const e = document.createElementNS(ns, t); Object.entries(a).forEach(([k, v]) => e.setAttribute(k, v)); return e; };
+  svg.append(mk('line', {x1:pad, x2:w-pad, y1:h-pad, y2:h-pad, stroke:'var(--line)', 'stroke-width':1}));
+  D.forEach((d, i) => { const v = d.run_h || 0, bh = v/mx*(h-pad*2), x = pad + i*(bw+2);
+    const g = mk('g', {}); const hit = mk('rect', {x, y:pad, width:bw, height:h-pad*2, fill:'transparent'});
+    const bar = mk('rect', {x, y:h-pad-bh, width:bw, height:Math.max(bh, v ? 2 : 0), rx:2, fill:'var(--accent)'});
+    const tt = document.createElementNS(ns, 'title'); tt.textContent = d.d.split('-').reverse().join('.')+': '+nf(v, 1)+' м-год, '+nf(d.kwh || 0, 0)+' кВт·год, пусків '+nf(d.starts || 0, 0); g.append(tt, hit, bar); svg.append(g);
+    if(i===0 || i===D.length-1){ const t = mk('text', {x:x+bw/2, y:h-6, 'text-anchor':'middle', 'font-size':11, fill:'var(--muted)'}); t.textContent = d.d.slice(8,10)+'.'+d.d.slice(5,7); svg.append(t); } });
+  const t = mk('text', {x:pad, y:pad-8, 'font-size':11, fill:'var(--muted)'}); t.textContent = 'макс. '+nf(mx, 1)+' м-год/день'; svg.append(t);
+  return svg;
+}
+async function renderGen(){
+  const card = $('#gen-card'); if(!card) return; card.hidden = ROLE!=='o'; if(ROLE!=='o') return;
+  const body = $('#gen-body'); const {s, h} = await loadGen();
+  if(!s){ body.replaceChildren(el('p', {class:'note'}, 'Даних ще немає — скрипт Datakom запускається кожні 2 год (05:23–22:23).')); return; }
+  const [stT, stC] = GEN_STATE[s.state] || [s.state, ''], g = (v, d=1) => v==null ? '—' : nf(v, d);
+  const tile = (a, b, c) => el('div', {}, el('span', {}, a), el('b', {}, b), c ? el('span', {}, c) : '');
+  const srvWarn = (s.srv1_h!=null && s.srv1_h <= 10) || (s.srv1_d!=null && s.srv1_d <= 7);
+  const days = (h && h.days) || [], yd = days.length > 1 ? days[days.length-2] : null;
+  body.replaceChildren(
+    el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 10px'}, el('span', {class:'pill '+stC}, stT),
+      el('span', {class:'note'}, 'останній зв\'язок контролера: '+genDT(s.last)+(s.last ? ' ('+genAgo(s.last)+')' : '')+' · знімок '+genDT(s.at))),
+    el('div', {class:'stock'},
+      tile('Мотогодини всього', g(s.run_h, 1), yd && yd.run_h!=null ? 'вчора +'+g(yd.run_h, 1) : ''),
+      el('div', {style: srvWarn ? 'border-color:var(--bad)' : ''}, el('span', {}, 'До ТО-1 (50 м-год)'), el('b', {}, g(s.srv1_h, 1)+' м-год'), el('span', {}, 'або '+g(s.srv1_d, 0)+' дн.')),
+      tile('До ТО-2', g(s.srv2_h, 0)+' м-год', s.srv2_d!=null ? 'або '+g(s.srv2_d, 0)+' дн.' : ''),
+      tile('АКБ', g(s.batt, 2)+' В', s.batt_min!=null ? 'мін. '+g(s.batt_min, 2)+' В' : ''),
+      tile('Охолоджувальна рідина', g(s.coolant, 1)+' °C', s.oil_bar!=null ? 'тиск масла '+g(s.oil_bar, 1)+' бар' : ''),
+      tile('Пальне', g(s.fuel_pct, 0)+' %', s.fuel_pct===0 && !(s.fuel_l) ? 'датчик, ймовірно, не під\'єднаний' : (s.fuel_l!=null ? g(s.fuel_l, 0)+' л' : '')),
+      tile('Вироблено', g(s.kwh, 1)+' кВт·год', yd && yd.kwh!=null ? 'вчора +'+g(yd.kwh, 0) : ''),
+      tile('Пуски', g(s.starts, 0), s.cranks!=null ? 'спроб запуску '+g(s.cranks, 0) : '')),
+    (s.alarms && s.alarms.length) ? el('div', {class:'note', style:'color:var(--bad);margin-top:8px'}, '⚠ '+s.alarms.join('; ')) : '',
+    el('h3', {style:'margin:14px 0 4px;font-size:14px'}, 'Мотогодини по днях'),
+    days.some(d => d.run_h) ? genChart(days) : el('p', {class:'note'}, 'Графік з\'явиться, коли генератор попрацює хоча б день під наглядом скрипта (наведіть на стовпчик — деталі дня).'),
+    el('p', {class:'note', style:'margin-top:6px'}, 'Дані — портал Datakom Rainbow SCADA, оновлення кожні 2 год. Тривоги (аварія, немає зв\'язку > 3 год, скоро ТО, АКБ) — у смузі тривог і звіті дня.'));
+}
+function genReportLine(){
+  const box = el('div', {class:'note', style:'margin:6px 0 10px'}, '⚡ Генератор ЗАВ: завантажую…');
+  loadGen().then(({s}) => { if(!s){ box.textContent = '⚡ Генератор ЗАВ: даних ще немає'; return; }
+    const [stT] = GEN_STATE[s.state] || [s.state];
+    box.replaceChildren('⚡ Генератор ЗАВ: ', el('b', {}, stT), ' · зв\'язок '+genDT(s.last)+' · мотогодин '+nf(s.run_h || 0, 1)+' · до ТО-1 '+nf(s.srv1_h ?? 0, 1)+' м-год · АКБ '+nf(s.batt || 0, 1)+' В ',
+      el('a', {href:'#tech', onclick:() => { location.hash = 'tech'; }}, 'детальніше →')); });
+  return box;
+}
 function renderTech(){
   const yr = Math.min(YEAR, new Date().getFullYear());
   $('#tech-note').textContent = 'Календарний '+yr+' рік. Пальне — з таблиці пального, гектари й години — з табеля.';
@@ -2035,6 +2096,7 @@ function renderTech(){
     el('tbody', {}, rp.length ? rp.map(r => el('tr', {}, el('td', {class:'l'}, dateTxt(r.d.n)), el('td', {class:'l'}, r.m), el('td', {class:'l'}, r.k), el('td', {class:'l', style:'white-space:pre-line'}, r.w, r.parts ? el('div', {class:'note'}, '🔩 '+r.parts) : ''), el('td', {}, nf(r.i, fmt0)), el('td', {}, r.n ? nf(r.n, fmt0) : '—')))
       : el('tr', {}, el('td', {class:'l empty', colspan:'6'}, 'Ще немає записів.'))));
   renderRpVoice(); renderRpQuestions();
+  renderGen();
   renderTO();
 }
 $('#mh-add').addEventListener('click', () => { const v = +$('#mh-v').value; if(!v){ toast('Вкажіть показник лічильника'); return; } saveEvent({'Мотогодини':[{'Дата':toSerial($('#mh-d').value||DAY), 'Техніка':$('#mh-m').value, 'Показник лічильника, м-год':v}]}, 'мотогодини').then(() => { $('#mh-v').value = ''; renderTech(); toast('Показник збережено'); }); });
@@ -4058,7 +4120,7 @@ async function renderReport(){
   const m = R.meta || {};
   body.replaceChildren(el('div', {class:'note'}, 'Склав Claude '+new Date(R.at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})+
       ' · день '+(m.closed ? 'закрито в застосунку' : 'у застосунку не закрито')+' · агрозвіт бухгалтера: '+(m.agro_report ? 'дані на '+m.agro_report : (m.agro_err || 'немає'))),
-    alertsReportBlock(),
+    alertsReportBlock(), genReportLine(),
     el('div', {style:'max-width:900px'}, ...mdLite(R.text)),
     el('details', {style:'margin-top:12px'}, el('summary', {class:'note'}, 'Факти, з яких складено звіт'), el('pre', {style:'white-space:pre-wrap;font-size:11px;max-height:480px;overflow:auto'}, R.facts || '')));
 }
