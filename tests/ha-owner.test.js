@@ -37,21 +37,19 @@ async function run(role, extra, fake, fn){
 (async () => {
   let bad = 0; const ok = (c, t) => { console.log((c ? '✓ ' : '✗ ')+t); if(!c) bad++; };
   const extra = {'days/2026/2026-12-01.json': day('2026-12-01', [W('75', 'Оранка', 'Deutz великий', 'Зінько В.', 12), W('Тік', 'Дискування', 'ХТА 200', 'Мазур В.', 20)])};
-  await run('a', extra, '2026-12-02T13:00:00+02:00', async (pg, puts) => {
-    await pg.waitForSelector('#hc-card:not([hidden])'); const t = await pg.textContent('#hc-card');
-    ok(/Ваша робота — підтверджує власник/.test(t), 'Вова бачить «ваша робота — підтверджує власник»');
-    ok((await pg.$$('#hc-card button:text("Не так")')).length===1, 'кнопки лише для чужої роботи');
-    await pg.click('#hc-card button:text("✓ Решта все вірно")'); await pg.waitForTimeout(500);
-    const d = puts.filter(x => x[0]==='confirm/2026/2026-12-01.json').pop()[1];
-    ok(d.items['Тік|Дискування|ХТА 200'] && !d.items['75|Оранка|Deutz великий'], '«решта вірно» не підтверджує власну роботу');
+  await run('a', extra, '2026-12-02T13:00:00+02:00', async pg => {
+    await pg.waitForTimeout(800);
+    ok(!(await pg.isVisible('#hc-card')), 'у Вови немає «Гектари на підтвердження»');
+    ok(!/\d/.test(await pg.textContent('#tabs a[href="#tasks"]')), 'бейдж Вови не рахує гектари');
+    await pg.evaluate(() => { location.hash = 'journal'; }); await pg.waitForTimeout(800);
+    ok(await pg.isVisible('#zzr-card') && !(await pg.isVisible('#jr-day-card')), 'Журнал Вови — лише ЗЗР, без «Хто що робив»');
   });
   await run('o', {...extra, 'ref/owner.enc.json':null}, '2026-12-02T13:00:00+02:00', async (pg, puts) => {
     await pg.evaluate(() => { location.hash = 'tasks'; }); await pg.waitForTimeout(1000);
-    const t = await pg.textContent('#hc-card'); ok(/Працював керуючий — підтверджуєте ви/.test(t), 'власник бачить позначку');
-    ok((await pg.$$('#hc-card button:text("Не так")')).length===1, 'у власника кнопки лише для роботи керуючого');
+    ok((await pg.$$('#hc-card button:text("Не так")')).length===2, 'власник звіряє всі роботи (включно з роботою Зінька)');
     await pg.click('#hc-card button:text("✓ Решта все вірно")'); await pg.waitForTimeout(500);
     const d = puts.filter(x => x[0]==='confirm/2026/2026-12-01.json').pop()[1];
-    ok(d.items['75|Оранка|Deutz великий'] && d.items['75|Оранка|Deutz великий'].ok, 'власник підтвердив роботу керуючого');
+    ok(Object.keys(d.items).length===2, 'обидві роботи звірено власником');
   });
   console.log(bad ? 'НЕ ПРОЙДЕНО: '+bad : 'УСЕ ПРОЙДЕНО');
 })();

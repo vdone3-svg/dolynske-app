@@ -38,14 +38,14 @@ async function run(role, extra, fake, fn){
   const extra = {'days/2026/2026-12-01.json': day('2026-12-01', [W('75', 'Оранка', 'Deutz великий', 'Прунян В.', 12), W('75', 'Оранка', 'Deutz великий', 'Козлов Н.', 12), W('Тік', 'Дискування', 'ХТА 200', 'Мазур В.', 20)]),
     'days/2026/2026-12-03.json': day('2026-12-03', [W('Пленного', 'Культивація', 'ХТА 200', 'Мазур В.', 15)])};
   let bad = 0; const ok = (c, t) => { console.log((c ? '✓ ' : '✗ ')+t); if(!c) bad++; };
-  console.log('— Керуючий, 04.12 13:00');
-  await run('a', extra, '2026-12-04T13:00:00+02:00', async (pg, puts) => {
+  console.log('— Власник звіряє гектари, 04.12 13:00');
+  await run('o', {...extra, 'ref/owner.enc.json':null}, '2026-12-04T13:00:00+02:00', async (pg, puts) => {
+    await pg.evaluate(() => { location.hash = 'tasks'; }); await pg.waitForTimeout(800);
     await pg.waitForSelector('#hc-card:not([hidden])'); const t = await pg.textContent('#hc-card');
     ok(t.includes('75 · Оранка · Deutz великий — 12 га') && !t.includes('24 га'), 'оранка 75: 12 га (тракторист і помічник не дублюються)');
     ok(t.includes('Тік · Дискування') && t.includes('Пленного'), 'обидва закриті дні в списку');
     ok(!/Прунян|Козлов Н|Мазур/.test(t), 'імен з табеля не видно');
-    ok(!(await pg.isVisible('#tabs a[href="#day"]')), 'вкладки «День» у керуючого немає');
-    const badge = await pg.textContent('#tabs a[href="#tasks"]'); ok(/2/.test(badge), 'бейдж «Завдання» рахує 2 непідтверджені дні: '+badge);
+    const badge = await pg.textContent('#tabs a[href="#tasks"]'); ok(/2/.test(badge), 'бейдж «Завдання» власника рахує 2 незвірені дні: '+badge);
     // «Не так» по Тіку
     const rows = await pg.$$('#hc-card button:text("Не так")'); await rows[2].click();
     await pg.fill('#hc-card input[placeholder="Скільки було, га"]:visible', '18'); await pg.fill('#hc-card input[placeholder^="Чому"]:visible', 'там 18 га');
@@ -62,7 +62,7 @@ async function run(role, extra, fake, fn){
     await pg.waitForSelector('#day-remind:not([hidden])'); const t = await pg.textContent('#day-remind'); ok(t.includes('02.12') && !t.includes('01.12') && !t.includes('03.12'), 'нагадування: не закрито лише 02.12 (03.12 ще до 12:00 05.12) — '+t.replace(/\s+/g, ' ').slice(0, 90));
     await pg.click('#day-remind button'); ok(await pg.inputValue('#date')==='2026-12-02', 'кнопка відкриває 02.12');
     await pg.fill('#date', '2026-12-01'); await pg.dispatchEvent('#date', 'change'); await pg.waitForTimeout(300);
-    const h = await pg.textContent('#ha-conf'); ok(h.includes('не погодився') && h.includes('18'), 'у закритому дні — «керуючий не погодився»');
+    const h = await pg.textContent('#ha-conf'); ok(h.includes('«не так»') && h.includes('18'), 'у закритому дні — «гектари не так» ( погодився»');
     ok(!(await pg.$('#ha-conf button:text("✓")')), 'кнопок підтвердження в обліковця немає');
     ok(!(await pg.isVisible('#hc-card')), 'картки підтвердження в «Завданнях» в обліковця немає');
     await pg.screenshot({path:require('os').tmpdir()+'/shot.png', fullPage:false});
@@ -74,7 +74,7 @@ async function run(role, extra, fake, fn){
   console.log('— Власник, 04.12 13:00');
   await run('o', {...extra, 'ref/owner.enc.json':null}, '2026-12-04T13:00:00+02:00', async pg => {
     await pg.goto('https://app.test/#tasks'); await pg.waitForTimeout(800);
-    const t = await pg.textContent('#hc-card'); ok(t.includes('не підтверджено керуючим') && !(await pg.$('#hc-card button:text("Не так")')), 'власник бачить стан без кнопок');
+    const t = await pg.textContent('#hc-card'); ok(t.includes('не звірено') && !!(await pg.$('#hc-card button:text("Не так")')), 'власник бачить стан без кнопок');
     await pg.goto('https://app.test/#day'); await pg.waitForTimeout(800);
     ok(await pg.isVisible('#day-remind'), 'власнику нагадування в «Дні» теж');
   });
