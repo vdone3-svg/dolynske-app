@@ -35,7 +35,7 @@ async function run(role, extra, fake, fn){
   await br.close(); return errs;
 }
 (async () => {
-  const extra = {'days/2026/2026-12-01.json': day('2026-12-01', [W('75', 'Оранка', 'Deutz великий', 'Прунян В.', 12), W('75', 'Оранка', 'Deutz великий', 'Зінько В.', 12), W('Тік', 'Дискування', 'ХТА 200', 'Мазур В.', 20)]),
+  const extra = {'days/2026/2026-12-01.json': day('2026-12-01', [W('75', 'Оранка', 'Deutz великий', 'Прунян В.', 12), W('75', 'Оранка', 'Deutz великий', 'Козлов Н.', 12), W('Тік', 'Дискування', 'ХТА 200', 'Мазур В.', 20)]),
     'days/2026/2026-12-03.json': day('2026-12-03', [W('Пленного', 'Культивація', 'ХТА 200', 'Мазур В.', 15)])};
   let bad = 0; const ok = (c, t) => { console.log((c ? '✓ ' : '✗ ')+t); if(!c) bad++; };
   console.log('— Керуючий, 04.12 13:00');
@@ -43,7 +43,7 @@ async function run(role, extra, fake, fn){
     await pg.waitForSelector('#hc-card:not([hidden])'); const t = await pg.textContent('#hc-card');
     ok(t.includes('75 · Оранка · Deutz великий — 12 га') && !t.includes('24 га'), 'оранка 75: 12 га (тракторист і помічник не дублюються)');
     ok(t.includes('Тік · Дискування') && t.includes('Пленного'), 'обидва закриті дні в списку');
-    ok(!/Прунян|Зінько|Мазур/.test(t), 'імен з табеля не видно');
+    ok(!/Прунян|Козлов|Мазур/.test(t), 'імен з табеля не видно');
     ok(!(await pg.isVisible('#tabs a[href="#day"]')), 'вкладки «День» у керуючого немає');
     const badge = await pg.textContent('#tabs a[href="#tasks"]'); ok(/2/.test(badge), 'бейдж «Завдання» рахує 2 непідтверджені дні: '+badge);
     // «Не так» по Тіку
