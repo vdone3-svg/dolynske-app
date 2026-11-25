@@ -53,3 +53,20 @@ async function api(r){
   }
 }
 self.addEventListener('message', e => { if(e.data==='clear-api') e.waitUntil(caches.delete(API)); });
+
+// Push-сповіщення (25.11; розсилка — tools/push.py у dolynske-data). Натискання — відкриває потрібну вкладку.
+self.addEventListener('push', e => {
+  let d = {};
+  try{ d = e.data ? e.data.json() : {}; }catch(x){ d = {body: e.data ? e.data.text() : ''}; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Щоденне господарство', {body:d.body || '', tag:d.tag || undefined, data:{url:d.url || ''}, icon:'icon-192.png', badge:'icon-192.png'}));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const go = (e.notification.data || {}).url || '';
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({type:'window', includeUncontrolled:true});
+    const c = all.find(w => w.url.startsWith(self.registration.scope));
+    if(c){ await c.focus(); c.postMessage({go}); return; }
+    await self.clients.openWindow(self.registration.scope + go);
+  })());
+});
