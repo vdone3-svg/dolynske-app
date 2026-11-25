@@ -447,7 +447,8 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
         <div class="tablewrap"><table id="mh-table"></table></div></section>
       <section class="card span6"><h2>Ремонти і ТО</h2>
         <div class="line"><div><label class="note" for="rp-m">Техніка</label><select id="rp-m"></select></div><div><label class="note" for="rp-k">Вид</label><select id="rp-k"><option>ТО</option><option>Ремонт</option><option>Поломка</option><option>Заміна масла</option><option>Заміна фільтрів</option></select></div>
-          <div style="grid-column:1/-1"><label class="note" for="rp-w">Що зроблено, запчастини</label><input id="rp-w"></div><div><label class="note" for="rp-i">Простій, днів</label><input id="rp-i" type="number" min="0"></div><div><label class="note" for="rp-n">Наступне ТО, м-год</label><input id="rp-n" type="number" min="0"></div><button class="btn primary" id="rp-add">Додати</button></div>
+          <div style="grid-column:1/-1"><label class="note" for="rp-w">Що зроблено, запчастини — можна текстом або голосом</label><textarea id="rp-w" rows="3" placeholder="що зламалось, що замінили, які запчастини й скільки"></textarea><div id="rp-voice" style="margin-top:6px"></div></div><div><label class="note" for="rp-i">Простій, днів</label><input id="rp-i" type="number" min="0"></div><div><label class="note" for="rp-n">Наступне ТО, м-год</label><input id="rp-n" type="number" min="0"></div><button class="btn primary" id="rp-add">Додати</button></div>
+        <div id="rp-q"></div>
         <div class="tablewrap"><table id="rp-table"></table></div></section>
 
       <!-- ТО-модуль -->
@@ -1320,7 +1321,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11h';
+const APP_VER = '25.11i';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1987,14 +1988,75 @@ function renderTech(){
   $('#mh-table').replaceChildren(el('thead', {}, el('tr', {}, ['Дата','Техніка','Показник','З попереднього'].map((h,i) => el('th', {class:i<2?'l':''}, h)))),
     el('tbody', {}, mh.length ? mh.map(r => { const prev = mh.find(x => x.m===r.m && x.d.n < r.d.n); return el('tr', {}, el('td', {class:'l'}, dateTxt(r.d.n)), el('td', {class:'l'}, r.m), el('td', {}, nf(r.v, fmt0)), el('td', {}, prev ? '+'+nf(r.v-prev.v, fmt0) : '—')); })
       : el('tr', {}, el('td', {class:'l empty', colspan:'4'}, 'Ще немає показників. Додайте перший — далі мотогодини між замірами рахуються самі.'))));
-  const rp = rowsOf(RAW, 'Ремонти і ТО').map(r => ({d:dt(r['Дата']), m:str(r['Техніка']), k:str(r['Вид']), w:str(r['Що зроблено']), i:num(r['Простій, днів']), n:num(r['Наступне ТО при м-год'])})).filter(r => r.d).sort((a,b) => b.d.n-a.d.n);
+  const rp = rowsOf(RAW, 'Ремонти і ТО').map(r => ({d:dt(r['Дата']), m:str(r['Техніка']), k:str(r['Вид']), w:str(r['Що зроблено']), parts:str(r['Запчастини']), i:num(r['Простій, днів']), n:num(r['Наступне ТО при м-год'])})).filter(r => r.d).sort((a,b) => b.d.n-a.d.n);
   $('#rp-table').replaceChildren(el('thead', {}, el('tr', {}, ['Дата','Техніка','Вид','Що зроблено','Простій, дн.','Наст. ТО'].map((h,i) => el('th', {class:i<4?'l':''}, h)))),
-    el('tbody', {}, rp.length ? rp.map(r => el('tr', {}, el('td', {class:'l'}, dateTxt(r.d.n)), el('td', {class:'l'}, r.m), el('td', {class:'l'}, r.k), el('td', {class:'l', style:'white-space:normal'}, r.w), el('td', {}, nf(r.i, fmt0)), el('td', {}, r.n ? nf(r.n, fmt0) : '—')))
+    el('tbody', {}, rp.length ? rp.map(r => el('tr', {}, el('td', {class:'l'}, dateTxt(r.d.n)), el('td', {class:'l'}, r.m), el('td', {class:'l'}, r.k), el('td', {class:'l', style:'white-space:pre-line'}, r.w, r.parts ? el('div', {class:'note'}, '🔩 '+r.parts) : ''), el('td', {}, nf(r.i, fmt0)), el('td', {}, r.n ? nf(r.n, fmt0) : '—')))
       : el('tr', {}, el('td', {class:'l empty', colspan:'6'}, 'Ще немає записів.'))));
+  renderRpVoice(); renderRpQuestions();
   renderTO();
 }
 $('#mh-add').addEventListener('click', () => { const v = +$('#mh-v').value; if(!v){ toast('Вкажіть показник лічильника'); return; } saveEvent({'Мотогодини':[{'Дата':toSerial($('#mh-d').value||DAY), 'Техніка':$('#mh-m').value, 'Показник лічильника, м-год':v}]}, 'мотогодини').then(() => { $('#mh-v').value = ''; renderTech(); toast('Показник збережено'); }); });
-$('#rp-add').addEventListener('click', () => { if(!$('#rp-w').value){ toast('Опишіть, що зроблено'); return; } saveEvent({'Ремонти і ТО':[{'Дата':toSerial(DAY), 'Техніка':$('#rp-m').value, 'Вид':$('#rp-k').value, 'Що зроблено':$('#rp-w').value, 'Простій, днів':+$('#rp-i').value||null, 'Наступне ТО при м-год':+$('#rp-n').value||null}]}, 'ремонт').then(() => { ['#rp-w','#rp-i','#rp-n'].forEach(s => $(s).value = ''); renderTech(); toast('Запис збережено'); }); });
+$('#rp-add').addEventListener('click', rpSave);
+// ======= РЕМОНТИ І ТО ГОЛОСОМ (власник, 25.11): запис голосу як в оглядах → events/ з voice[]; розшифровка й розбір Claude —
+// workflow «Обробка оглядів» (tools/transcribe.py, tools/notes_ai.py): підсумок у «Що зроблено», запчастини, до 3 питань тестом, зауваження.
+const RPV = {mr:null, chunks:[], t0:0, blob:null, url:null, mime:'', dur:0, timer:null};
+function renderRpVoice(){
+  const box = $('#rp-voice'); if(!box) return;
+  if(RPV.mr) box.replaceChildren(el('button', {class:'btn small', style:'background:var(--bad);color:#fff', type:'button', onclick:rpRec}, '■ Стоп ', el('b', {id:'rp-t'}, mmss(Math.round((Date.now()-RPV.t0)/1000)))));
+  else if(RPV.blob) box.replaceChildren(el('div', {style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'}, el('span', {}, '🎙 '+mmss(RPV.dur)), el('audio', {controls:'', preload:'metadata', src:RPV.url}),
+    el('button', {class:'btn small ghost', type:'button', 'aria-label':'видалити запис', onclick:() => { RPV.blob = null; renderRpVoice(); }}, '✕')),
+    el('div', {class:'note'}, 'Після «Додати» запис розшифрується і Claude складе короткий опис, список запчастин і, якщо треба, поставить питання (2–5 хв).'));
+  else box.replaceChildren(el('button', {class:'btn small', type:'button', onclick:rpRec}, '🎙 Надиктувати'));
+}
+async function rpRec(){
+  if(RPV.mr){ RPV.mr.stop(); return; }
+  if(!window.MediaRecorder || !navigator.mediaDevices){ toast('Цей браузер не записує звук'); return; }
+  let st; try{ st = await navigator.mediaDevices.getUserMedia({audio:true}); }catch(e){ toast('Дозвольте мікрофон для цього сайту'); return; }
+  const mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+  RPV.mr = new MediaRecorder(st, mime ? {mimeType:mime} : {}); RPV.chunks = [];
+  RPV.mr.ondataavailable = e => { if(e.data && e.data.size) RPV.chunks.push(e.data); };
+  RPV.mr.onstop = () => { st.getTracks().forEach(t => t.stop()); clearInterval(RPV.timer); RPV.mime = RPV.mr.mimeType || mime || 'audio/webm';
+    RPV.blob = new Blob(RPV.chunks, {type:RPV.mime}); RPV.url = URL.createObjectURL(RPV.blob); RPV.dur = Math.round((Date.now()-RPV.t0)/1000); RPV.mr = null; renderRpVoice(); };
+  RPV.t0 = Date.now(); RPV.mr.start(1000); RPV.timer = setInterval(() => { const t = $('#rp-t'); if(t) t.textContent = mmss(Math.round((Date.now()-RPV.t0)/1000)); }, 500); renderRpVoice();
+}
+async function rpSave(){
+  const txt = $('#rp-w').value.trim();
+  if(RPV.mr){ toast('Спершу зупиніть запис'); return; }
+  if(!txt && !RPV.blob){ toast('Опишіть, що зроблено — текстом або голосом'); return; }
+  const id = 'rp-'+new Date().toISOString().replace(/[:.]/g, '-')+'-'+Math.random().toString(36).slice(2, 5), extra = {id, typed:txt};
+  if(RPV.blob){ const path = 'media/'+DAY.slice(0, 4)+'/'+id+'.'+audExt(RPV.mime);
+    try{ await putBin(path, RPV.blob, 'Ремонт голосом: '+$('#rp-m').value); }catch(e){ toast('Немає зв’язку — голос не відправлено. Спробуйте, коли буде інтернет (текст можна зберегти окремо).'); return; }
+    extra.voice = [{path, mime:RPV.mime, dur:RPV.dur, bytes:RPV.blob.size, status:'pending', text:null}]; }
+  else if(txt.length > 150) extra.ai_req = true;   // довгий текст — теж на розбір Claude
+  const row = {'Дата':toSerial(DAY), 'Техніка':$('#rp-m').value, 'Вид':$('#rp-k').value, 'Що зроблено':txt || '🎙 голосом — розшифровується (2–5 хв)', 'Простій, днів':+$('#rp-i').value||null, 'Наступне ТО при м-год':+$('#rp-n').value||null, '_id':id};
+  await saveEvent({'Ремонти і ТО':[row]}, 'ремонт', extra);
+  ['#rp-w','#rp-i','#rp-n'].forEach(q => $(q).value = ''); RPV.blob = null; renderTech();
+  toast(extra.voice || extra.ai_req ? 'Запис збережено — Claude розбере його за кілька хвилин' : 'Запис збережено');
+}
+// питання Claude по записах ремонту — автору й власнику
+function rpEvents(){ return Object.entries(DOCS || {}).filter(([p, d]) => p.startsWith('events/') && d && d.what==='ремонт' && d.ai && !d.ai.error); }
+function renderRpQuestions(){
+  const box = $('#rp-q'); if(!box) return;
+  const mine = d => ROLE==='o' || d.by===whoName();
+  const L = rpEvents().filter(([p, d]) => mine(d) && ((d.ai.questions || []).some(q => !(d.answers || {})[q.id]) || ((d.ai.remarks || []).length && !d.remarks_seen)));
+  if(!L.length){ box.replaceChildren(); return; }
+  box.replaceChildren(el('div', {class:'card', style:'border:2px solid var(--accent);margin:8px 0;display:grid;gap:10px'}, el('b', {}, '🤖 Claude уточнює записи ремонтів'),
+    ...L.map(([path, d]) => { const r = ((d.rows || {})['Ремонти і ТО'] || [{}])[0];
+      return el('div', {style:'border-top:1px solid var(--line);padding-top:8px;display:grid;gap:6px'},
+        el('div', {class:'note'}, dateTxt(r['Дата'])+' · '+(r['Техніка'] || '')+' · '+(r['Вид'] || '')+' — '+(d.ai.summary || '')),
+        ...(d.ai.questions || []).filter(q => !(d.answers || {})[q.id]).map(q => { const other = el('input', {placeholder:'інше — напишіть', style:'flex:1;min-width:140px'});
+          return el('div', {style:'display:grid;gap:4px'}, el('div', {}, '❓ '+q.q), el('div', {class:'chips', style:'display:flex;gap:6px;flex-wrap:wrap'},
+            ...q.options.map(o => el('button', {class:'chip', type:'button', onclick:ev => { ev.target.disabled = true; rpAnswer(path, q, o); }}, o)), other,
+            el('button', {class:'btn small', type:'button', onclick:() => { if(other.value.trim()) rpAnswer(path, q, other.value.trim()); }}, 'OK'))); }),
+        ...(d.ai.remarks || []).map(m => el('div', {class:'note', style:'color:var(--warn)'}, '💡 '+m)),
+        (d.ai.remarks || []).length && !(d.ai.questions || []).some(q => !(d.answers || {})[q.id]) ? el('button', {class:'btn small ghost', type:'button', onclick:() => rpAnswer(path, null, null)}, 'Зрозуміло') : ''); })));
+}
+async function rpAnswer(path, q, a){
+  const d = JSON.parse(JSON.stringify(DOCS[path])); d.answers = d.answers || {};
+  if(q){ d.answers[q.id] = {a, by:whoName(), at:isoNow()}; const r = ((d.rows || {})['Ремонти і ТО'] || [])[0]; if(r) r['Що зроблено'] = (r['Що зроблено'] || '')+'\n• '+q.q+' — '+a; }
+  if(!(d.ai.questions || []).some(x => !d.answers[x.id])) d.remarks_seen = true;
+  const ok = await saveDoc(path, d, 'Ремонт: відповідь на питання Claude ('+whoName()+')'); toast(ok ? 'Збережено' : 'Немає зв’язку — збережено на пристрої'); renderTech();
+}
 
 // ---------- ТО-модуль (Графік технічного обслуговування)
 let TO_DATA = null; // ref/machinery.json — завантажується lazy
