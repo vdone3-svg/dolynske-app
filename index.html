@@ -942,6 +942,7 @@ async function loadAgro(force){
     AR.ext = normExt(JSON.parse(m[1])); AR.at = Date.now(); AR.err = '';
     const b = [...t.matchAll(/name:"([^"]+)",\s*us:[\d.]+,\s*obl:([\d.]+),\s*ua:([\d.]+)/g)].map(x => ({c:x[1], obl:+x[2], ua:+x[3]})); if(b.length) AR.bench = b;
   }catch(e){ AR.err = e.message || 'немає зв\'язку'; }
+  try{ AR.lat = await getJSON('ref/bench.json'); }catch(e){}   // Latifundist щодня (tools/bench.py)
 }
 async function loadWx(){
   if(AR.wx || AR.wxErr) return;
@@ -1073,9 +1074,12 @@ function drawAgro(){
     el('div', {class:'ar-kpis', style:'margin-top:0'}, MODEL.grain.filter(g => Math.abs(g.bal) > 1).map(g => { const ek = X && X.harvest && X.harvest.stock ? ({'Пшениця':'wheat_kg','Соняшник':'sunflower_kg','Кукурудза':'corn_kg','Відходи соняшника':'waste_sun_kg'})[g.p] : null;
       return el('div', {class:'kpi'}, g.p, el('b', {}, nf(g.bal/1000, 1)+' т'), ek ? cmpEl(g.bal, +X.harvest.stock[ek]||0, 'kg') : ''); })));
   // --- бенчмарк. Область і Україна — власна таблиця з датою й джерелом (агрозвіт тримає цифри, вшиті вручну; 25.11 оновлено з Мінагро)
-  const BENCH = {2026:{at:'17.11.2026', src:'Мінагро: область — підсумок жнив на 27.10, Україна — на 17.11 (кукурудза ще збирається, 56 % площ)',
+  const BENCH = {2026:{at:'17.11.2026', src:'Мінагро: область — підсумок жнив на 27.10, Україна — на 17.11',
     rows:[{c:'Соняшник', obl:18.1, ua:22.2}, {c:'Кукурудза', obl:38.7, ua:63.4}, {c:'Пшениця', obl:45.0, ua:51.3}]}};
-  const BY = BENCH[y], bench = BY ? BY.rows : (AR.bench || []);
+  const LY = AR.lat && AR.lat.years && AR.lat.years[y];   // щоденно з Latifundist (рішення власника 25.11)
+  const BY = LY && LY.obl ? {src:'Latifundist «Врожай онлайн», станом на '+(LY.asof ? LY.asof.split('-').reverse().slice(0, 2).join('.') : '?')+' (оновлюється щодня; Україна — середнє зважене по областях; у дужках — % обмолоту області)',
+      rows:['Соняшник', 'Кукурудза', 'Пшениця'].filter(c => LY.obl[c] || LY.ua[c]).map(c => ({c, obl:(LY.obl[c] || {}).y, ua:(LY.ua[c] || {}).y, pct:(LY.obl[c] || {}).p}))} : BENCH[y];
+  const bench = BY ? BY.rows : (AR.bench || []);
   const us = c => { const v = MODEL.fields.filter(f => f.y===y && f.c===c); const ha = d3.sum(v, f => f.cut), tt = d3.sum(v, f => f.t); return ha ? tt*10/ha : null; };
   const badge = (u, r) => { if(u==null || !r) return ''; const dd = (u-r)/r*100; return el('span', {class:'cmp '+(dd >= 0 ? 'ok' : 'bad'), style:'margin-left:4px'}, (dd > 0 ? '+' : '')+nf(dd, 0)+'%'); };
   const lastCut = c => { const v = MODEL.harv.filter(h => h.y===y && h.c===c && (h.kg > 0 || h.ha > 0)); return v.length ? d3.max(v, h => h.d.n) : null; };
@@ -1084,7 +1088,7 @@ function drawAgro(){
     bench.length ? el('table', {}, el('thead', {}, el('tr', {}, ['Культура','Ми','Кіровоградська обл.','Україна'].map((x, i) => el('th', {class:i ? '' : 'l'}, x)))),
       el('tbody', {}, bench.map(b => { const u = us(b.c), lc = lastCut(b.c), lf = left(b.c);
         return el('tr', {}, el('td', {class:'l'}, b.c, el('div', {class:'note'}, (lc ? 'зібрано по '+ddmm(dt(lc)) : 'не збирали')+(lf > 1 ? ' · не скошено '+nf(lf, 0)+' га' : ''))),
-          el('td', {}, el('b', {}, nf(u, 1))), el('td', {}, nf(b.obl, 1), badge(u, b.obl)), el('td', {}, nf(b.ua, 1), badge(u, b.ua))); })))
+          el('td', {}, el('b', {}, nf(u, 1))), el('td', {}, nf(b.obl, 1), b.pct!=null && b.pct < 100 ? el('span', {class:'note'}, ' ('+nf(b.pct, 0)+'%)') : '', badge(u, b.obl)), el('td', {}, nf(b.ua, 1), badge(u, b.ua))); })))
       : el('p', {class:'note'}, 'Для урожаю '+y+' порівняльних даних ще немає.'),
     el('div', {class:'note', style:'margin-top:6px'}, BY ? 'Область і Україна — '+BY.src+'. «Ми» — наші дані збирання (зважено за скошеною площею); змінюються лише з новими записами косіння.'
       : 'Область і Україна — з агрозвіту. «Ми» — з наших даних збирання.'));
@@ -1344,7 +1348,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11s';
+const APP_VER = '25.11t';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
