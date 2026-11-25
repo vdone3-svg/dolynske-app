@@ -447,7 +447,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
         <div class="tablewrap"><table id="mh-table"></table></div></section>
       <section class="card span6"><h2>Ремонти і ТО</h2>
         <div class="line"><div><label class="note" for="rp-m">Техніка</label><select id="rp-m"></select></div><div><label class="note" for="rp-k">Вид</label><select id="rp-k"><option>ТО</option><option>Ремонт</option><option>Поломка</option><option>Заміна масла</option><option>Заміна фільтрів</option></select></div>
-          <div style="grid-column:1/-1"><label class="note" for="rp-w">Що зроблено, запчастини — можна текстом або голосом</label><textarea id="rp-w" rows="3" placeholder="що зламалось, що замінили, які запчастини й скільки"></textarea><div id="rp-voice" style="margin-top:6px"></div></div><div><label class="note" for="rp-i">Простій, днів</label><input id="rp-i" type="number" min="0"></div><div><label class="note" for="rp-n">Наступне ТО, м-год</label><input id="rp-n" type="number" min="0"></div><button class="btn primary" id="rp-add">Додати</button></div>
+          <div style="grid-column:1/-1"><label class="note" for="rp-w">Що зроблено, запчастини — можна текстом або голосом</label><textarea id="rp-w" rows="3" style="display:block;width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;margin-top:4px" placeholder="що зламалось, що замінили, які запчастини й скільки"></textarea><div id="rp-voice" style="margin-top:6px"></div></div><div><label class="note" for="rp-i">Простій, днів</label><input id="rp-i" type="number" min="0"></div><div><label class="note" for="rp-n">Наступне ТО, м-год</label><input id="rp-n" type="number" min="0"></div><button class="btn primary" id="rp-add">Додати</button></div>
         <div id="rp-q"></div>
         <div class="tablewrap"><table id="rp-table"></table></div></section>
 
@@ -1321,7 +1321,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11i';
+const APP_VER = '25.11j';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
