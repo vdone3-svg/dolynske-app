@@ -493,7 +493,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
     <div class="grid">
       <section class="card span8"><h2>Матеріали</h2><div class="toolbar"><label class="note" for="st-cat">Категорія</label><select id="st-cat"><option>ЗЗР</option><option>Добриво</option><option>Насіння</option><option>Масла</option><option>ПММ</option></select></div>
         <div class="tablewrap"><table id="st-table"></table></div></section>
-      <section class="card span4"><h2>Прихід за накладною</h2><div class="note">Великі сезонні накладні можна надіслати Claude — він внесе їх сюди сам.</div>
+      <section class="card span4" id="inv-card"><h2>Прихід за накладною</h2><div class="note">Великі сезонні накладні можна надіслати Claude — він внесе їх сюди сам.</div>
         <div class="line"><div><label class="note" for="inv-type">Тип</label><select id="inv-type"><option>Прихід</option><option>Початковий залишок</option><option>Переміщення з Топило</option><option>Переміщення на Топило</option><option>Списання</option></select></div>
           <div><label class="note" for="inv-n">№ накладної</label><input id="inv-n"></div><div><label class="note" for="inv-s">Постачальник</label><input id="inv-s"></div></div>
         <div class="list" id="inv-lines"></div><div style="display:flex;gap:6px"><button class="btn small" id="inv-addline">+ Рядок</button><button class="btn primary" id="inv-save">Провести</button></div></section>
@@ -1327,7 +1327,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11n';
+const APP_VER = '25.11p';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -5407,7 +5407,7 @@ function drawScoutPins(){
 const OWN_PATH = 'ref/owner.enc.json', OWN_CHECK = 'dolynske-owner-v1';
 // хто бачить вкладку: o — усе; k — облік; a — поля й агрономія. Гроші — лише шифровані (власникам).
 const TAB_ROLES = {report:'o', tasks:'oa', day:'ok', plan:'oka', map:'oka', scout:'oa', agro:'o', history:'oka', overview:'o', fields:'o', inputs:'o',
-  fuel:'ok', tech:'oka', batt:'ok', stock:'o', journal:'oa', settings:'o'};
+  fuel:'ok', tech:'oka', batt:'ok', stock:'ok', journal:'oa', settings:'o'};
 const ROLE_HOME = {o:'report', k:'day', a:'tasks'};
 const whoName = () => REAL_ROLE==='o' && ROLE!=='o' ? ownerName()+' (перегляд: '+ROLE_NAMES[ROLE]+')' : ROLE==='o' ? 'Власник ('+ownerName()+')' : (STAFF[ROLE] || LS.get('dl_name') || ROLE_NAMES[ROLE] || ROLE);
 let OWN_KEY = null;
@@ -5466,7 +5466,8 @@ function ownerPreviewUi(){
 function applyRoleUi(){
   $('#role-name').textContent = ROLE==='o' ? 'Власник ('+ownerName()+')' : STAFF[ROLE];
   $('#btn-xlsx').hidden = ROLE!=='o';
-  $('#appl').hidden = ROLE!=='o';   // «Інше внесення» Каріні не потрібне — замість нього «Різне» (власник, 25.11)
+  $('#appl').hidden = ROLE!=='o';
+  $('#inv-card').hidden = ROLE!=='o';   // Склад Каріні — обов'язково бачити залишки (власник, 25.11); прихід за накладною вносить власник   // «Інше внесення» Каріні не потрібне — замість нього «Різне» (власник, 25.11)
   $('#tech-year').hidden = ROLE!=='o';
   $('#years').hidden = ROLE!=='o';   // «Урожай 2025/26/27» — лише власникам; Каріні й Вові — поточний рік (24.11)   // пальне й роботи техніки за рік — лише власникам (24.11, Каріні не потрібно; Вова пального не бачить)   // вивантаження всіх журналів — лише власникам
   ownerPreviewUi();
