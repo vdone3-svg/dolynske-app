@@ -432,7 +432,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
 
   <!-- ПАЛЬНЕ -->
   <main class="pane" id="pane-fuel">
-    <section class="card"><div class="sechead"><div><h2>Пальне — звична таблиця</h2><div class="note">Рядок — день, колонки — техніка. Те, що бригадир вносить у табелі дня, з'являється тут саме.</div></div>
+    <section class="card"><div class="sechead"><div><h2>Пальне — звична таблиця</h2><div class="note">Рядок — день, колонки — техніка. Те, що обліковець вносить у табелі дня, з'являється тут саме.</div></div>
       <div class="toolbar"><label class="note" for="fuel-month">Місяць</label><select id="fuel-month"></select></div></div>
       <div class="kpis" id="fuel-kpis"></div>
       <div class="tablewrap"><table id="fuel-table" class="dense"></table></div></section>
@@ -1102,11 +1102,45 @@ function renderHistory(){
   body.append(el('div', {class:'chips', style:'margin-top:10px'}, HGROUPS.map(([g, t]) => el('button', {class:'chip', 'aria-pressed':String(g===HG), onclick:() => { HG = g; renderHistory(); }}, t))));
   if(!years.length){ body.append(el('p', {class:'note'}, 'По цьому полю ще немає записів.')); return; }
   (HY==='all' ? years : [HY]).forEach(y => {
-    body.append(el('div', {class:'hhead'}, el('h3', {}, 'Сезон — урожай '+y)));
+    const sc = seasonState(y);
+    body.append(el('div', {class:'hhead'}, el('h3', {}, 'Сезон — урожай '+y), sc ? el('span', {class:'pill', style:'background:'+sc.bg+';color:'+sc.fg}, sc.badge) : ''));
     M.fields.filter(p => p.f===HF && p.y===y).forEach(p => body.append(seasonCard(p)));
     const ss = fScouts.filter(d => d.season===y); if(ss.length) body.append(scoutSummary(ss));
     body.append(timeline(y));
+    if(sc && (!HG || HG==='Збирання')) body.append(seasonClose(sc));
   });
+}
+// Підсумок сезону поля (власник, 25.11): скошено ≥ 95 % площі — «сезон завершено», цикл переходить під наступний урожай.
+// Рахуємо з даних (Косіння/Урожай + роботи «Збирання»), без ручного підрахунку проходів комбайна.
+const SEASON_DONE = .95;
+function seasonState(y){
+  const M = MODEL, ps = M.fields.filter(p => p.f===HF && p.y===y); if(!ps.length) return null;
+  const ha = d3.sum(ps, p => p.ha || 0), cut = d3.sum(ps, p => p.cut || 0), t = d3.sum(ps, p => p.t || 0), pct = ha ? cut/ha : 0;
+  const hn = [...M.harv.filter(h => h.f===HF && h.y===y && (h.ha || h.kg)).map(h => h.d.n), ...M.works.filter(w => w.f===HF && w.y===y && w.g==='Збирання').map(w => w.d.n)];
+  const first = hn.length ? d3.min(hn) : null, last = hn.length ? d3.max(hn) : null;
+  const nxt = [...M.works.filter(w => w.f===HF && w.y===y+1), ...M.appl.filter(a => a.f===HF && a.y===y+1)].sort((a, b) => a.d.n-b.d.n)[0];
+  const cur = (() => { const d = new Date(); return d.getFullYear()+(d.getMonth()>=7 ? 1 : 0); })();
+  const st = pct >= SEASON_DONE ? 'done' : cut > 0 ? 'harvest' : y < cur ? 'nodata' : 'grow';
+  const look = {done:['✅ Сезон завершено', '#e3f1e6', '#1d5a2e'], harvest:['⏳ Збирання триває', '#fbefd6', '#7a4e07'], nodata:['Збирання не записано', '#eceae4', '#55625b'], grow:['🌱 Сезон триває', '#e6eef6', '#1f4a73']}[st];
+  return {y, ps, ha, cut, t, pct, first, last, nxt, st, badge:look[0], bg:look[1], fg:look[2]};
+}
+function seasonClose(sc){
+  const L = [], pc = v => nf(v*100, 0)+'%', d = n => ddmm(dt(n));
+  const crops = sc.ps.map(p => { const avg = (MODEL.cropSum(sc.y, p.c) || {}).ycut;
+    return p.c+(p.ycut ? ': '+nf(p.ycut, 1)+' ц/га'+(avg ? ' — '+(p.ycut >= avg ? 'вище' : 'нижче')+' середнього по господарству ('+nf(avg, 1)+' ц/га) на '+nf(Math.abs(p.ycut/avg-1)*100, 0)+'%' : '') : ''); });
+  if(sc.st==='done'){
+    L.push(el('b', {}, 'Поле «'+HF+'»: сезон під урожай '+sc.y+' завершено — урожай зібрано.'));
+    L.push(el('div', {}, 'Скошено '+nf(sc.cut, 1)+' га з '+nf(sc.ha, 1)+' ('+pc(Math.min(sc.pct, 1))+')'+(sc.first ? ', косіння '+(sc.first===sc.last ? d(sc.last) : d(sc.first)+' – '+d(sc.last)) : '')+(sc.t ? '. Вал на склад '+nf(sc.t, 1)+' т.' : '.')));
+    crops.forEach(c => L.push(el('div', {}, c)));
+    L.push(el('div', {}, sc.nxt ? 'Поле вже в новому циклі під урожай '+(sc.y+1)+': '+sc.nxt.op.toLowerCase()+' '+d(sc.nxt.d.n)+'.' : 'Далі — новий цикл під урожай '+(sc.y+1)+'. Записи цього сезону більше не змінюються.'));
+  } else if(sc.st==='harvest'){
+    L.push(el('b', {}, 'Збирання триває: скошено '+nf(sc.cut, 1)+' з '+nf(sc.ha, 1)+' га ('+pc(sc.pct)+'), лишилось '+nf(Math.max(sc.ha-sc.cut, 0), 1)+' га.'));
+    if(sc.last) L.push(el('div', {}, 'Останнє косіння '+d(sc.last)+(sc.t ? '; на склад уже '+nf(sc.t, 1)+' т' : '')+'.'));
+    L.push(el('div', {class:'note'}, 'Сезон закриється сам, коли скошено буде щонайменше '+pc(SEASON_DONE)+' площі.'));
+  } else if(sc.st==='nodata'){
+    L.push(el('b', {}, 'Збирання по полю за урожай '+sc.y+' не записано.'), el('div', {class:'note'}, 'Якщо поле зібране — бракує записів косіння; сезон не можна вважати закритим.'));
+  } else L.push(el('b', {}, 'Сезон під урожай '+sc.y+' триває — збирання ще попереду.'));
+  return el('div', {class:'card', style:'margin:10px 0;border-left:4px solid '+sc.fg+';background:'+sc.bg+';color:'+sc.fg+';display:grid;gap:4px'}, el('div', {class:'note', style:'color:inherit;font-weight:600'}, 'Висновок по сезону'), L);
 }
 function seasonCard(p){
   const seeds = d3.rollups(p.appl.filter(a => a.cat==='Насіння'), v => ({ha:d3.sum(v, a => a.ha), q:d3.sum(v, a => a.q), u:v[0].u, d0:d3.min(v, a => a.d.n), d1:d3.max(v, a => a.d.n)}), a => a.mat);
@@ -1277,7 +1311,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '24.11j Підписи Карина Козлова / Володимир Зінько; Вові — нові огляди й «Хто що робив»';
+const APP_VER = '25.11a';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -1512,7 +1546,7 @@ function rowExtra(r){
         el('div', {}, el('label', {class:'note'}, 'Повернуто'), el('input', {type:'number', min:'0', step:'any', inputmode:'decimal', value:x[3] ?? '', placeholder:'вранці', on:{change: ev => { x[3] = ev.target.value; renderDay(); }}})),
         zzrCalc(x, ha, u, off, mm, crop),
         btns(r.items, i, () => ['', '', '', '']))); });
-    if(isOpenShift(r)) parts.push(el('div', {class:'calc', style:'grid-column:1/-1;color:var(--accent)'}, '🌙 Нічна зміна: день можна закривати. Повернення і гектари бригадир внесе вранці в блоці «Нічні зміни обприскування».'));
+    if(isOpenShift(r)) parts.push(el('div', {class:'calc', style:'grid-column:1/-1;color:var(--accent)'}, '🌙 Нічна зміна: день можна закривати. Повернення і гектари обліковець внесе вранці в блоці «Нічні зміни обприскування».'));
   }
   if(k==='harv'){ const hc = crop || (r.f ? harvAutoCrop(r.f, y) : '');
     const hd = r.f && hc ? harvDone(r.f, hc, y) : null, todayHa = r.f && hc ? d3.sum(DS.rows.filter(o => o.st==='працює' && o.f===r.f && rowKind(o)==='harv' && (rowCrop(o)||hc)===hc), o => +o.q||0) : ha;
@@ -4798,7 +4832,7 @@ async function locateScout(){
   SC.gpsMsg = 'Визначаю місце…'; SC.gpsState = 'wait'; renderScForm();
   try{ const g = posObj(await bestPos()); if(!SC) return; SC.gps = g; SC.gpsState = 'ok'; GPS_OK = true; renderGpsPill(); const r = fieldOfPoint(g);
     if(r){ SC.gps.auto = r.field; SC.gps.inside = r.inside; SC.gps.m = r.m;
-      if(r.inside || r.m <= 150){ if(!SC.field || SC.fieldAuto){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); } }
+      if(r.inside || r.m <= 150 || GPS_STRICT()){ if(!SC.field || SC.fieldAuto){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); } }
       SC.gpsMsg = r.inside ? 'Ви на полі «'+r.field+'» (±'+g.acc+' м)' : 'Поза контурами: найближче «'+r.field+'», '+r.m+' м від межі (±'+g.acc+' м)'+(r.m > 150 ? ' — виберіть поле' : ' — перевірте поле'); }
     else SC.gpsMsg = 'Координати є (±'+g.acc+' м), контури полів не завантажились — виберіть поле';
   }catch(e){ if(!SC) return; SC.gpsState = e.code===1 || e.code===9 ? 'off' : 'weak'; SC.gpsMsg = e.message; GPS_OK = false; renderGpsPill(); }
@@ -4811,6 +4845,7 @@ async function addPhotos(files, fromCamera, tag){
     try{
       const ex = await exifGps(file); let g = ex, src = ex ? 'exif' : null;
       if(!g && (fromCamera || Date.now() - file.lastModified < 10*60e3)){ try{ g = posObj(await bestPos(6000, 25)); src = 'phone'; }catch(e){} }
+      if(!g && GPS_STRICT() && SC.gps){ g = {lat:SC.gps.lat, lon:SC.gps.lon, acc:SC.gps.acc}; src = 'scout'; }
       const {blob, w, h} = await shrink(file);
       Object.assign(ph, {blob, w, h, bytes:blob.size, url:URL.createObjectURL(blob), lat:g ? g.lat : null, lon:g ? g.lon : null, acc:g ? g.acc : null, src});
       const r = g && fieldOfPoint(g); ph.field = r ? r.field : null; ph.inside = r ? r.inside : false; ph.m = r ? r.m : null;
@@ -4902,25 +4937,28 @@ function scExtra(){   // «Додатково» — не обов'язково, 
     SC.dc.on ? densityCalcBox() : '',
     SC.dc.on ? densityCalcBox() : ''];
 }
+const GPS_STRICT = () => ROLE==='a';   // керуючому: огляд лише з GPS-точкою, поле — тільки за GPS, без галереї (контроль, власник 25.11)
 function renderScForm(){
   const box = $('#sc-form'); if(!box) return; box.replaceChildren(); if(!SC) return;
-  const noGps = SC.gpsState==='off' || SC.gpsState==='weak', lock = noGps && !SC.field, wait = SC.gpsState==='wait' && !SC.field;
+  const strict = GPS_STRICT(), noGps = SC.gpsState==='off' || SC.gpsState==='weak', lock = noGps && (strict || !SC.field), wait = SC.gpsState==='wait' && (strict || !SC.field);
   const fieldSel = (lbl) => el('select', {'aria-label':lbl, style:'max-width:260px;border:2px solid var(--accent)', on:{change: ev => { SC.field = ev.target.value; SC.fieldAuto = false; SC.pick = false; scFieldChanged(); renderScForm(); }}},
     el('option', {value:''}, lbl), REF.fields.map(f => el('option', f.n===SC.field ? {value:f.n, selected:''} : {value:f.n}, f.n)));
   const gpsBox = !noGps ? '' : el('div', {class:'sc-gpswarn'+(SC.field ? ' ok' : '')},
     el('b', {}, SC.gpsState==='off' ? '⚠ GPS вимкнено — фото не отримають точку на карті' : '⚠ Слабкий сигнал GPS — місце не визначено'),
-    SC.field ? el('div', {}, 'Поле вибрано вручну: «'+SC.field+'». Усі фото й нотатки цього огляду прив’яжуться до нього.')
+    strict ? el('div', {}, 'Огляд зберігається лише з GPS-точкою: увімкніть геолокацію і натисніть кнопку нижче.')
+    : SC.field ? el('div', {}, 'Поле вибрано вручну: «'+SC.field+'». Усі фото й нотатки цього огляду прив’яжуться до нього.')
              : el('div', {}, 'Щоб фото не залишились без поля: виберіть поле або ввімкніть GPS.'),
-    el('div', {class:'toolbar', style:'margin:0'}, SC.field ? '' : fieldSel('Вибрати поле вручну…'),
+    el('div', {class:'toolbar', style:'margin:0'}, SC.field || strict ? '' : fieldSel('Вибрати поле вручну…'),
       el('button', {class:'btn small', onclick:locateScout}, SC.gpsState==='off' ? 'Я ввімкнув GPS — спробувати знову' : 'Спробувати ще раз'),
       SC.gpsState==='off' ? el('button', {class:'btn small ghost', onclick:() => { SC.gpsHelp = !SC.gpsHelp; renderScForm(); }}, 'Як увімкнути GPS') : ''),
     SC.gpsHelp ? gpsHelp() : '',
     SC.gpsState==='weak' ? el('div', {class:'note'}, 'Без інтернету телефон може шукати супутники до 1 хв. Відійдіть від техніки й будівель, зачекайте і натисніть «Спробувати ще раз».') : '');
   const fieldLine = noGps ? '' : el('div', {class:'sc-fieldline'},
     SC.field ? [el('span', {}, '📍 Поле: '), el('b', {}, SC.field), el('span', {class:'note'}, SC.fieldAuto ? ' за GPS'+(SC.gps ? ' (±'+SC.gps.acc+' м)' : '') : ' вибрано вручну'),
-                el('button', {class:'btn small ghost', onclick:() => { SC.pick = !SC.pick; renderScForm(); }}, 'інше поле')]
+                strict ? '' : el('button', {class:'btn small ghost', onclick:() => { SC.pick = !SC.pick; renderScForm(); }}, 'інше поле')]
              : el('span', {class:'note'}, SC.gpsMsg || 'Визначаю місце…'),
-    SC.pick || (SC.gpsState==='ok' && !SC.field) ? fieldSel('Вибрати поле…') : '');
+    !strict && (SC.pick || (SC.gpsState==='ok' && !SC.field)) ? fieldSel('Вибрати поле…') : '',
+    strict && SC.gps && SC.gps.inside===false ? el('div', {class:'note', style:'color:var(--bad)'}, 'Ви поза контуром поля — це буде видно в історії поля.') : '');
   const hybNote = (() => { if(!SC.field || !MODEL) return ''; const mix = seedMix(SC.field, SC.season); if(mix.length < 2) return mix.length ? ' · '+mix[0].h : '';
     const h = SC.gps ? hybridAt(SC.field, SC.season, SC.gps.lat, SC.gps.lon) : null;
     return h ? ' · гібрид тут: '+h.h+(h.sure ? '' : ' (ймовірно'+(h.m!=null && h.m <= 30 ? ', '+h.m+' м до межі зон' : !h.confirmed ? ', зони не підтверджені' : h.approx ? ', загінний посів — межа умовна' : '')+')') : ' · на полі '+mix.length+' гібриди, зони не задані'; })();
@@ -4942,8 +4980,8 @@ function renderScForm(){
       recOn ? el('button', {class:'btn sc-bigbtn rec', onclick:recStop}, '■', el('span', {}, 'Стоп ', el('b', {id:'sc-rec-t'}, '0:00')))
             : el('button', dis ? {class:'btn sc-bigbtn', disabled:''} : {class:'btn sc-bigbtn', onclick:recStart}, '🎙', el('span', {}, 'Надиктувати')),
       el('button', dis ? {class:'btn sc-bigbtn', disabled:''} : {class:'btn sc-bigbtn', onclick:vrecOpen}, '🎥', el('span', {}, 'Відео')),
-      el('button', dis ? {class:'btn sc-bigbtn ghost', disabled:''} : {class:'btn sc-bigbtn ghost', onclick:() => gal.click()}, '🖼', el('span', {}, 'З галереї')), cam, gal),
-    dis ? el('div', {class:'note', style:'color:var(--bad)'}, wait ? 'Зачекайте кілька секунд — визначаю поле…' : 'Спершу виберіть поле або ввімкніть GPS') :
+      strict ? '' : el('button', dis ? {class:'btn sc-bigbtn ghost', disabled:''} : {class:'btn sc-bigbtn ghost', onclick:() => gal.click()}, '🖼', el('span', {}, 'З галереї')), cam, gal),
+    dis ? el('div', {class:'note', style:'color:var(--bad)'}, wait ? 'Зачекайте кілька секунд — визначаю місце…' : strict ? 'Увімкніть GPS — без точки огляд не записується' : 'Спершу виберіть поле або ввімкніть GPS') :
       el('div', {class:'note'}, 'Говоріть, що бачите: стан, фаза, проблеми, що робити. Запис розшифрується в текст автоматично після відправки.'),
     voices.length ? el('div', {class:'sc-voices'}, voices) : '',
     SC.videos.length ? el('div', {class:'sc-phs'}, SC.videos.map(v => el('figure', {class:'sc-ph'}, el('video', {src:v.url, controls:'', playsinline:'', preload:'metadata', class:'sc-vprev'}),
@@ -4962,6 +5000,7 @@ function renderScForm(){
 }
 async function saveScout(){
   const msg = $('#sc-msg');
+  if(GPS_STRICT() && !SC.gps){ msg.textContent = 'Без GPS-точки огляд не зберігається — увімкніть геолокацію.'; return; }
   if(!SC.field){ msg.textContent = 'Виберіть поле.'; return; }
   if(SC.photos.some(p => !p.blob && !p.bad)){ msg.textContent = 'Зачекайте — фото ще обробляються.'; return; }
   const extra = SC.state || SC.phase || Object.keys(SC.problems).length || SC.density!=='' || SC.forecast!=='' || Object.values(SC.sow).some(v => v!=='' && v!=null);
@@ -5112,8 +5151,39 @@ function scoutLines(d){
   const em = emergence(d); if(em) out.push(el('div', {class:'sub'}, 'Польова схожість ≈ ', el('b', {}, nf(em.pct, 0)+'%'), ' (норма '+nf(em.norm.v, 0)+' тис./га, '+em.norm.src+')'));
   if(d.problems.length) out.push(el('div', {class:'mats'}, d.problems.map(p => el('span', {style:'color:var(--bad)'}, p.t+(p.pct!=null ? ' '+p.pct+'%' : '')+(p.note ? ' — '+p.note : '')))));
   out.push(scoutBody(d));
+  out.push(scoutGpsBox(d));
   if(d.gps || d.photos.some(p => p.lat)) out.push(el('button', {class:'btn small ghost', style:'margin-top:4px', onclick:() => { MAPV.focus = d.id; location.hash = 'map'; }}, 'На карті'));
   return out;
+}
+// Де знято огляд (контроль, власник 25.11): контур поля + точка огляду + точки фото/відео, і чи вони на полі
+let GEO_ASKED = false;
+function scoutGpsBox(d){
+  const pts = [...(d.gps && d.gps.lat ? [{lat:d.gps.lat, lon:d.gps.lon, k:'s'}] : []), ...(d.photos || []).filter(p => p.lat).map((p, i) => ({lat:p.lat, lon:p.lon, k:'p', n:i+1})), ...(d.videos || []).filter(v => v.lat).map(v => ({lat:v.lat, lon:v.lon, k:'v'}))];
+  const media = (d.photos || []).length + (d.videos || []).length, withPt = (d.photos || []).filter(p => p.lat).length + (d.videos || []).filter(v => v.lat).length;
+  if(!pts.length) return String(d.id || '').startsWith('vb-') || d.by==='з Viber' ? el('div', {class:'sub note'}, 'Огляд з Viber — без GPS-точки.') : el('div', {class:'sub', style:'color:var(--bad)'}, '⚠ Без GPS: місце огляду невідоме — поле вибрано вручну.');
+  if(!MAPV.geo){ if(!GEO_ASKED){ GEO_ASKED = true; ensureGeo().then(g => { if(g && TAB==='history') renderHistory(); }).catch(() => {}); } }
+  const feat = MAPV.geo && MAPV.geo.features.find(f => fieldsOf(f).includes(d.field));
+  const inF = p => feat ? inGeom([p.lon, p.lat], feat.geometry) : null, dist = p => feat ? Math.round(distToGeom([p.lon, p.lat], feat.geometry)) : null;
+  const sp = pts.find(p => p.k==='s') || pts[0], ins = inF(sp), far = ins===false ? dist(sp) : 0;
+  const out = pts.filter(p => inF(p)===false).length;
+  const head = ins==null ? '📍 Огляд з GPS (±'+((d.gps || {}).acc ?? '?')+' м)' : ins || far <= 30 ? '📍 Знято на полі «'+d.field+'»'+(d.gps && d.gps.acc ? ' (±'+d.gps.acc+' м)' : '') : '⚠ Знято поза полем «'+d.field+'»: '+far+' м від межі';
+  const tail = media ? ' · з точкою '+withPt+' з '+media+' фото/відео'+(out ? ', поза полем '+out : '') : '';
+  // мініатюра: контур + точки (рівнокутна проєкція в межах поля)
+  let svg = '';
+  if(feat){ const rings = (feat.geometry.type==='Polygon' ? [feat.geometry.coordinates] : feat.geometry.coordinates).flatMap(pl => pl);
+    const xs = [...rings.flat().map(c => c[0]), ...pts.map(p => p.lon)], ys = [...rings.flat().map(c => c[1]), ...pts.map(p => p.lat)];
+    const k = Math.cos(d3.mean(ys)*Math.PI/180), x0 = d3.min(xs), x1 = d3.max(xs), y0 = d3.min(ys), y1 = d3.max(ys);
+    const W = 260, H = 170, pad = 10, sc = Math.min((W-2*pad)/(((x1-x0)*k) || 1e-6), (H-2*pad)/((y1-y0) || 1e-6));
+    const X = lon => pad + (lon-x0)*k*sc, Y = lat => H - pad - (lat-y0)*sc;
+    const NS = 'http://www.w3.org/2000/svg', mk = (t, a) => { const e = document.createElementNS(NS, t); Object.entries(a).forEach(([q, v]) => e.setAttribute(q, v)); return e; };
+    svg = mk('svg', {viewBox:'0 0 '+W+' '+H, width:W, height:H, role:'img', 'aria-label':'Поле «'+d.field+'» і точки огляду', style:'background:var(--surface);border:1px solid var(--line);border-radius:8px;display:block;margin-top:4px'});
+    rings.forEach(r => svg.append(mk('path', {d:'M'+r.map(c => X(c[0]).toFixed(1)+','+Y(c[1]).toFixed(1)).join('L')+'Z', fill:'rgba(44,93,138,.10)', stroke:'#2c5d8a', 'stroke-width':1.5})));
+    pts.forEach(p => { const bad = inF(p)===false && dist(p) > 30;
+      svg.append(p.k==='s' ? mk('circle', {cx:X(p.lon), cy:Y(p.lat), r:6, fill:'none', stroke:bad ? '#b3261e' : '#1f2a24', 'stroke-width':2.5})
+                           : mk('circle', {cx:X(p.lon), cy:Y(p.lat), r:3.5, fill:bad ? '#b3261e' : p.k==='v' ? '#7b4bb3' : '#c98a1c', stroke:'#fff', 'stroke-width':1})); });
+  }
+  return el('div', {class:'sub'}, el('span', {style:ins===false && far > 30 ? 'color:var(--bad)' : ''}, head+tail), svg,
+    svg ? el('div', {class:'note'}, '○ точка огляду · ● фото · ● відео (фіолетові) · червоне — поза полем') : '');
 }
 function scoutSummary(ss){   // останній стан поля за оглядами сезону
   const last = ss[0], probs = d3.rollups(ss.flatMap(d => d.problems), v => d3.max(v, p => p.pct), p => p.t);
