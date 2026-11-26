@@ -1355,7 +1355,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '26.11c';
+const APP_VER = '26.11d';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -4880,11 +4880,11 @@ async function ensureGeo(){ if(!MAPV.geo){ MAPV.geo = await getJSON('geo/fields.
 // --- GPS: найточніша позиція за кілька секунд
 function bestPos(ms=12000, good=20){ return new Promise((ok, no) => {
   if(!navigator.geolocation){ const x = new Error('Телефон не дає координати'); x.code = 9; return no(x); }
-  let best = null, id = null, t = null;
+  let best = null, id = null, t = null; const t0 = Date.now();   // 26.11d: лише свіжі фікси — iPhone без мобільного інтернету віддавав стару збережену точку
   const fin = () => { if(id!=null) navigator.geolocation.clearWatch(id); clearTimeout(t); if(best) return ok(best); const x = new Error('Слабкий сигнал GPS'); x.code = 3; no(x); };
-  id = navigator.geolocation.watchPosition(p => { if(!best || p.coords.accuracy < best.coords.accuracy) best = p; if(p.coords.accuracy <= good) fin(); },
+  id = navigator.geolocation.watchPosition(p => { if(p.timestamp && p.timestamp < t0 - 5000) return; if(!best || p.coords.accuracy < best.coords.accuracy) best = p; if(p.coords.accuracy <= good) fin(); },
     e => { if(!best){ navigator.geolocation.clearWatch(id); clearTimeout(t); const x = new Error(e.code===1 ? 'GPS вимкнено або заборонено для цього сайту' : 'Слабкий сигнал GPS'); x.code = e.code; no(x); } },
-    {enableHighAccuracy:true, maximumAge:3000, timeout:ms});
+    {enableHighAccuracy:true, maximumAge:0, timeout:ms});
   t = setTimeout(fin, ms); }); }
 const posObj = p => p ? {lat:+p.coords.latitude.toFixed(6), lon:+p.coords.longitude.toFixed(6), acc:Math.round(p.coords.accuracy)} : null;
 function fieldOfPoint(g){ if(!g) return null; const r = fieldAt(g.lat, g.lon); if(!r) return null; return {field:fieldsOf(r.f)[0], inside:r.inside, m:Math.round(r.m)}; }
@@ -5064,9 +5064,12 @@ async function locateScout(quiet){
     if(r && GPS_STRICT() && r.m > GPS_SPOOF_M){ SC.gps = null; SC.gpsState = 'spoof'; SC.gpsMsg = 'Телефон показує точку за '+nf(r.m/1000, 1)+' км від найближчого поля — схоже, РЕБ підміняє GPS.'; GPS_OK = false; renderGpsPill(); gpsRetryLater(); renderScForm(); return; }
     if(r){ SC.gps.auto = r.field; SC.gps.inside = r.inside; SC.gps.m = r.m;
       if(SC.nogps){ SC.nogps.late = true; SC.nogps.lateAt = isoNow(); }
-      if(r.inside || r.m <= 150 || GPS_STRICT()){ if(!SC.field || SC.fieldAuto){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); } }
+      if(r.inside || r.m <= 150){ if(!SC.field || SC.fieldAuto){ SC.field = r.field; SC.fieldAuto = true; scFieldChanged(); } }
       SC.gpsMsg = r.inside ? 'Ви на полі «'+r.field+'» (±'+g.acc+' м)' : 'Поза контурами: найближче «'+r.field+'», '+r.m+' м від межі (±'+g.acc+' м)'+(r.m > 150 ? ' — виберіть поле' : ' — перевірте поле'); }
     else SC.gpsMsg = 'Координати є (±'+g.acc+' м), контури полів не завантажились — виберіть поле';
+    // 26.11d: керуючий далі 150 м від будь-якого поля — найближче поле НЕ підставляємо; GPS перевіряємо ще раз, через 60 с — запасний режим з вибором поля і причиною
+    if(r && !r.inside && r.m > 150 && GPS_STRICT()){ if(SC.fieldAuto){ SC.field = ''; SC.fieldAuto = false; } SC.gpsState = 'far'; GPS_OK = false; renderGpsPill();
+      SC.gpsMsg = 'Телефон показує точку за '+r.m+' м від найближчого поля («'+r.field+'»). Якщо ви на полі — зачекайте, GPS перевіряється ще раз кожні '+GPS_RETRY_S+' с.'; gpsRetryLater(); }
   }catch(e){ if(!SC) return; SC.gpsState = e.code===1 || e.code===9 ? 'off' : 'weak'; SC.gpsMsg = e.message; GPS_OK = false; renderGpsPill(); gpsRetryLater(); }
   if(SC) renderScForm();
 }
@@ -5180,15 +5183,15 @@ function nogpsBox(fieldSel){   // запасний режим: причина + 
 }
 function renderScForm(){
   const box = $('#sc-form'); if(!box) return; box.replaceChildren(); if(!SC) return;
-  const strict = GPS_STRICT(), noGps = SC.gpsState==='off' || SC.gpsState==='weak' || SC.gpsState==='spoof', fb = strict && !!SC.nogps && !!SC.field;
+  const strict = GPS_STRICT(), noGps = SC.gpsState==='off' || SC.gpsState==='weak' || SC.gpsState==='spoof' || SC.gpsState==='far', fb = strict && !!SC.nogps && !!SC.field;
   const lock = noGps && (strict ? !fb : !SC.field), wait = SC.gpsState==='wait' && (strict ? !fb : !SC.field);
   const fbReady = strict && noGps && !fb && (SC.gpsState==='spoof' || Date.now() - (SC.gpsStart || Date.now()) >= GPS_FALLBACK_S*1000);
   const fieldSel = (lbl) => el('select', {'aria-label':lbl, style:'max-width:260px;border:2px solid var(--accent)', on:{change: ev => { SC.field = ev.target.value; SC.fieldAuto = false; SC.pick = false; if(GPS_STRICT() && SC.fbWhy && ev.target.value) SC.nogps = {reason:SC.fbWhy, at:isoNow(), waited:Math.round((Date.now() - (SC.gpsStart || Date.now()))/1000)}; scFieldChanged(); renderScForm(); }}},
     el('option', {value:''}, lbl), REF.fields.map(f => el('option', f.n===SC.field ? {value:f.n, selected:''} : {value:f.n}, f.n)));
   const gpsBox = !noGps ? '' : el('div', {class:'sc-gpswarn'+(SC.field ? ' ok' : '')},
-    el('b', {}, SC.gpsState==='off' ? '⚠ GPS вимкнено — фото не отримають точку на карті' : SC.gpsState==='spoof' ? '⚠ GPS показує неправдиве місце' : '⚠ Слабкий сигнал GPS — місце не визначено'),
+    el('b', {}, SC.gpsState==='off' ? '⚠ GPS вимкнено — фото не отримають точку на карті' : SC.gpsState==='spoof' ? '⚠ GPS показує неправдиве місце' : SC.gpsState==='far' ? '⚠ GPS показує точку поза полями' : '⚠ Слабкий сигнал GPS — місце не визначено'),
     strict && fb ? el('div', {}, 'Запасний режим: огляд без GPS («'+(NOGPS_WHY.find(w => w[0]===SC.nogps.reason) || ['', ''])[1]+'»), поле «'+SC.field+'» вибрано вручну. Власник побачить це в історії поля. Телефон далі шукає GPS — якщо знайде, точка додасться сама.')
-    : strict && SC.gpsState==='spoof' ? el('div', {}, SC.gpsMsg)
+    : strict && (SC.gpsState==='spoof' || SC.gpsState==='far') ? el('div', {}, SC.gpsMsg)
     : strict ? el('div', {}, 'Огляд зберігається з GPS-точкою. Телефон шукає сигнал і пробує знову кожні '+GPS_RETRY_S+' с.'+(fbReady ? '' : ' Якщо за '+GPS_FALLBACK_S+' с сигналу не буде — з’явиться запасний режим.'))
     : SC.field ? el('div', {}, 'Поле вибрано вручну: «'+SC.field+'». Усі фото й нотатки цього огляду прив’яжуться до нього.')
              : el('div', {}, 'Щоб фото не залишились без поля: виберіть поле або ввімкніть GPS.'),
