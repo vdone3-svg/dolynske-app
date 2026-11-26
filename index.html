@@ -117,6 +117,7 @@ select{font:500 13px var(--body);padding:6px 8px;border-radius:8px;border:1px so
 .stock div{border:1px solid var(--line);border-radius:8px;padding:10px 12px}
 .stock b{display:block;font:600 22px var(--display);font-variant-numeric:tabular-nums}
 .stock span{font-size:12px;color:var(--muted)}
+#recon-card{grid-template-columns:minmax(0,1fr)}#recon-body{min-width:0}#recon-body .stock span{display:block;overflow-wrap:anywhere}#recon-body .stock{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
 .qa{display:grid;gap:6px;font-size:13px}
 .qa div{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed var(--line);padding:4px 0}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:6px}
@@ -466,6 +467,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
         <div class="tablewrap"><table id="rp-table"></table></div></section>
 
       <!-- Генератор ЗАВ (Datakom) — лише власнику -->
+      <section class="card span12" id="recon-card" style="min-width:0" hidden><h2 style="margin:0 0 4px">🛰 Техніка за Fort — звірка з обліком <span class="note" style="font-weight:400">GPS-трекери ↔ облік Карини</span></h2><div id="recon-body"><p class="note">Завантажую…</p></div></section>
       <section class="card span12" id="gen-card" hidden><h2 style="margin:0 0 4px">⚡ Генератор ЗАВ <span class="note" style="font-weight:400">Estar BES-110 · Datakom</span></h2><div id="gen-body"><p class="note">Завантажую…</p></div></section>
 
       <!-- ТО-модуль -->
@@ -1356,7 +1358,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '26.11e';
+const APP_VER = '26.11f';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -2093,6 +2095,55 @@ async function renderGen(){
     days.some(d => d.run_h) ? genChart(days) : el('p', {class:'note'}, 'Графік з\'явиться, коли генератор попрацює хоча б день під наглядом скрипта (наведіть на стовпчик — деталі дня).'),
     el('p', {class:'note', style:'margin-top:6px'}, 'Дані — портал Datakom Rainbow SCADA, оновлення кожні 2 год. Тривоги (аварія, немає зв\'язку > 3 год, скоро ТО, АКБ) — у смузі тривог і звіті дня.'));
 }
+// ---------- 🛰 ЗВІРКА FORT ↔ ОБЛІК (власнику, Fort етап 2, 26.11): fort/recon.json (tools/fortday.py у dolynske-data, разом зі знімком Fort кожні 30 хв)
+let RECON = null, RECON_DAY = null;
+async function loadRecon(force){
+  if(RECON && !force) return RECON;
+  try{ RECON = await getJSON('fort/recon.json'); }catch(e){ RECON = {err:e.message}; }
+  return RECON;
+}
+const RC_LV = {crit:['критично','bad'], warn:['розбіжність','bad'], info:['до відома','']};
+const rcD = s => s ? s.slice(8,10)+'.'+s.slice(5,7) : '—', RC_WD = ['нд','пн','вт','ср','чт','пт','сб'], rcDT = s => RC_WD[new Date(s+'T12:00').getDay()]+' '+rcD(s);
+function reconTile(m, v){
+  const g = (x, d=1) => x==null ? '—' : nf(x, d);
+  if(v.nodata) return el('div', {style:'border-color:var(--bad)'}, el('span', {}, m), el('b', {}, 'немає даних'), el('span', {}, 'трекер без живлення / зв\'язку'));
+  const fl = Object.entries(v.gps||{}).map(([f, a]) => f+' '+a.from+'–'+a.to+(a.ha!=null ? ' ~'+g(a.ha)+' га' : '')).join('; ');
+  const rec = Object.entries(v.rec||{}).map(([f, a]) => f+' '+g(a.ha)+' га').join('; ');
+  return el('div', {style: v.stuck ? 'border-color:var(--warn)' : ''}, el('span', {}, m), el('b', {}, g(v.mh)+' м-год'),
+    el('span', {}, 'рух '+g(v.run_h)+' · холостий '+g(v.idle_h)+' год · '+g(v.km)+' км'+(v.stuck ? ' · ⚠ запалювання «залипло»' : '')),
+    el('span', {}, '📍 '+(fl || 'у полях не працював')), rec ? el('span', {}, '📒 облік: '+rec) : '',
+    (v.fuelings || v.fuel_ledger) ? el('span', {}, '⛽ '+(v.fuelings!=null ? 'заправка за ДУТ +'+g(v.fuelings, 0)+' л · ' : '')+'облік '+g(v.fuel_ledger, 0)+' л') : '',
+    v.blind_min ? el('span', {}, '📡 без GPS '+v.blind_min+' хв з '+v.on_min+' хв роботи двигуна') : '');
+}
+async function renderRecon(){
+  const card = $('#recon-card'); if(!card) return; card.hidden = ROLE!=='o'; if(ROLE!=='o') return;
+  const body = $('#recon-body'), R = await loadRecon();
+  if(!R || !R.days || !R.days.length){ body.replaceChildren(el('p', {class:'note'}, R && R.err ? 'Не вдалося завантажити звірку: '+R.err : 'Звірки ще немає — рахується разом зі знімком Fort кожні 30 хв.')); return; }
+  const days = R.days; if(!RECON_DAY || !days.find(d => d.date===RECON_DAY)) RECON_DAY = days[0].date;
+  const x = days.find(d => d.date===RECON_DAY), cov = R.ledger_cov || {};
+  const sel = el('select', {id:'recon-day', onchange:e => { RECON_DAY = e.target.value; renderRecon(); }},
+    ...days.map(d => { const n = d.issues.filter(i => i.level!=='info').length; return el('option', {value:d.date}, rcDT(d.date)+(n ? ' · '+n+' розб.' : '')); }));
+  sel.value = RECON_DAY;
+  const iss = x.issues.slice().sort((a, b) => ({crit:0, warn:1, info:2}[a.level] - {crit:0, warn:1, info:2}[b.level]));
+  const recent = days.slice(0, 14).slice().reverse(), machs = [...new Set(days.flatMap(d => Object.keys(d.m)))];
+  const mh = R.motohours || {};
+  body.replaceChildren(
+    el('div', {class:'toolbar', style:'margin:6px 0 10px;gap:8px;flex-wrap:wrap'}, el('label', {class:'note', for:'recon-day'}, 'Доба'), sel,
+      el('span', {class:'note'}, 'облік Карини: роботи до '+rcD(cov.works)+', пальне до '+rcD(cov.fuel)+(x.ledger.works ? '' : ' — за цю добу ще не надійшов')+' · перераховано '+genDT(R.at))),
+    el('div', {class:'stock'}, ...Object.entries(x.m).map(([m, v]) => reconTile(m, v))),
+    el('h3', {style:'margin:14px 0 4px;font-size:14px'}, 'Розбіжності за '+rcDT(x.date)),
+    iss.length ? el('ul', {class:'plain', style:'margin:0;padding-left:0;list-style:none'}, ...iss.map(i => { const [t, c] = RC_LV[i.level] || [i.level, '']; return el('li', {style:'margin:6px 0'}, el('span', {class:'pill '+c}, t), ' ', el('b', {}, i.title), el('div', {class:'note'}, i.text)); }))
+      : el('p', {class:'note'}, x.ledger.works ? '✅ Розбіжностей немає.' : 'Облік за цю добу ще не надійшов — звірка буде, коли надійде.'),
+    el('h3', {style:'margin:14px 0 4px;font-size:14px'}, 'Мотогодини Fort за 14 діб'),
+    el('div', {class:'tablewrap'}, el('table', {class:'dense'}, el('thead', {}, el('tr', {}, el('th', {class:'l'}, 'Техніка'), ...recent.map(d => el('th', {}, rcD(d.date))))),
+      el('tbody', {}, ...machs.map(m => el('tr', {}, el('td', {class:'l'}, m), ...recent.map(d => { const v = d.m[m]; const n = d.issues.filter(i => i.m===m && i.level!=='info').length;
+        return el('td', {title: v ? (v.stuck ? 'запалювання «залипло» — у ТО не рахується' : '') : '', style: n ? 'color:var(--bad);font-weight:600' : (v && v.stuck ? 'color:var(--muted)' : '')}, v ? (v.nodata ? '×' : nf(v.mh, 1)+(n ? ' ⚠' : '')) : ''); })))))),
+    el('h3', {style:'margin:14px 0 4px;font-size:14px'}, 'Мотогодини → ТО (оцінка)'),
+    el('div', {class:'tablewrap'}, el('table', {}, el('thead', {}, el('tr', {}, ['Техніка','Останній показник лічильника','Fort після нього','Оцінка зараз','Діб із «залиплим» запалюванням'].map((h, i) => el('th', {class:i?'':'l'}, h)))),
+      el('tbody', {}, ...Object.entries(mh).map(([m, v]) => el('tr', {}, el('td', {class:'l'}, m), el('td', {}, v.reading ? nf(v.reading.v, 0)+' ('+rcD(v.reading.date)+')' : 'немає'),
+        el('td', {}, '+'+nf(v.fort_since, 1)), el('td', {}, v.est!=null ? nf(v.est, 0) : 'внесіть показник'), el('td', {}, String((v.stuck_days||[]).length))))))),
+    el('p', {class:'note', style:'margin-top:6px'}, 'GPS-гектари — оцінка за покриттям (проходи × ширина знаряддя), не замір; коли GPS глушать (РЕБ), гектари не порівнюються. ТО — лише від реального показника лічильника, тут прогноз. Розбіжності за 7 діб — також у смузі тривог і звіті дня.'));
+}
 function genReportLine(){
   const box = el('div', {class:'note', style:'margin:6px 0 10px'}, '⚡ Генератор ЗАВ: завантажую…');
   loadGen().then(({s}) => { if(!s){ box.textContent = '⚡ Генератор ЗАВ: даних ще немає'; return; }
@@ -2123,6 +2174,7 @@ function renderTech(){
       : el('tr', {}, el('td', {class:'l empty', colspan:'6'}, 'Ще немає записів.'))));
   renderRpVoice(); renderRpQuestions();
   renderGen();
+  renderRecon();
   renderTO();
 }
 $('#mh-add').addEventListener('click', () => { const v = +$('#mh-v').value; if(!v){ toast('Вкажіть показник лічильника'); return; } saveEvent({'Мотогодини':[{'Дата':toSerial($('#mh-d').value||DAY), 'Техніка':$('#mh-m').value, 'Показник лічильника, м-год':v}]}, 'мотогодини').then(() => { $('#mh-v').value = ''; renderTech(); toast('Показник збережено'); }); });
