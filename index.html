@@ -287,6 +287,7 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
 @media (max-width:600px){.sc-prob{grid-template-columns:1fr 90px}.sc-prob input:last-child{grid-column:1/-1}}
 @media (max-width:640px){.sc-big{grid-template-columns:repeat(2,1fr)}.sc-vt-tile{width:100%;height:120px}.sc-bigbtn{min-height:72px}}
 .outq{margin:4px 0;padding:6px 10px;border-radius:8px;font-size:.9em;border-left:4px solid var(--warn)}.outq.bad{border-left-color:var(--bad)}.outq a{margin-left:6px}
+.upbar{width:100%}.upbar-txt{font-weight:600;margin-bottom:4px}.upbar-track{height:12px;border-radius:6px;background:rgba(0,0,0,.12);overflow:hidden}.upbar-fill{height:100%;background:var(--accent,#2f6b3a);transition:width .4s}.outq.ok{background:#e3f1e6;color:#1d5a2e}
 </style>
 </head>
 <body>
@@ -1355,7 +1356,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '26.11d';
+const APP_VER = '26.11e';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -4929,21 +4930,27 @@ let FLUSHING = false;
 const scParts = d => [...(d.photos || []), ...(d.voice || []), ...(d.videos || []).flatMap(v => v.parts || [])];
 let WIFI_GO = false;   // відео (великі файли) — лише коли людина натиснула «я на Wi-Fi» (iPhone не дає браузеру знати тип зв'язку)
 const wifiBytes = it => scParts(it.doc).filter(p => p.wifi && !p.done).reduce((a, p) => a + ((it.blobs[p.k] || {}).size || 0), 0);
-async function sendVideosNow(){ WIFI_GO = true; try{ await flushScouts(); } finally{ WIFI_GO = false; } }
+// 26.11e: «Я на Wi-Fi» діє 30 хв — якщо застосунок закрили посеред відправки, при поверненні відео докачується саме
+async function sendVideosNow(){ LS.set('dl_wifi_until', String(Date.now() + 30*60e3)); WIFI_GO = true; try{ await flushScouts(); } finally{ WIFI_GO = false; } }
+const wifiWindow = () => +(LS.get('dl_wifi_until') || 0) > Date.now();
+let PROG = null, PROG_DONE_AT = 0;   // прогрес відправки: {total, sent} у байтах
+const partBytes = (it, p) => (it.blobs[p.k] || {}).size || 0;
 async function flushScouts(){
-  if(FLUSHING || !TOKEN) return; FLUSHING = true; renderScQueue();
+  if(FLUSHING || !TOKEN) return; FLUSHING = true; if(!WIFI_GO && wifiWindow()) WIFI_GO = 'auto';
   try{
     const items = (await OUTBOX.all()).sort((a, b) => (a.tries||0) - (b.tries||0) || String(a.id).localeCompare(String(b.id)));   // «важкі» огляди — в кінець, щоб не блокували решту
+    const total = items.reduce((a, it) => a + scParts(it.doc).filter(p => !p.done && (!p.wifi || WIFI_GO)).reduce((b, p) => b + partBytes(it, p), 0) + 4000, 0);
+    PROG = {total, sent:0}; renderScQueue();
     for(const it of items){
       try{
         let wait = false;
-        for(const ph of scParts(it.doc)){ if(ph.done) continue; if(ph.wifi && !WIFI_GO){ wait = true; continue; } await putBin(ph.path, it.blobs[ph.k], (ph.vpart ? 'Відео огляду (частина): ' : ph.dur!=null ? 'Голосова нотатка: ' : 'Фото огляду: ')+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); renderScQueue(); }
+        for(const ph of scParts(it.doc)){ if(ph.done) continue; if(ph.wifi && !WIFI_GO){ wait = true; continue; } await putBin(ph.path, it.blobs[ph.k], (ph.vpart ? 'Відео огляду (частина): ' : ph.dur!=null ? 'Голосова нотатка: ' : 'Фото огляду: ')+it.doc.field+' '+it.doc.date); ph.done = true; await OUTBOX.put(it); PROG.sent += partBytes(it, ph); renderScQueue(); }
         if(wait && it.jsonDone){ continue; }   // огляд уже на сервері, відео чекає Wi-Fi
         let doc = JSON.parse(JSON.stringify(it.doc)); scParts(doc).forEach(p => { delete p.done; delete p.k; delete p.vpart; delete p.wifi; });
         if(it.jsonDone){   // відео догрузилось: беремо свіжий огляд із сервера (там уже висновок Claude) і позначаємо — це запустить розбір відео
           const cur = await getJSON(it.path).catch(() => null); if(cur) doc = cur; doc.video_sent = isoNow(); }
         await putJSON(it.path, doc, (it.jsonDone ? 'Відео до огляду: ' : 'Огляд: ')+doc.field+' '+doc.date+' ('+doc.author+', '+doc.by+')');
-        SCOUTS[it.path] = doc;
+        SCOUTS[it.path] = doc; PROG.sent += 4000;
         if(wait){ it.jsonDone = true; it.wifiWait = true; delete it.err; await OUTBOX.put(it); continue; }
         await OUTBOX.del(it.id);
         it.urls && it.urls.forEach(u => IMGC[u.path] = u.url); VPOLL = true;
@@ -4954,17 +4961,26 @@ async function flushScouts(){
       }
     }
   }catch(e){ if(e.auth) syncState(e.message, 'bad'); }
-  finally{ FLUSHING = false; OUTQ = await OUTBOX.all().catch(() => []); renderScQueue(); if(TAB==='scout') renderScList(); if(TAB==='map' && MAPV.map) drawScoutPins(); }
+  finally{ if(WIFI_GO==='auto') WIFI_GO = false; FLUSHING = false; OUTQ = await OUTBOX.all().catch(() => []);
+    if(PROG && PROG.total > 4000 && !OUTQ.length){ PROG_DONE_AT = Date.now(); LS.del('dl_wifi_until'); setTimeout(renderScQueue, 120e3+500); } PROG = null; renderScQueue(); if(TAB==='scout') renderScList(); if(TAB==='map' && MAPV.map) drawScoutPins(); }
 }
 window.addEventListener('online', () => flushScouts());
-setInterval(() => { if(OUTQ.some(i => !i.wifiWait) && navigator.onLine) flushScouts(); }, 60000);
+document.addEventListener('visibilitychange', () => { if(document.visibilityState==='visible' && OUTQ.length && navigator.onLine) flushScouts(); });   // повернувся в застосунок — докачуємо
+setInterval(() => { if(OUTQ.some(i => !i.wifiWait || wifiWindow()) && navigator.onLine) flushScouts(); }, 60000);
 function scQueueInfo(it){ const ps = scParts(it.doc), done = ps.filter(p => p.done).length;
   return (it.doc.field || '?')+' '+String(it.doc.date||'').split('-').reverse().join('.')+' — файлів '+done+' з '+ps.length+(it.wifiWait ? ' · огляд відправлено, відео ('+nf(wifiBytes(it)/1048576, 0)+' МБ) чекає Wi-Fi' : '')+(it.err ? ' · помилка ('+(it.tries||1)+'×): '+it.err.slice(0, 90) : ''); }
 function renderScQueue(){
   const wv = OUTQ.filter(i => i.wifiWait), main = OUTQ.filter(i => !i.wifiWait), n = main.length, err = main.filter(i => i.err).length;
   const mb = nf(d3.sum(wv, wifiBytes)/1048576, 0);
   const g = $('#outq');
-  if(g){ g.hidden = !n && !wv.length; g.className = 'outq '+(err ? 'bad' : 'warn');
+  const pct = FLUSHING && PROG && PROG.total ? Math.min(99, Math.floor(PROG.sent/PROG.total*100)) : null, justDone = !n && !wv.length && Date.now() - PROG_DONE_AT < 120e3;
+  const bar = pct==null ? '' : el('div', {class:'upbar'}, el('div', {class:'upbar-txt'}, '⏳ Відправляю: '+pct+' % ('+nf(PROG.sent/1048576, 1)+' з '+nf(PROG.total/1048576, 1)+' МБ) — не закривайте застосунок до 100 %'),
+    el('div', {class:'upbar-track'}, el('div', {class:'upbar-fill', style:'width:'+pct+'%'})));
+  if(g && (pct!=null || justDone)){ g.hidden = false; g.className = 'outq '+(justDone ? 'ok' : 'warn');
+    g.replaceChildren(justDone ? el('div', {class:'upbar'}, el('div', {class:'upbar-txt'}, '✅ Усе відправлено — 100 %. Можна закривати застосунок.'), el('div', {class:'upbar-track'}, el('div', {class:'upbar-fill', style:'width:100%'}))) : bar,
+      pct!=null && wv.length && !WIFI_GO ? el('div', {class:'note'}, '🎥 Відео ('+mb+' МБ) чекає Wi-Fi') : '');
+  }
+  else if(g){ g.hidden = !n && !wv.length; g.className = 'outq '+(err ? 'bad' : 'warn');
     g.replaceChildren(n ? el('span', {}, (FLUSHING ? '⏳ Відправляю огляди: ' : '📤 Не відправлено оглядів: ')+n+(err ? ' (з помилкою: '+err+')' : '')+' ') : '',
       wv.length ? el('span', {}, (n ? ' · ' : '')+'🎥 Відео чекає Wi-Fi: '+wv.length+' ('+mb+' МБ) ') : '',
       wv.length && !FLUSHING ? el('button', {class:'btn small', onclick:sendVideosNow}, 'Я на Wi-Fi — відправити') : '',
