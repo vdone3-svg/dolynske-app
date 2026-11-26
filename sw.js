@@ -1,6 +1,13 @@
 // Робота без інтернету: оболонка застосунку, бібліотеки, дані зі сховища (останні завантажені) і плитки карти
-const SHELL = 'shell-v1', LIBS = 'libs-v1', API = 'api-v1', TILES = 'tiles-v1', MAX_TILES = 5000;
-self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(SHELL).then(c => c.add(self.registration.scope)).catch(() => {})); });
+const SHELL = 'shell-v2', LIBS = 'libs-v2', API = 'api-v1', TILES = 'tiles-v1', MAX_TILES = 5000;
+// 26.11: бібліотеки старту (d3, xlsx, шрифти) зберігаються одразу при встановленні — інакше без зв'язку застосунок не відкривався
+const PRE_LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  'https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap'];
+self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil((async () => {
+  try{ await (await caches.open(SHELL)).add(self.registration.scope); }catch(x){}
+  const c = await caches.open(LIBS);
+  await Promise.all(PRE_LIBS.map(async u => { try{ if(await c.match(u)) return; const r = await fetch(u, {mode:'cors', credentials:'omit'}); if(r.ok) await c.put(u, r); }catch(x){} }));
+})()); });
 self.addEventListener('activate', e => e.waitUntil((async () => {
   const keep = [SHELL, LIBS, API, TILES]; for(const k of await caches.keys()) if(!keep.includes(k)) await caches.delete(k);
   await self.clients.claim(); })()));
@@ -26,8 +33,8 @@ async function shell(r){
   catch(e){ return (await c.match(key)) || Response.error(); }
 }
 async function cacheFirst(r, name){
-  const c = await caches.open(name), hit = await c.match(r); if(hit) return hit;
-  const res = await fetch(r); if(res.ok || res.type==='opaque') c.put(r, res.clone()); return res;
+  const c = await caches.open(name), hit = (await c.match(r)) || (await c.match(r.url)); if(hit) return hit;
+  const res = await wait(fetch(r), 15000); if(res.ok || res.type==='opaque') c.put(r, res.clone()); return res;
 }
 let puts = 0;
 async function tile(r){
