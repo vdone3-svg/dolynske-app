@@ -1,5 +1,5 @@
 // Робота без інтернету: оболонка застосунку, бібліотеки, дані зі сховища (останні завантажені) і плитки карти
-const SHELL = 'shell-v2', LIBS = 'libs-v2', API = 'api-v1', TILES = 'tiles-v1', MAX_TILES = 5000;
+const SHELL = 'shell-v2', LIBS = 'libs-v2', API = 'api-v1', TILES = 'tiles-v1', MAX_TILES = 1500, API_DAYS = 30;
 // 26.11: бібліотеки старту (d3, xlsx, шрифти) зберігаються одразу при встановленні — інакше без зв'язку застосунок не відкривався
 const PRE_LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
   'https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap'];
@@ -10,7 +10,7 @@ self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil((async (
 })()); });
 self.addEventListener('activate', e => e.waitUntil((async () => {
   const keep = [SHELL, LIBS, API, TILES]; for(const k of await caches.keys()) if(!keep.includes(k)) await caches.delete(k);
-  await self.clients.claim(); })()));
+  await self.clients.claim(); try{ await trimApi(); const t = await caches.open(TILES); await trim(t); }catch(x){} })()));
 
 const isTile = u => /server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\//.test(u) || /tile\.openstreetmap\.org\//.test(u);
 const isLib = u => /^https:\/\/(cdnjs\.cloudflare\.com|unpkg\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)\//.test(u);
@@ -42,7 +42,11 @@ async function tile(r){
   try{ const res = await fetch(r.url, {mode:'cors', credentials:'omit'}); if(res.ok){ await c.put(r.url, res.clone()); if(++puts % 100===0) trim(c); } return res; }
   catch(e){ return new Response('', {status:504, statusText:'offline tile'}); }
 }
-async function trim(c){ const keys = await c.keys(); if(keys.length > MAX_TILES) for(const k of keys.slice(0, keys.length - MAX_TILES + 300)) await c.delete(k); }
+async function trim(c){ const keys = await c.keys(); if(keys.length > MAX_TILES) for(const k of keys.slice(0, keys.length - MAX_TILES + 150)) await c.delete(k); }
+// копії даних сховища, старші за API_DAYS днів, видаляються (невідправлені огляди лежать окремо, в IndexedDB, — їх це не стосується)
+async function trimApi(){ const c = await caches.open(API), lim = Date.now() - API_DAYS*864e5;
+  for(const k of await c.keys()){ const r = await c.match(k), d = r && Date.parse(r.headers.get('x-cache-date') || ''); if(!d || d < lim) await c.delete(k); } }
+let apiPuts = 0;
 
 // дані сховища: мережа з тайм-аутом, без зв'язку — остання збережена відповідь (позначена заголовком x-cache-date)
 async function api(r){
@@ -51,7 +55,7 @@ async function api(r){
   try{
     const res = await wait(fetch(r), 8000);
     if(res.ok){ const h = new Headers(res.headers); h.set('x-cache-date', new Date().toISOString()); const body = await res.clone().blob();
-      await c.put(key, new Response(body, {status:200, headers:h})); }
+      await c.put(key, new Response(body, {status:200, headers:h})); if(++apiPuts % 200===0) trimApi().catch(() => {}); }
     else if(res.status===404) await c.delete(key);
     return res;
   }catch(e){
@@ -59,7 +63,7 @@ async function api(r){
     const h = new Headers(hit.headers); h.set('x-offline', '1'); return new Response(await hit.blob(), {status:200, headers:h});
   }
 }
-self.addEventListener('message', e => { if(e.data==='clear-api') e.waitUntil(caches.delete(API)); });
+self.addEventListener('message', e => { if(e.data==='clear-api') e.waitUntil(caches.delete(API)); if(e.data==='clear-cache') e.waitUntil(Promise.all([caches.delete(API), caches.delete(TILES)])); });
 
 // Push-сповіщення (25.11; розсилка — tools/push.py у dolynske-data). Натискання — відкриває потрібну вкладку.
 self.addEventListener('push', e => {
