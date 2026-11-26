@@ -312,12 +312,14 @@ dialog.sc-full{padding:0;border:none;background:transparent;max-width:96vw}dialo
       <div class="chips" id="years" role="group" aria-label="Рік урожаю"></div>
       <span class="pill open" id="role-name">—</span>
       <button class="btn" id="btn-xlsx">Вивантажити Excel</button>
+      <button class="btn ghost" id="btn-mem" title="Скільки місця застосунок займає на телефоні">💾 Пам'ять</button>
       <button class="btn ghost" id="btn-logout" title="Вийти з цього пристрою">Вийти</button>
     </div>
   </header>
   <nav class="tabs" id="tabs" aria-label="Розділи"></nav>
   <div class="sync" id="sync" role="status"></div>
   <div id="outq" class="outq" role="status" hidden></div>
+  <div id="mem-box" class="card" hidden style="margin:8px 0;padding:12px"></div>
   <div id="alerts" class="alerts" role="region" aria-label="Тривоги" hidden></div>
 
   <!-- ДЕНЬ -->
@@ -1353,7 +1355,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '26.11b';
+const APP_VER = '26.11c';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -5881,6 +5883,29 @@ $('#login-go').addEventListener('click', async () => {
     LS.set('dl_token', t); LS.set('dl_role', $('#login-role').value); if($('#login-name').value.trim()) LS.set('dl_name', $('#login-name').value.trim()); $('#login').hidden = true; start(); }
   catch(e){ TOKEN = null; $('#login-msg').textContent = e.message; }
 });
+// 26.11c: пам'ять на телефоні — скільки займає, очищення копій даних і шматків карти (невідправлені огляди не чіпаються)
+async function memInfo(){
+  const mb = b => (b/1048576).toFixed(b < 10485760 ? 1 : 0)+' МБ', out = {total:null, quota:null, api:0, tiles:0, outq:0};
+  try{ if(navigator.storage && navigator.storage.estimate){ const e = await navigator.storage.estimate(); out.total = e.usage; out.quota = e.quota; } }catch(e){}
+  try{ if(window.caches){ out.api = (await (await caches.open('api-v1')).keys()).length; out.tiles = (await (await caches.open('tiles-v1')).keys()).length; } }catch(e){}
+  try{ out.outq = (await OUTBOX.all()).length; }catch(e){}
+  out.txt = (out.total!=null ? 'Застосунок займає '+mb(out.total) : 'Обсяг недоступний')+' · копій даних: '+out.api+' · шматків карти: '+out.tiles+' з 1500';
+  return out;
+}
+async function renderMem(){
+  const box = $('#mem-box'); if(!box.hidden){ box.hidden = true; return; }
+  box.hidden = false; box.replaceChildren(el('div', {class:'note'}, 'Рахую…'));
+  const m = await memInfo();
+  const clr = el('button', {class:'btn', on:{click: async () => {
+    if(!confirm('Видалити збережені копії даних і карти? Без інтернету застосунок покаже їх лише після наступного зв’язку. Невідправлені огляди залишаться.')) return;
+    if(navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear-cache');
+    try{ await caches.delete('api-v1'); await caches.delete('tiles-v1'); }catch(e){}
+    toast('Кеш очищено'); box.hidden = true; renderMem(); }}}, '🗑 Очистити кеш');
+  box.replaceChildren(el('div', {}, el('b', {}, '💾 Пам’ять на телефоні')), el('div', {style:'margin:6px 0'}, m.txt),
+    el('div', {class:'note', style:'margin-bottom:8px'}, m.outq ? '⏳ Ще не відправлено оглядів: '+m.outq+' — вони не видаляються, підуть самі при зв’язку.' : '✅ Усе відправлено, у телефоні немає невідправлених оглядів.'),
+    el('div', {class:'note', style:'margin-bottom:8px'}, 'Копії даних старші 30 днів і зайві шматки карти видаляються автоматично.'), clr);
+}
+$('#btn-mem').addEventListener('click', renderMem);
 $('#btn-logout').addEventListener('click', () => { if(navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear-api'); if(window.caches) caches.delete('api-v1'); LS.del('dl_token'); LS.del('dl_ownkey'); LS.del('dl_view'); TOKEN = null; location.hash = ''; location.reload(); });
 $('#btn-xlsx').addEventListener('click', () => { if(!RAW){ toast('Дані ще не завантажені'); return; } exportExcel(); });
 async function start(){
