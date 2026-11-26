@@ -1348,7 +1348,7 @@ function toast(t){ const x = toastEl(); x.textContent = t; x.style.opacity = 1; 
 const toSerial = s => Math.round(Date.parse(s+'T00:00:00Z')/864e5) + 25569;
 const isoOf = n => { const d = dt(n); return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'); };
 let ROLE = 'b', TAB = 'day', REAL_ROLE = 'b';   // REAL_ROLE — роль входу; ROLE — що показуємо (власник може дивитись «як Каріна / як Вова»)
-const APP_VER = '25.11t';
+const APP_VER = '26.11a';
 const TABS = [['report','📋 Звіт дня'],['tasks','🎯 Завдання'],['day','День'],['plan','План'],['map','Карта'],['scout','Огляди'],['agro','Агрозвіт'],['history','Історія поля'],['overview','Огляд'],['fields','Поля'],['inputs','Гібриди і ресурси'],['fuel','Пальне'],['tech','Техніка'],['batt','🔋 АКБ'],['stock','Склад'],['journal','Журнал'],['settings','Довідники']];
 function pushRow(sheet, obj){ const s = RAW[sheet]; s.r.push(s.h.map(h => obj[h] ?? null)); }
 function recompute(){ const keep = YEAR; MODEL = compute(RAW); if(MODEL.years.includes(keep)) YEAR = keep; }
@@ -3975,7 +3975,9 @@ const PLOWCOL = {'так':'#2e7d4f', 'обмежено':'#d4a017', 'ні':'#b337
 const isoToday = () => new Date(Date.now() - new Date().getTimezoneOffset()*6e4).toISOString().slice(0, 10);
 function fwxField(n){ const F = (FWX.data || {}).fields || {}; return F[n] || (LEGACY[n] && F[LEGACY[n]]) || null; }
 function fwxPoint(n){ const r = fwxField(n); return r && ((FWX.data || {}).points || {})[r.point] || null; }
-function plowToday(n){ const P = (fwxPoint(n) || {}).plow; if(!P || !P.days) return null; const t = isoToday(); return P.days.find(o => o.d===t) || P.days.find(o => o.d > t) || null; }
+// поле має власний ряд (рельєф/ґрунт, geo/terrain.json → fields[n].plow.days); інакше — ряд точки Захід/Схід
+function plowDays(n){ const f = (fwxField(n) || {}).plow; if(f && f.days && f.days.length) return f.days; const P = (fwxPoint(n) || {}).plow; return P && P.days || null; }
+function plowToday(n){ const D = plowDays(n); if(!D) return null; const t = isoToday(); return D.find(o => o.d===t) || D.find(o => o.d > t) || null; }
 function plowColor(n){ const f = (fwxField(n) || {}).plow; if(!f) return PLOW_NONE;
   if(f.left >= 1){ const t = plowToday(n); return t ? PLOWCOL[t.st] : PLOW_NONE; }
   return f.unharv >= 1 ? PLOW_UNH : PLOW_NONE; }
@@ -3986,12 +3988,13 @@ function plowBlock(n){
   const f = r.plow || {}, t0 = isoToday(), dm = d => d.slice(8,10)+'.'+d.slice(5,7), box = el('div', {style:'margin-top:6px'});
   box.append(el('div', {style:'font-weight:600'}, (plowLine(n) || '🚜 Оранка')+(f.area ? ' · площа '+nf(f.area, 0)+' га' : '')
     +(f.winter ? ' · озимина '+nf(f.winter, 0) : '')+(f.unharv ? ' · не зібрано '+nf(f.unharv, 0) : '')+(f.plowed ? ' · зорано '+nf(f.plowed, 0)+(f.last_plow ? ' (до '+dm(f.last_plow)+')' : '') : '')));
-  const fut = P.days.filter(o => o.d >= t0);
+  const fut = (plowDays(n) || P.days).filter(o => o.d >= t0), T = f.terrain;
+  if(T) box.append(el('div', {class:'note'}, '⛰ '+(T.relief || '')+(T.slope_mean!=null ? ' · сер. ухил '+nf(T.slope_mean, 1)+' %' : '')+(T.gt5 ? ', понад 5 % — '+T.gt5+' % площі' : '')+(T.wet >= 12 ? ' · пониження '+T.wet+' %' : '')+' → орати лише при ≤ '+f.thr+' % НВ'+(f.thr < 95 ? ' (рівне поле — 95 %)' : '')));
   box.append(el('div', {style:'display:flex;gap:2px;flex-wrap:wrap;margin:4px 0'}, fut.map(o => el('span', {title:dm(o.d)+' — '+o.st+': '+o.why.join('; ')+(o.r!=null ? ' · '+o.r+'% НВ' : '')+(o.ts!=null ? ' · t ґрунту '+o.ts+'°' : '')+' · '+o.src,
     style:'width:26px;text-align:center;border-radius:4px;padding:2px 0;font-size:11px;color:#fff;background:'+PLOWCOL[o.st]+(o.src==='ERA5-Land' ? '' : ';opacity:.85')}, o.d.slice(8,10)))));
   const t = fut[0];
   if(t) box.append(el('div', {}, (t.d===t0 ? 'Сьогодні' : dm(t.d))+': '+t.st+' — '+t.why.join('; ')));
-  box.append(el('div', {}, P.summary || ''));
+  box.append(el('div', {}, (f.days ? (f.summary || '').split(' · ').slice(1).join(' · ') : '') || P.summary || ''));
   if(P.cal) box.append(el('div', {style:'opacity:.7'}, 'Орний шар 0–28 см; % НВ — для ґрунтового класу моделі «'+P.cal.name+'» (НВ '+P.cal.fc+' м³/м³, '+P.cal.how+'). Стиглість ~50–85 % НВ. Модель ~9 км — перед виїздом перевірте ком ґрунту в долоні.'+(P.simplified ? ' Прогноз ґрунту недоступний — спрощений розрахунок.' : '')));
   return box;
 }
